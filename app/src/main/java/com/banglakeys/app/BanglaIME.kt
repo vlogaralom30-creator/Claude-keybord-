@@ -296,6 +296,22 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
         }
     }
 
+    override fun onAssistant() {
+        if (AssistantListenerService.running) {
+            AssistantListenerService.stop(this)
+            android.widget.Toast.makeText(this, "🤖 Assistant বন্ধ", android.widget.Toast.LENGTH_SHORT).show()
+        } else if (!AssistantSetup.isReady(this)) {
+            val i = Intent(this, AssistantActivity::class.java)
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(i)
+        } else {
+            AssistantListenerService.start(this)
+            android.widget.Toast.makeText(
+                this, "🤖 Assistant চালু — \"Hey Bot\" বলুন", android.widget.Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
     override fun onVoice() {
         if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) !=
             android.content.pm.PackageManager.PERMISSION_GRANTED
@@ -309,6 +325,7 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
             voice.stop()
         } else {
             commitComposing()
+            AssistantListenerService.setPaused(true)
             kv?.setSuggestions(emptyList())
             kv?.setComposing("🎤 শুনছি…")
             voice.start(bangla)
@@ -329,6 +346,7 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
     }
 
     override fun onVoiceEnd() {
+        AssistantListenerService.setPaused(false)
         kv?.setComposing("")
     }
 
@@ -349,10 +367,7 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
 
     override fun onFeedback() {
         if (haptic) {
-            kv?.performHapticFeedback(
-                HapticFeedbackConstants.KEYBOARD_TAP,
-                HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING
-            )
+            kv?.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
         }
         if (sound) {
             val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager

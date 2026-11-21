@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.provider.Settings
 import android.view.inputmethod.InputMethodManager
+import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -32,6 +33,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.Keyboard
+import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.outlined.Info
@@ -55,6 +57,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -77,6 +80,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import com.example.R
@@ -119,8 +123,13 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
   val prefs = remember { context.getSharedPreferences("bk", Context.MODE_PRIVATE) }
 
   var imeStatus by remember { mutableStateOf(checkImeStatus(context)) }
+  var assistantReady by remember { mutableStateOf(AssistantSetup.isReady(context)) }
+  var assistantRunning by remember { mutableStateOf(AssistantListenerService.running) }
+
   LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
     imeStatus = checkImeStatus(context)
+    assistantReady = AssistantSetup.isReady(context)
+    assistantRunning = AssistantListenerService.running
   }
 
   var haptic by remember { mutableStateOf(prefs.getBoolean("haptic", true)) }
@@ -129,7 +138,23 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
   var bnDigits by remember { mutableStateOf(prefs.getBoolean("bndigits", true)) }
   var heightPct by remember { mutableIntStateOf(prefs.getInt("height", 100).coerceIn(85, 125)) }
 
-  var testInput by rememberSaveable { mutableStateOf("") }
+  var showEmbeddedKeyboard by rememberSaveable { mutableStateOf(true) }
+  var committedText by rememberSaveable { mutableStateOf("") }
+  var composingRoman by rememberSaveable { mutableStateOf("") }
+  var previewBanglaMode by rememberSaveable { mutableStateOf(true) }
+  var previewSymbolsMode by rememberSaveable { mutableIntStateOf(0) }
+  var previewInPanel by rememberSaveable { mutableStateOf(false) }
+
+  val suggestionsRepo = remember { Suggestions(context) }
+
+  val composingDisplay =
+    remember(composingRoman, previewBanglaMode) {
+      if (composingRoman.isEmpty()) ""
+      else if (previewBanglaMode) Phonetic.convert(composingRoman)
+      else composingRoman
+    }
+  val combinedTestText = committedText + composingDisplay
+
   var phoneticSampleInput by rememberSaveable { mutableStateOf("ami tOmake bhalobashi") }
   val convertedBangla = remember(phoneticSampleInput) { Phonetic.convert(phoneticSampleInput) }
   val copiedMsg = stringResource(R.string.copied_snackbar)
@@ -151,51 +176,11 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
             .padding(horizontal = 16.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
       ) {
-        HeroHeaderCard(imeStatus = imeStatus)
-
-        SetupCard(
-          onEnableClick = {
-            context.startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
-          },
-          onSelectClick = {
-            val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
-            imm.showInputMethodPicker()
-          },
+        HeroHeaderCard(
+          imeStatus = imeStatus,
+          assistantRunning = assistantRunning,
+          assistantReady = assistantReady,
         )
-
-        ElevatedCard(
-          modifier = Modifier.fillMaxWidth(),
-          colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-          shape = RoundedCornerShape(20.dp),
-        ) {
-          Column(
-            modifier = Modifier.padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-          ) {
-            SectionTitle(
-              icon = Icons.Filled.EditNote,
-              title = stringResource(R.string.btn_open_notepad),
-            )
-            Text(
-              text = stringResource(R.string.notepad_card_desc),
-              style = MaterialTheme.typography.bodyMedium,
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            OutlinedButton(
-              onClick = { context.startActivity(Intent(context, NotepadActivity::class.java)) },
-              modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize().testTag("open_notepad_button"),
-              shape = RoundedCornerShape(14.dp),
-            ) {
-              Icon(
-                imageVector = Icons.Filled.EditNote,
-                contentDescription = null,
-                modifier = Modifier.size(20.dp),
-              )
-              Spacer(modifier = Modifier.width(8.dp))
-              Text(stringResource(R.string.btn_open_notepad))
-            }
-          }
-        }
 
         ElevatedCard(
           modifier = Modifier.fillMaxWidth(),
@@ -206,19 +191,176 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
             modifier = Modifier.padding(18.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
           ) {
-            SectionTitle(
-              icon = Icons.Outlined.TouchApp,
-              title = stringResource(R.string.section_test),
-            )
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.SpaceBetween,
+              verticalAlignment = Alignment.CenterVertically,
+            ) {
+              SectionTitle(
+                icon = Icons.Outlined.TouchApp,
+                title = stringResource(R.string.section_test),
+              )
+              TextButton(
+                onClick = { showEmbeddedKeyboard = !showEmbeddedKeyboard },
+                modifier = Modifier.testTag("toggle_preview_keyboard"),
+              ) {
+                Text(
+                  if (showEmbeddedKeyboard) stringResource(R.string.hide_preview_keyboard)
+                  else stringResource(R.string.show_preview_keyboard)
+                )
+              }
+            }
+
             OutlinedTextField(
-              value = testInput,
-              onValueChange = { testInput = it },
+              value = combinedTestText,
+              onValueChange = { newValue ->
+                committedText = newValue
+                composingRoman = ""
+              },
               label = { Text(stringResource(R.string.test_field_label)) },
               placeholder = { Text(stringResource(R.string.test_field_placeholder)) },
-              minLines = 3,
+              minLines = 2,
               modifier = Modifier.fillMaxWidth().testTag("ime_test_input"),
               shape = RoundedCornerShape(14.dp),
             )
+
+            if (showEmbeddedKeyboard) {
+              Surface(
+                shape = RoundedCornerShape(16.dp),
+                tonalElevation = 2.dp,
+                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)),
+              ) {
+                EmbeddedKeyboardPreview(
+                  banglaMode = previewBanglaMode,
+                  symbolsMode = previewSymbolsMode,
+                  inPanel = previewInPanel,
+                  numRow = numRow,
+                  bnDigitsPref = bnDigits,
+                  heightPct = heightPct,
+                  composingText = composingDisplay,
+                  suggestionsList =
+                    if (composingRoman.isEmpty()) suggestionsRepo.suggestionsFor("", previewBanglaMode)
+                    else suggestionsRepo.suggestionsFor(composingRoman, previewBanglaMode),
+                  onText = { ch ->
+                    val single = ch.singleOrNull()
+                    if (
+                      previewBanglaMode &&
+                      previewSymbolsMode == 0 &&
+                      single != null &&
+                      (single in 'a'..'z' ||
+                        single in 'A'..'Z' ||
+                        ((single == '^' || single == '`') && composingRoman.isNotEmpty()))
+                    ) {
+                      composingRoman += single
+                    } else {
+                      if (composingDisplay.isNotEmpty()) {
+                        suggestionsRepo.learn(composingRoman, composingDisplay)
+                        committedText += composingDisplay
+                        composingRoman = ""
+                      }
+                      committedText += ch
+                    }
+                  },
+                  onDelete = {
+                    if (composingRoman.isNotEmpty()) {
+                      composingRoman = composingRoman.dropLast(1)
+                    } else if (committedText.isNotEmpty()) {
+                      committedText = committedText.dropLast(1)
+                    }
+                  },
+                  onSpace = {
+                    if (composingDisplay.isNotEmpty()) {
+                      suggestionsRepo.learn(composingRoman, composingDisplay)
+                      committedText += composingDisplay
+                      composingRoman = ""
+                    }
+                    committedText += " "
+                  },
+                  onEnter = {
+                    if (composingDisplay.isNotEmpty()) {
+                      suggestionsRepo.learn(composingRoman, composingDisplay)
+                      committedText += composingDisplay
+                      composingRoman = ""
+                    }
+                    suggestionsRepo.resetSentenceContext()
+                    committedText += "\n"
+                  },
+                  onSwitchLang = {
+                    if (composingDisplay.isNotEmpty()) {
+                      committedText += composingDisplay
+                      composingRoman = ""
+                    }
+                    previewInPanel = false
+                    previewSymbolsMode = 0
+                    previewBanglaMode = !previewBanglaMode
+                    prefs.edit().putBoolean("bn", previewBanglaMode).apply()
+                  },
+                  onSymbols = { mode ->
+                    if (composingDisplay.isNotEmpty()) {
+                      committedText += composingDisplay
+                      composingRoman = ""
+                    }
+                    previewInPanel = false
+                    previewSymbolsMode = mode
+                  },
+                  onComposingTap = {
+                    if (composingDisplay.isNotEmpty()) {
+                      suggestionsRepo.learn(composingRoman, composingDisplay)
+                      committedText += composingDisplay
+                      composingRoman = ""
+                    }
+                  },
+                  onSuggestionTap = { word ->
+                    if (composingRoman.isNotEmpty()) {
+                      suggestionsRepo.learn(composingRoman, word)
+                      composingRoman = ""
+                    }
+                    committedText += "$word "
+                  },
+                  onSnippet = { snippet ->
+                    committedText += snippet
+                  },
+                  onNotepad = {
+                    if (composingDisplay.isNotEmpty()) {
+                      committedText += composingDisplay
+                      composingRoman = ""
+                    }
+                    previewInPanel = !previewInPanel
+                  },
+                  onTranslate = {
+                    val target =
+                      if (composingDisplay.isNotEmpty()) composingDisplay
+                      else committedText.trim()
+                    if (target.isNotEmpty()) {
+                      val from = if (previewBanglaMode) "bn" else "en"
+                      val to = if (previewBanglaMode) "en" else "bn"
+                      Translator.translate(target, from, to) { result ->
+                        if (result != null) {
+                          if (composingDisplay.isNotEmpty()) {
+                            composingRoman = ""
+                            committedText += "$result "
+                          } else {
+                            committedText = result
+                          }
+                        } else {
+                          Toast.makeText(context, "ইন্টারনেট সংযোগ প্রয়োজন", Toast.LENGTH_SHORT).show()
+                        }
+                      }
+                    }
+                  },
+                  onVoice = {
+                    Toast.makeText(
+                      context,
+                      "সিস্টেম কিবোর্ড হিসেবে সক্রিয় করে যেকোনো অ্যাপে 🎤 ভয়েস টাইপিং ব্যবহার করুন",
+                      Toast.LENGTH_SHORT
+                    ).show()
+                  },
+                  onAssistant = {
+                    context.startActivity(Intent(context, AssistantActivity::class.java))
+                  },
+                )
+              }
+            }
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
@@ -280,6 +422,63 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
                   modifier = Modifier.testTag("sample_chip_$sample"),
                 )
               }
+            }
+          }
+        }
+
+        SetupCard(
+          onEnableClick = {
+            context.startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
+          },
+          onSelectClick = {
+            val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+            imm.showInputMethodPicker()
+          },
+        )
+
+        ElevatedCard(
+          modifier = Modifier.fillMaxWidth(),
+          colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+          shape = RoundedCornerShape(20.dp),
+        ) {
+          Column(
+            modifier = Modifier.padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+          ) {
+            SectionTitle(
+              icon = Icons.Filled.RecordVoiceOver,
+              title = stringResource(R.string.tools_section_title),
+            )
+            Text(
+              text = stringResource(R.string.notepad_card_desc),
+              style = MaterialTheme.typography.bodyMedium,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedButton(
+              onClick = { context.startActivity(Intent(context, AssistantActivity::class.java)) },
+              modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize().testTag("open_assistant_button"),
+              shape = RoundedCornerShape(14.dp),
+            ) {
+              Icon(
+                imageVector = Icons.Filled.RecordVoiceOver,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+              )
+              Spacer(modifier = Modifier.width(8.dp))
+              Text(stringResource(R.string.btn_open_assistant))
+            }
+            OutlinedButton(
+              onClick = { context.startActivity(Intent(context, NotepadActivity::class.java)) },
+              modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize().testTag("open_notepad_button"),
+              shape = RoundedCornerShape(14.dp),
+            ) {
+              Icon(
+                imageVector = Icons.Filled.EditNote,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+              )
+              Spacer(modifier = Modifier.width(8.dp))
+              Text(stringResource(R.string.btn_open_notepad))
             }
           }
         }
@@ -430,7 +629,88 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun HeroHeaderCard(imeStatus: ImeStatus) {
+private fun EmbeddedKeyboardPreview(
+  banglaMode: Boolean,
+  symbolsMode: Int,
+  inPanel: Boolean,
+  numRow: Boolean,
+  bnDigitsPref: Boolean,
+  heightPct: Int,
+  composingText: String,
+  suggestionsList: List<String>,
+  onText: (String) -> Unit,
+  onDelete: () -> Unit,
+  onSpace: () -> Unit,
+  onEnter: () -> Unit,
+  onSwitchLang: () -> Unit,
+  onSymbols: (Int) -> Unit,
+  onComposingTap: () -> Unit,
+  onSuggestionTap: (String) -> Unit,
+  onSnippet: (String) -> Unit,
+  onNotepad: () -> Unit,
+  onTranslate: () -> Unit,
+  onVoice: () -> Unit,
+  onAssistant: () -> Unit,
+) {
+  val context = LocalContext.current
+  val rows =
+    remember(banglaMode, symbolsMode, inPanel, numRow, bnDigitsPref) {
+      if (inPanel) {
+        val items = Notes(context).all() + ClipboardMemory(context).clips()
+        Layouts.panel(items)
+      } else {
+        val bnDigits = banglaMode && bnDigitsPref
+        when (symbolsMode) {
+          1 -> Layouts.symbols(bnDigits, banglaMode)
+          2 -> Layouts.symbols2()
+          else -> if (banglaMode) Layouts.phonetic(numRow, bnDigits) else Layouts.english(numRow)
+        }
+      }
+    }
+  val spaceLabel = if (banglaMode) "বাংলা" else "English"
+
+  AndroidView(
+    modifier = Modifier.fillMaxWidth().testTag("embedded_keyboard_view"),
+    factory = { ctx -> KeyboardView(ctx) },
+    update = { kv ->
+      kv.listener =
+        object : KeyboardView.Listener {
+          override fun onText(text: String) = onText(text)
+          override fun onDelete() = onDelete()
+          override fun onEnter() = onEnter()
+          override fun onSpace() = onSpace()
+          override fun onSpaceLongPress() {
+            val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+            imm.showInputMethodPicker()
+          }
+          override fun onSwitchLang() = onSwitchLang()
+          override fun onSymbols(mode: Int) = onSymbols(mode)
+          override fun onComposingTap() = onComposingTap()
+          override fun onFeedback() {}
+          override fun onSuggestionTap(word: String) = onSuggestionTap(word)
+          override fun onSnippet(text: String) = onSnippet(text)
+          override fun onNotepad() = onNotepad()
+          override fun onTranslate() = onTranslate()
+          override fun onVoice() = onVoice()
+          override fun onAssistant() = onAssistant()
+        }
+      val layoutState = Triple(rows, spaceLabel, heightPct)
+      if (kv.tag != layoutState) {
+        kv.tag = layoutState
+        kv.setLayout(rows, spaceLabel, heightPct / 100f)
+      }
+      kv.setComposing(composingText)
+      kv.setSuggestions(suggestionsList)
+    },
+  )
+}
+
+@Composable
+private fun HeroHeaderCard(
+  imeStatus: ImeStatus,
+  assistantRunning: Boolean,
+  assistantReady: Boolean,
+) {
   val gradient =
     Brush.linearGradient(
       colors = listOf(Color(0xFF015E57), Color(0xFF00796B), Color(0xFF00897B))
@@ -440,6 +720,12 @@ private fun HeroHeaderCard(imeStatus: ImeStatus) {
       ImeStatus.ACTIVE -> stringResource(R.string.status_active)
       ImeStatus.ENABLED_ONLY -> stringResource(R.string.status_enabled)
       ImeStatus.DISABLED -> stringResource(R.string.status_disabled)
+    }
+  val assistantText =
+    when {
+      assistantRunning -> stringResource(R.string.assistant_badge_listening)
+      assistantReady -> stringResource(R.string.assistant_badge_ready)
+      else -> stringResource(R.string.assistant_badge_setup)
     }
 
   Box(
@@ -470,28 +756,56 @@ private fun HeroHeaderCard(imeStatus: ImeStatus) {
           style = MaterialTheme.typography.bodySmall,
           color = Color.White.copy(alpha = 0.88f),
         )
-        Surface(
-          color = Color.White.copy(alpha = 0.18f),
-          shape = CircleShape,
-          modifier = Modifier.testTag("ime_status_badge"),
+        Row(
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
+          verticalAlignment = Alignment.CenterVertically,
         ) {
-          Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+          Surface(
+            color = Color.White.copy(alpha = 0.18f),
+            shape = CircleShape,
+            modifier = Modifier.testTag("ime_status_badge"),
           ) {
-            Icon(
-              imageVector =
-                if (imeStatus == ImeStatus.ACTIVE) Icons.Filled.CheckCircle else Icons.Filled.Keyboard,
-              contentDescription = stringResource(R.string.cd_status_icon),
-              tint = Color.White,
-              modifier = Modifier.size(14.dp),
-            )
-            Text(
-              text = statusText,
-              style = MaterialTheme.typography.labelMedium,
-              color = Color.White,
-            )
+            Row(
+              modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(5.dp),
+            ) {
+              Icon(
+                imageVector =
+                  if (imeStatus == ImeStatus.ACTIVE) Icons.Filled.CheckCircle else Icons.Filled.Keyboard,
+                contentDescription = stringResource(R.string.cd_status_icon),
+                tint = Color.White,
+                modifier = Modifier.size(14.dp),
+              )
+              Text(
+                text = statusText,
+                style = MaterialTheme.typography.labelSmall,
+                color = Color.White,
+              )
+            }
+          }
+          Surface(
+            color = Color.White.copy(alpha = 0.18f),
+            shape = CircleShape,
+            modifier = Modifier.testTag("assistant_status_badge"),
+          ) {
+            Row(
+              modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(5.dp),
+            ) {
+              Icon(
+                imageVector = Icons.Filled.RecordVoiceOver,
+                contentDescription = null,
+                tint = Color.White,
+                modifier = Modifier.size(14.dp),
+              )
+              Text(
+                text = assistantText,
+                style = MaterialTheme.typography.labelSmall,
+                color = Color.White,
+              )
+            }
           }
         }
       }

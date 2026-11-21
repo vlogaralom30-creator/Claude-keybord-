@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="assistant_a11y_description">কণ্ঠস্বরের কমান্ড অনুযায়ী ফোনে scroll, tap, back, app খোলা ইত্যাদি করার জন্য। স্ক্রিনের কোনো তথ্য ফোনের বাইরে পাঠানো হয় না।</string>
+</resources>

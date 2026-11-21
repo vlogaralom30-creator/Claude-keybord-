@@ -15,6 +15,7 @@ enum class KeyType {
     NOTEPAD,
     TRANSLATE,
     MIC,
+    ASSISTANT,
 }
 
 /**
@@ -66,11 +67,12 @@ object Layouts {
                 Key("?123", KeyType.SYMBOLS, 1.5f),
                 Key("🌐", KeyType.LANG, 1f),
                 Key(","),
-                Key(" ", KeyType.SPACE, 2.5f),
+                Key(" ", KeyType.SPACE, 2f),
                 if (bangla) Key("।", alt = ".") else Key("."),
                 Key("📝", KeyType.NOTEPAD, 1f),
                 Key("Tr", KeyType.TRANSLATE, 1f),
                 Key("🎤", KeyType.MIC, 1f),
+                Key("🤖", KeyType.ASSISTANT, 1f),
                 Key("⏎", KeyType.ENTER, 1.5f),
             )
         )

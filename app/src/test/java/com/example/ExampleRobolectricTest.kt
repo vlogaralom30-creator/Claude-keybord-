@@ -3,6 +3,9 @@ package com.example
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import com.banglakeys.app.ClipboardMemory
+import com.banglakeys.app.Command
+import com.banglakeys.app.CommandParser
+import com.banglakeys.app.Dir
 import com.banglakeys.app.KeyType
 import com.banglakeys.app.Layouts
 import com.banglakeys.app.Notes
@@ -58,7 +61,7 @@ class ExampleRobolectricTest {
   }
 
   @Test
-  fun `layouts panel and voice key build properly`() {
+  fun `layouts panel, voice, and assistant keys build properly`() {
     val rows = Layouts.panel(listOf("One", "Two", "Three"))
     assertEquals(3, rows.size)
 
@@ -66,5 +69,20 @@ class ExampleRobolectricTest {
     assertTrue(phoneticBottom.any { it.type == KeyType.MIC })
     assertTrue(phoneticBottom.any { it.type == KeyType.NOTEPAD })
     assertTrue(phoneticBottom.any { it.type == KeyType.TRANSLATE })
+    assertTrue(phoneticBottom.any { it.type == KeyType.ASSISTANT })
+  }
+
+  @Test
+  fun `command parser handles wake word and commands`() {
+    val (woke, rest) = CommandParser.splitWake("Hey Bot open TikTok")
+    assertTrue(woke)
+    assertEquals(Command.OpenApp("tiktok"), CommandParser.parse(rest))
+    assertEquals(Command.Swipe(Dir.UP), CommandParser.parse("উপরে"))
+    assertEquals(Command.Like, CommandParser.parse("sundor"))
+    assertEquals(Command.Call("ammi"), CommandParser.parse("ammi ke call koro"))
+    assertEquals(
+      Command.YoutubeSearch("tum hi ho", mostViewed = true),
+      CommandParser.parse("youtube search tum hi ho most viewed")
+    )
   }
 }
