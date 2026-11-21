@@ -11,15 +11,12 @@ object AppResolver {
             listOf("com.zhiliaoapp.musically", "com.ss.android.ugc.trill", "com.zhiliaoapp.musically.go"),
         listOf("youtube", "you tube", "ইউটিউব") to listOf("com.google.android.youtube"),
         listOf("facebook", "ফেসবুক", "fb") to listOf("com.facebook.katana", "com.facebook.lite"),
-        listOf("messenger", "মেসেঞ্জার") to listOf("com.facebook.orca", "com.facebook.mlite"),
-        listOf("whatsapp", "whats app", "হোয়াটসঅ্যাপ", "হোয়াটস অ্যাপ") to listOf("com.whatsapp", "com.whatsapp.w4b"),
         listOf("instagram", "ইনস্টাগ্রাম", "insta") to listOf("com.instagram.android"),
         listOf("chrome", "ক্রোম", "browser") to listOf("com.android.chrome"),
-        listOf("telegram", "টেলিগ্রাম") to listOf("org.telegram.messenger"),
         listOf("gmail", "জিমেইল") to listOf("com.google.android.gm"),
         listOf("maps", "map", "ম্যাপ") to listOf("com.google.android.apps.maps"),
         listOf("play store", "playstore", "প্লে স্টোর") to listOf("com.android.vending")
-    )
+    ) + AppFlows.all.map { it.names to it.packages }
 
     fun launchIntent(ctx: Context, spoken: String): Intent? {
         val pm = ctx.packageManager
@@ -32,11 +29,30 @@ object AppResolver {
             }
         }
 
-        // ইনস্টল করা app-এর নাম (label) দিয়ে খোঁজা
+        return launchIntentByLabel(ctx, listOf(q))
+    }
+
+    fun launchIntentForAppFlow(ctx: Context, flow: AppFlow): Intent? {
+        val pm = ctx.packageManager
+        for (p in flow.packages) {
+            pm.getLaunchIntentForPackage(p)?.let { return it }
+        }
+        return launchIntentByLabel(ctx, listOf(flow.key) + flow.names)
+    }
+
+    private fun launchIntentByLabel(ctx: Context, queries: List<String>): Intent? {
+        val pm = ctx.packageManager
         val main = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
         val apps = pm.queryIntentActivities(main, 0)
-        val hit = apps.firstOrNull { it.loadLabel(pm).toString().lowercase() == q }
-            ?: apps.firstOrNull { it.loadLabel(pm).toString().lowercase().contains(q) }
-        return hit?.let { pm.getLaunchIntentForPackage(it.activityInfo.packageName) }
+        for (q in queries) {
+            val lq = q.trim().lowercase()
+            if (lq.isEmpty()) continue
+            val hit = apps.firstOrNull { it.loadLabel(pm).toString().lowercase() == lq }
+                ?: apps.firstOrNull { it.loadLabel(pm).toString().lowercase().contains(lq) }
+            if (hit != null) {
+                pm.getLaunchIntentForPackage(hit.activityInfo.packageName)?.let { return it }
+            }
+        }
+        return null
     }
 }

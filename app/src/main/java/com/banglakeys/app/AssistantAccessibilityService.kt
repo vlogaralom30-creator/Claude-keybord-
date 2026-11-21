@@ -2,12 +2,16 @@ package com.banglakeys.app
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.graphics.Path
 import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import kotlinx.coroutines.delay
 
 /**
  * ফোন "ছোঁয়া" ছাড়া চালানোর মূল ইঞ্জিন: swipe, tap, double tap, back/home,
@@ -29,15 +33,18 @@ class AssistantAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        AssistantLog.d("AccessibilityService connected")
     }
 
     override fun onUnbind(intent: android.content.Intent?): Boolean {
         instance = null
+        AssistantLog.d("AccessibilityService unbound")
         return super.onUnbind(intent)
     }
 
     override fun onDestroy() {
         instance = null
+        AssistantLog.d("AccessibilityService destroyed")
         super.onDestroy()
     }
 
@@ -207,5 +214,113 @@ class AssistantAccessibilityService : AccessibilityService() {
         if (Build.VERSION.SDK_INT < 30) return false
         val f = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return false
         return f.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
+    }
+
+    // ------------------------------------------------- Pack G / H helpers
+
+    fun findNode(predicate: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {
+        val root = rootInActiveWindow ?: return null
+        var hit: AccessibilityNodeInfo? = null
+        walk(root, 0) { n ->
+            if (hit != null) return@walk
+            if (predicate(n)) hit = n
+        }
+        return hit
+    }
+
+    fun findEditable(): AccessibilityNodeInfo? {
+        val focused = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+        if (focused != null && (focused.isEditable || focused.className?.toString()?.contains("EditText", true) == true)) {
+            return focused
+        }
+        return findNode { n ->
+            n.isEditable || n.className?.toString()?.contains("EditText", true) == true
+        }
+    }
+
+    private fun hintTextOf(n: AccessibilityNodeInfo): String =
+        if (Build.VERSION.SDK_INT >= 26) n.hintText?.toString().orEmpty() else ""
+
+    fun findByHints(hints: List<String>): AccessibilityNodeInfo? {
+        val clean = hints.map { it.trim().lowercase() }.filter { it.isNotEmpty() }
+        if (clean.isEmpty()) return null
+        val found = findNode { n ->
+            val t = n.text?.toString().orEmpty().lowercase()
+            val d = n.contentDescription?.toString().orEmpty().lowercase()
+            val h = hintTextOf(n).lowercase()
+            clean.any { hint ->
+                (t.isNotEmpty() && t.contains(hint)) ||
+                    (d.isNotEmpty() && d.contains(hint)) ||
+                    (h.isNotEmpty() && h.contains(hint))
+            }
+        }
+        AssistantLog.d("findByHints($clean) -> ${found != null} (${found?.className})")
+        return found
+    }
+
+    fun findLowestClickableAtBottom(): AccessibilityNodeInfo? {
+        val root = rootInActiveWindow ?: return null
+        val minY = (screenH() * 0.65f).toInt()
+        var best: AccessibilityNodeInfo? = null
+        var bestBottom = Int.MIN_VALUE
+        val r = Rect()
+        walk(root, 0) { n ->
+            if (!n.isClickable) return@walk
+            n.getBoundsInScreen(r)
+            if (r.isEmpty || r.centerY() < minY) return@walk
+            if (r.bottom > bestBottom) {
+                bestBottom = r.bottom
+                best = n
+            }
+        }
+        AssistantLog.d("findLowestClickableAtBottom -> ${best != null}")
+        return best
+    }
+
+    fun clickByHints(hints: List<String>): Boolean {
+        val node = findByHints(hints) ?: return false
+        val ok = clickNode(node)
+        AssistantLog.d("clickByHints($hints) -> $ok")
+        return ok
+    }
+
+    /**
+     * Text বসানোর fallback chain:
+     * a) focus/click + ACTION_SET_TEXT
+     * b) clipboard + ACTION_PASTE (ClipboardMemory-তে সেভ হওয়া ঠেকিয়ে)
+     */
+    fun enterText(node: AccessibilityNodeInfo, text: String): Boolean {
+        node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+        if (!node.isFocused) clickNode(node)
+
+        val args = Bundle().apply {
+            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+        }
+        if (node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)) {
+            AssistantLog.d("enterText: ACTION_SET_TEXT ok")
+            return true
+        }
+
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return false
+        ClipboardMemory.ignoreNext(text)
+        cm.setPrimaryClip(ClipData.newPlainText("banglakeys_assistant", text))
+        node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+        val pasted = node.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+        AssistantLog.d("enterText: ACTION_PASTE -> $pasted")
+        return pasted
+    }
+
+    suspend fun waitForPackage(pkgs: List<String>, timeoutMs: Long): Boolean {
+        val clean = pkgs.map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (true) {
+            val fg = foregroundPackage()
+            if (fg.isNotEmpty() && (clean.isEmpty() || fg in clean)) {
+                return true
+            }
+            val rem = deadline - System.currentTimeMillis()
+            if (rem <= 0L) return false
+            delay(minOf(300L, rem))
+        }
     }
 }

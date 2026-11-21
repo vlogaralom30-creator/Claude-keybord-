@@ -18,6 +18,12 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.widget.Toast
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelChildren
+import kotlinx.coroutines.launch
 
 /**
  * সারাক্ষণ শোনা Foreground Service। "Hey Bot ..." শুনলে কমান্ড চালায়।
@@ -30,6 +36,7 @@ class AssistantListenerService : Service() {
         const val ACTION_STOP = "com.banglakeys.app.ASSISTANT_STOP"
         private const val CHANNEL_ID = "assistant_listen"
         private const val NOTIF_ID = 4201
+        private const val CONFIRM_TIMEOUT_MS = 10_000L
 
         @Volatile
         var running: Boolean = false
@@ -53,11 +60,22 @@ class AssistantListenerService : Service() {
     }
 
     private val handler = Handler(Looper.getMainLooper())
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var recognizer: SpeechRecognizer? = null
     private lateinit var executor: CommandExecutor
     private var awakeUntil = 0L
     private var paused = false
     private val restart = Runnable { listenOnce() }
+
+    // Minimal T4 point 1 confirmation state
+    private var pending: Command? = null
+    private val confirmTimeoutRunnable = Runnable {
+        if (pending != null) {
+            AssistantLog.d("Confirmation timeout for $pending")
+            clearPending()
+            toast("⌛ সময় শেষ, বাতিল হয়েছে")
+        }
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -76,6 +94,7 @@ class AssistantListenerService : Service() {
             executor = CommandExecutor(applicationContext)
             running = true
             instance = this
+            AssistantLog.d("AssistantListenerService started")
             listenOnce()
         }
         return START_NOT_STICKY
@@ -84,9 +103,12 @@ class AssistantListenerService : Service() {
     override fun onDestroy() {
         running = false
         instance = null
+        clearPending()
+        serviceScope.cancel()
         handler.removeCallbacksAndMessages(null)
         recognizer?.destroy()
         recognizer = null
+        AssistantLog.d("AssistantListenerService destroyed")
         super.onDestroy()
     }
 
@@ -163,13 +185,97 @@ class AssistantListenerService : Service() {
         r.startListening(intent)
     }
 
+    // ------------------------------------------------------------- confirmation (T4 minimal)
+
+    private fun setPending(cmd: Command, question: String) {
+        clearPending()
+        pending = cmd
+        handler.postDelayed(confirmTimeoutRunnable, CONFIRM_TIMEOUT_MS)
+        AssistantLog.d("Pending confirm set: $cmd -> $question")
+        toast(question)
+    }
+
+    private fun clearPending() {
+        pending = null
+        handler.removeCallbacks(confirmTimeoutRunnable)
+    }
+
+    private fun confirmationQuestion(cmd: Command): String? = when (cmd) {
+        is Command.AppCall -> {
+            if (AssistantPrefs.confirmBeforeAppCall(this)) {
+                "${cmd.appName}-তে ${cmd.contact}-কে ${if (cmd.video) "video " else ""}call করব? হ্যাঁ/না"
+            } else null
+        }
+        is Command.AppMessage -> {
+            if (cmd.send && AssistantPrefs.confirmBeforeHumanSend(this)) {
+                "${cmd.appName}-তে ${cmd.contact}-কে মেসেজ পাঠাব? হ্যাঁ/না"
+            } else null
+        }
+        is Command.AppChat -> {
+            if (cmd.send && AssistantPrefs.confirmBeforeAiChatSend(this)) {
+                "${cmd.appName ?: "এই app"}-এ পাঠাব? হ্যাঁ/না"
+            } else null
+        }
+        else -> null
+    }
+
+    private fun matchConfirmReply(candidates: List<String>): Boolean? {
+        for (raw in candidates) {
+            val (_, rest) = CommandParser.splitWake(raw)
+            val norm = rest.lowercase().trim()
+            val tokens = norm.split(Regex("\\s+")).filter { it.isNotEmpty() }
+            if (norm in CommandParser.CONFIRM_YES_WORDS || tokens.any { it in CommandParser.CONFIRM_YES_WORDS }) {
+                return true
+            }
+            if (norm in CommandParser.CONFIRM_NO_WORDS || tokens.any { it in CommandParser.CONFIRM_NO_WORDS }) {
+                return false
+            }
+        }
+        return null
+    }
+
     // ------------------------------------------------------------- commands
 
     private fun handleResults(candidates: List<String>) {
         if (candidates.isEmpty()) return
         val now = SystemClock.elapsedRealtime()
-        var unknown: String? = null
+        AssistantLog.d("Heard: $candidates (awake=${now < awakeUntil}, pending=${pending != null})")
 
+        // 1. Check pending confirmation first
+        val currentPending = pending
+        if (currentPending != null) {
+            // PanicStop overrides waiting confirmation
+            for (text in candidates) {
+                val (woke, rest) = CommandParser.splitWake(text)
+                val targetText = if (woke) rest else text
+                if (CommandParser.parse(targetText) == Command.PanicStop) {
+                    dispatchCommand(Command.PanicStop)
+                    return
+                }
+            }
+            when (matchConfirmReply(candidates)) {
+                true -> {
+                    clearPending()
+                    awakeUntil = now + AssistantConfig.AWAKE_WINDOW_MS
+                    AssistantLog.d("Confirmation YES -> executing $currentPending")
+                    dispatchCommand(currentPending)
+                    return
+                }
+                false -> {
+                    clearPending()
+                    AssistantLog.d("Confirmation NO -> cancelled $currentPending")
+                    toast("❌ বাতিল হয়েছে")
+                    return
+                }
+                null -> {
+                    AssistantLog.d("Waiting confirmation (ignored unrelated utterance)")
+                    return
+                }
+            }
+        }
+
+        // 2. Normal wake / awake command parsing
+        var unknown: String? = null
         for (text in candidates) {
             val (woke, rest) = CommandParser.splitWake(text)
             val awake = woke || now < awakeUntil
@@ -177,29 +283,58 @@ class AssistantListenerService : Service() {
 
             if (woke && rest.isBlank()) {
                 awakeUntil = now + AssistantConfig.AWAKE_WINDOW_MS
+                AssistantLog.d("Woke up (no command yet)")
                 toast("🎤 বলুন…")
                 return
             }
             val cmd = CommandParser.parse(rest)
+            AssistantLog.d("Parse '$rest' (woke=$woke) -> $cmd")
             if (cmd == null) {
                 if (unknown == null) unknown = rest
                 continue
             }
             awakeUntil = now + AssistantConfig.AWAKE_WINDOW_MS
-            when (cmd) {
-                Command.Sleep -> {
-                    awakeUntil = 0L
-                    toast("😴 ঘুমালাম — \"Hey Bot\" বললে জাগবো")
-                }
-                Command.StopAssistant -> {
-                    toast("🤖 Assistant বন্ধ")
-                    stopSelf()
-                }
-                else -> toast(executor.execute(cmd))
+
+            val question = confirmationQuestion(cmd)
+            if (question != null) {
+                setPending(cmd, question)
+                return
             }
+
+            dispatchCommand(cmd)
             return
         }
         if (unknown != null) toast("বুঝিনি: $unknown")
+    }
+
+    private fun dispatchCommand(cmd: Command) {
+        when (cmd) {
+            Command.Sleep -> {
+                awakeUntil = 0L
+                toast("😴 ঘুমালাম — \"Hey Bot\" বললে জাগবো")
+            }
+            Command.StopAssistant -> {
+                toast("🤖 Assistant বন্ধ")
+                stopSelf()
+            }
+            Command.PanicStop -> {
+                clearPending()
+                serviceScope.coroutineContext.cancelChildren()
+                awakeUntil = 0L
+                AssistantLog.d("PanicStop executed — cancelled pending and running flows")
+                toast("🛑 সব কাজ বন্ধ — ঘুমালাম")
+            }
+            else -> {
+                if (executor.isAsync(cmd)) {
+                    serviceScope.launch {
+                        val feedback = executor.executeAsync(cmd)
+                        toast(feedback)
+                    }
+                } else {
+                    toast(executor.execute(cmd))
+                }
+            }
+        }
     }
 
     private fun toast(msg: String) {

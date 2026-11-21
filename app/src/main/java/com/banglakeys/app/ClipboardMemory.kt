@@ -33,7 +33,7 @@ class ClipboardMemory(private val context: Context) {
             val text = if (clip != null && clip.itemCount > 0) {
                 clip.getItemAt(0).coerceToText(context)?.toString()
             } else null
-            if (!text.isNullOrBlank()) add(text)
+            if (!text.isNullOrBlank() && !shouldIgnore(text)) add(text)
         }
         manager = cm
         listener = l
@@ -85,5 +85,30 @@ class ClipboardMemory(private val context: Context) {
 
     companion object {
         private const val MAX_ITEMS = 20
+
+        @Volatile
+        private var suppressedText: String? = null
+
+        @Volatile
+        private var suppressedUntilMs: Long = 0L
+
+        /** Assistant clipboard-paste fallback-এর সময় clipboard history-তে সেভ না করতে mark করে। */
+        fun ignoreNext(text: String) {
+            suppressedText = text.trim()
+            suppressedUntilMs = System.currentTimeMillis() + 5_000L
+        }
+
+        private fun shouldIgnore(text: String): Boolean {
+            val exp = suppressedText ?: return false
+            if (System.currentTimeMillis() > suppressedUntilMs) {
+                suppressedText = null
+                return false
+            }
+            if (text.trim() == exp) {
+                suppressedText = null
+                return true
+            }
+            return false
+        }
     }
 }

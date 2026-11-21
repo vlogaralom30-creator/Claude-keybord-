@@ -2,6 +2,9 @@ package com.example
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import com.banglakeys.app.AppFlows
+import com.banglakeys.app.AppResolver
+import com.banglakeys.app.AssistantPrefs
 import com.banglakeys.app.ClipboardMemory
 import com.banglakeys.app.Command
 import com.banglakeys.app.CommandParser
@@ -10,8 +13,11 @@ import com.banglakeys.app.KeyType
 import com.banglakeys.app.Layouts
 import com.banglakeys.app.Notes
 import com.banglakeys.app.Phonetic
+import com.banglakeys.app.SettingsTarget
 import com.banglakeys.app.Suggestions
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -73,16 +79,161 @@ class ExampleRobolectricTest {
   }
 
   @Test
-  fun `command parser handles wake word and commands`() {
+  fun `existing regression commands still parse identically`() {
     val (woke, rest) = CommandParser.splitWake("Hey Bot open TikTok")
     assertTrue(woke)
     assertEquals(Command.OpenApp("tiktok"), CommandParser.parse(rest))
+    assertEquals(Command.OpenApp("claude"), CommandParser.parse("open claude"))
+    assertEquals(Command.OpenApp("chatgpt"), CommandParser.parse("open chatgpt"))
+    assertEquals(Command.Swipe(Dir.UP), CommandParser.parse("up"))
     assertEquals(Command.Swipe(Dir.UP), CommandParser.parse("উপরে"))
     assertEquals(Command.Like, CommandParser.parse("sundor"))
+    assertEquals(Command.Call("fatema"), CommandParser.parse("call fatema"))
     assertEquals(Command.Call("ammi"), CommandParser.parse("ammi ke call koro"))
+    assertEquals(Command.TypeText("hello world"), CommandParser.parse("type hello world"))
     assertEquals(
       Command.YoutubeSearch("tum hi ho", mostViewed = true),
       CommandParser.parse("youtube search tum hi ho most viewed")
     )
+    assertEquals(Command.PanicStop, CommandParser.parse("stop everything"))
+    assertEquals(Command.PanicStop, CommandParser.parse("সব বন্ধ"))
+  }
+
+  @Test
+  fun `pack F parses folder and file creation in english banglish and bangla`() {
+    assertEquals(Command.CreateFolder("photos", null), CommandParser.parse("create folder photos"))
+    assertEquals(Command.CreateFolder("ছবি", null), CommandParser.parse("ফোল্ডার বানাও ছবি"))
+    assertEquals(
+      Command.CreateFolder("tour", "photos"),
+      CommandParser.parse("create folder tour inside photos")
+    )
+    assertEquals(
+      Command.CreateFolder("tour", "photos"),
+      CommandParser.parse("photos er moddhe folder banao tour")
+    )
+    assertEquals(Command.CreateFile("notes", "txt", null), CommandParser.parse("create file notes"))
+    assertEquals(Command.CreateFile("notes", "txt", null), CommandParser.parse("create file notes dot txt"))
+    assertEquals(Command.CreateFile("নোটস", "txt", null), CommandParser.parse("ফাইল বানাও নোটস"))
+    assertEquals(
+      Command.CreateFile("shopping", "txt", "milk eggs bread"),
+      CommandParser.parse("create file shopping with text milk eggs bread")
+    )
+    assertEquals(
+      Command.CreateFile("data", "csv", null),
+      CommandParser.parse("create file data dot csv")
+    )
+  }
+
+  @Test
+  fun `pack G parses AI chat and current app type-and-send`() {
+    assertEquals(
+      Command.AppChat("claude", "hi", send = true),
+      CommandParser.parse("open claude type hi and send")
+    )
+    assertEquals(
+      Command.AppChat("claude", "hi", send = true),
+      CommandParser.parse("claude khulo hi likho send koro")
+    )
+    assertEquals(
+      Command.AppChat("claude", "হাই", send = true),
+      CommandParser.parse("ক্লড খোলো হাই লিখে পাঠাও")
+    )
+    assertEquals(
+      Command.AppChat("chatgpt", "hello", send = false),
+      CommandParser.parse("open chatgpt type hello")
+    )
+    assertEquals(
+      Command.AppChat("gemini", "tea and coffee", send = true),
+      CommandParser.parse("open gemini type tea and coffee and send")
+    )
+    assertEquals(
+      Command.AppChat(null, "hi", send = true),
+      CommandParser.parse("type hi and send")
+    )
+    // Misheard alias check
+    assertEquals("claude", AppFlows.find("cloud")?.key)
+    assertEquals("imo", AppFlows.find("emo")?.key)
+    assertEquals("imo", AppFlows.find("ইমু")?.key)
+    assertNotNull(AppFlows.find("চ্যাট জিপিটি"))
+  }
+
+  @Test
+  fun `pack H parses messaging app calls and messages`() {
+    assertEquals(
+      Command.AppCall("imo", "fatema", video = false),
+      CommandParser.parse("open imo call fatema")
+    )
+    assertEquals(
+      Command.AppCall("imo", "fatema", video = false),
+      CommandParser.parse("imo te fatema ke call koro")
+    )
+    assertEquals(
+      Command.AppCall("imo", "fatema", video = true),
+      CommandParser.parse("open imo video call fatema")
+    )
+    assertEquals(
+      Command.AppCall("imo", "fatema", video = true),
+      CommandParser.parse("imo te fatema ke video call")
+    )
+    assertEquals(
+      Command.AppCall("imo", "ফাতেমা", video = true),
+      CommandParser.parse("ইমুতে ফাতেমাকে ভিডিও কল")
+    )
+    assertEquals(
+      Command.AppCall("whatsapp", "ammi", video = false),
+      CommandParser.parse("whatsapp call ammi audio")
+    )
+    assertEquals(
+      Command.AppCall("imo", "fatema", video = true),
+      CommandParser.parse("call fatema on imo video")
+    )
+    assertEquals(
+      Command.AppMessage("whatsapp", "fatema", "hi", send = true),
+      CommandParser.parse("whatsapp e fatema ke hi pathao")
+    )
+  }
+
+  @Test
+  fun `pack I parses everyday commands with bangla and english numbers`() {
+    assertEquals(Command.OpenCamera, CommandParser.parse("open camera"))
+    assertEquals(Command.TakePhoto, CommandParser.parse("take photo"))
+    assertEquals(Command.SetAlarm(7, 30), CommandParser.parse("set alarm 7 30 am"))
+    assertEquals(Command.SetAlarm(7, 30), CommandParser.parse("7:30 am e alarm"))
+    assertEquals(Command.SetAlarm(7, 30), CommandParser.parse("সকাল ৭টা ৩০ এ alarm"))
+    assertEquals(Command.SetTimer(300), CommandParser.parse("set timer 5 minutes"))
+    assertEquals(Command.SetTimer(300), CommandParser.parse("5 minute timer"))
+    assertEquals(Command.Navigate("dhaka airport"), CommandParser.parse("navigate to Dhaka airport"))
+    assertEquals(Command.WebSearch("best phones"), CommandParser.parse("search google for best phones"))
+    assertEquals(Command.PlaySong("tum hi ho"), CommandParser.parse("play song tum hi ho"))
+    assertEquals(Command.SaveNote("buy milk"), CommandParser.parse("save note buy milk"))
+    assertEquals(
+      Command.WriteEmail("fatema", "meeting", "tomorrow at 10"),
+      CommandParser.parse("write email to fatema subject meeting body tomorrow at 10")
+    )
+    assertEquals(
+      Command.WriteSms("ammi", "ami ashchi"),
+      CommandParser.parse("write sms to ammi ami ashchi")
+    )
+    assertEquals(
+      Command.OpenSystemSettings(SettingsTarget.WIFI),
+      CommandParser.parse("open wifi settings")
+    )
+    assertEquals(
+      Command.OpenSystemSettings(SettingsTarget.BLUETOOTH),
+      CommandParser.parse("open bluetooth settings")
+    )
+  }
+
+  @Test
+  fun `assistant prefs defaults and bounds match T11 spec`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    assertTrue(AssistantPrefs.confirmBeforeAppCall(context))
+    assertTrue(AssistantPrefs.confirmBeforeHumanSend(context))
+    assertFalse(AssistantPrefs.confirmBeforeAiChatSend(context))
+    assertEquals(6, AssistantPrefs.appFlowTimeoutSec(context))
+    AssistantPrefs.setAppFlowTimeoutSec(context, 99)
+    assertEquals(15, AssistantPrefs.appFlowTimeoutSec(context))
+    AssistantPrefs.setAppFlowTimeoutSec(context, 0)
+    assertEquals(2, AssistantPrefs.appFlowTimeoutSec(context))
   }
 }
