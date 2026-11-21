@@ -1,0 +1,6 @@
+{
+  "name": "Bangla Keys",
+  "description": "Avro-style Roman-to-Bangla phonetic keyboard IME with customizable layout, haptic feedback, and live typing tester.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
