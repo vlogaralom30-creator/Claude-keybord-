@@ -2,9 +2,7 @@ package com.banglakeys.app
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
+import android.content.Intent
 import android.graphics.Path
 import android.graphics.Rect
 import android.os.Build
@@ -12,11 +10,12 @@ import android.os.Bundle
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.widget.Toast
 import kotlinx.coroutines.delay
 
 /**
  * ফোন "ছোঁয়া" ছাড়া চালানোর মূল ইঞ্জিন: swipe, tap, double tap, back/home,
- * screen-এর লেখা দেখে বাটনে click, ইত্যাদি।
+ * screen-এর লেখা দেখে বাটনে click, multi-step FlowRunner helpers, ও নিরাপদ Auto Ad Skipper।
  * Settings > Accessibility থেকে একবার ON করতে হয়।
  */
 class AssistantAccessibilityService : AccessibilityService() {
@@ -29,107 +28,40 @@ class AssistantAccessibilityService : AccessibilityService() {
             """(\d[\d.,]*)\s*(k|m|b|lakh|crore|হাজার|লাখ|কোটি)?\s*(views|view|ভিউ)""",
             RegexOption.IGNORE_CASE
         )
+
+        private const val AD_SCAN_INTERVAL_MS = 450L
+        private const val AD_CLICK_COOLDOWN_MS = 2200L
     }
 
-    private var lastAdScanMs = 0L
-    private var lastAdClickMs = 0L
+    private var lastAdScanAt = 0L
+    private var lastAdClickAt = 0L
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
-        AssistantLog.d("AccessibilityService connected")
+        AssistantLog.d("Accessibility service connected")
     }
 
-    override fun onUnbind(intent: android.content.Intent?): Boolean {
+    override fun onUnbind(intent: Intent?): Boolean {
         instance = null
-        AssistantLog.d("AccessibilityService unbound")
         return super.onUnbind(intent)
     }
 
     override fun onDestroy() {
         instance = null
-        AssistantLog.d("AccessibilityService destroyed")
         super.onDestroy()
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        val ev = event ?: return
-        val type = ev.eventType
-        if (type != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
-            type != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
-        ) return
-
         if (!AssistantPrefs.adSkipEnabled(this)) return
-
-        val pkg = ev.packageName?.toString()?.takeIf { it.isNotBlank() } ?: foregroundPackage()
-        if (AdSkipper.isBlockedPackage(pkg)) return
-
-        val now = SystemClock.elapsedRealtime()
-        if (now - lastAdClickMs < 1500L) return
-        if (now - lastAdScanMs < 350L) return
-        lastAdScanMs = now
-
-        scanAndSkipAds(pkg)
+        val now = SystemClock.uptimeMillis()
+        if (now - lastAdScanAt < AD_SCAN_INTERVAL_MS) return
+        if (now - lastAdClickAt < AD_CLICK_COOLDOWN_MS) return
+        lastAdScanAt = now
+        scanAndSkipAds(now)
     }
 
     override fun onInterrupt() {}
-
-    private fun scanAndSkipAds(pkg: String) {
-        val root = rootInActiveWindow ?: return
-        val adNodes = ArrayList<AdSkipper.AdNode>(96)
-        val nodeMap = HashMap<Int, AccessibilityNodeInfo>(96)
-        var nextId = 1
-        val rect = Rect()
-
-        fun collect(node: AccessibilityNodeInfo?, parentId: Int, depth: Int) {
-            if (node == null || depth > 28 || adNodes.size >= 240) return
-            val id = nextId++
-            node.getBoundsInScreen(rect)
-            val hint = if (Build.VERSION.SDK_INT >= 26) node.hintText?.toString().orEmpty() else ""
-            adNodes.add(
-                AdSkipper.AdNode(
-                    id = id,
-                    viewId = node.viewIdResourceName.orEmpty(),
-                    className = node.className?.toString().orEmpty(),
-                    text = node.text?.toString().orEmpty(),
-                    contentDescription = node.contentDescription?.toString().orEmpty(),
-                    hintText = hint,
-                    isClickable = node.isClickable,
-                    isEnabled = node.isEnabled,
-                    isVisible = node.isVisibleToUser,
-                    isEditable = node.isEditable,
-                    isFocused = node.isFocused,
-                    isPassword = node.isPassword,
-                    left = rect.left,
-                    top = rect.top,
-                    right = rect.right,
-                    bottom = rect.bottom,
-                    parentId = parentId
-                )
-            )
-            nodeMap[id] = node
-            for (i in 0 until node.childCount) {
-                if (adNodes.size >= 240) break
-                collect(node.getChild(i), id, depth + 1)
-            }
-        }
-
-        collect(root, 0, 0)
-        val match = AdSkipper.findSkipTarget(
-            packageName = pkg,
-            screenW = screenW(),
-            screenH = screenH(),
-            nodes = adNodes,
-            allowGameAds = AssistantPrefs.adSkipGamesEnabled(this)
-        ) ?: return
-
-        val target = nodeMap[match.nodeId] ?: return
-        if (clickNode(target)) {
-            lastAdClickMs = SystemClock.elapsedRealtime()
-            AssistantPrefs.recordAdSkip(this, match.sourceLabel)
-            AssistantLog.d("AdSkipper skipped [${match.reason}] in $pkg")
-        }
-    }
 
     // ---------------------------------------------------------------- info
 
@@ -209,6 +141,80 @@ class AssistantAccessibilityService : AccessibilityService() {
         return if (d.isNotEmpty()) d else t
     }
 
+    fun findNode(predicate: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {
+        val root = rootInActiveWindow ?: return null
+        var hit: AccessibilityNodeInfo? = null
+        walk(root, 0) { n ->
+            if (hit != null) return@walk
+            if (predicate(n)) hit = n
+        }
+        return hit
+    }
+
+    fun findEditable(): AccessibilityNodeInfo? =
+        findNode { n ->
+            n.isVisibleToUser && (n.isEditable || n.className?.toString()?.contains("EditText", true) == true)
+        }
+
+    fun findByHints(hints: List<String>): AccessibilityNodeInfo? {
+        val lowHints = hints.map { it.trim().lowercase() }.filter { it.isNotEmpty() }
+        if (lowHints.isEmpty()) return null
+        return findNode { n ->
+            if (!n.isVisibleToUser) return@findNode false
+            val text = n.text?.toString().orEmpty().lowercase()
+            val desc = n.contentDescription?.toString().orEmpty().lowercase()
+            val hint = if (Build.VERSION.SDK_INT >= 26) n.hintText?.toString().orEmpty().lowercase() else ""
+            val viewId = n.viewIdResourceName.orEmpty().lowercase()
+            lowHints.any { h ->
+                text.contains(h) || desc.contains(h) || hint.contains(h) || viewId.contains(h)
+            }
+        }
+    }
+
+    fun findLowestClickableAtBottom(): AccessibilityNodeInfo? {
+        val root = rootInActiveWindow ?: return null
+        val minY = (screenH() * 0.55f).toInt()
+        var best: AccessibilityNodeInfo? = null
+        var bestBottom = -1
+        val rect = Rect()
+        walk(root, 0) { n ->
+            if (!n.isVisibleToUser || (!n.isClickable && !n.isEditable)) return@walk
+            n.getBoundsInScreen(rect)
+            if (!rect.isEmpty && rect.centerY() >= minY && rect.bottom > bestBottom) {
+                bestBottom = rect.bottom
+                best = n
+            }
+        }
+        return best
+    }
+
+    fun clickByHints(hints: List<String>): Boolean {
+        val node = findByHints(hints) ?: return false
+        return clickNode(node)
+    }
+
+    fun enterText(node: AccessibilityNodeInfo, text: String): Boolean {
+        node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+        node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        val args = Bundle().apply {
+            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+        }
+        return node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+    }
+
+    suspend fun waitForPackage(packages: List<String>, timeoutMs: Long): Boolean {
+        val targets = packages.map { it.lowercase() }.toSet()
+        if (targets.isEmpty()) return true
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (true) {
+            val fg = foregroundPackage().lowercase()
+            if (fg in targets) return true
+            val rem = deadline - SystemClock.uptimeMillis()
+            if (rem <= 0L) return false
+            delay(minOf(250L, rem))
+        }
+    }
+
     /** Screen-এ [text] লেখা (বা description) থাকা বাটনে click। exact=true হলে পুরো লেখা মিলতে হবে। */
     fun clickByText(text: String, exact: Boolean = false): Boolean {
         val root = rootInActiveWindow ?: return false
@@ -224,6 +230,16 @@ class AssistantAccessibilityService : AccessibilityService() {
         return target?.let { clickNode(it) } ?: false
     }
 
+    /** [labels]-এর যেকোনো একটা লেখার বাটন screen-এ পেলে click করে (যেমন "Clear all" / "Close all")। */
+    fun clickByAnyText(labels: List<String>): Boolean = labels.any { clickByText(it) }
+
+    /** Recents-এ মাঝের (চলতি) app-কার্ড উপরে ঠেলে বন্ধ করে। */
+    fun dismissCurrentCard(): Boolean {
+        val w = screenW().toFloat()
+        val h = screenH().toFloat()
+        return swipe(w * 0.5f, h * 0.5f, w * 0.5f, h * 0.1f, 220)
+    }
+
     /** Node-টা (বা তার clickable parent-কে) click করে; না পারলে মাঝখানে tap। */
     fun clickNode(node: AccessibilityNodeInfo): Boolean {
         var n: AccessibilityNodeInfo? = node
@@ -236,6 +252,61 @@ class AssistantAccessibilityService : AccessibilityService() {
         val r = Rect()
         node.getBoundsInScreen(r)
         return if (!r.isEmpty) tap(r.centerX().toFloat(), r.centerY().toFloat()) else false
+    }
+
+    // --------------------------------------------------------------- Auto Ad Skipper
+
+    private fun scanAndSkipAds(now: Long) {
+        val root = rootInActiveWindow ?: return
+        val pkg = root.packageName?.toString().orEmpty()
+        if (AdSkipper.isBlockedPackage(pkg)) return
+
+        val adNodes = ArrayList<AdSkipper.AdNode>(64)
+        val rawMap = HashMap<Int, AccessibilityNodeInfo>(64)
+        val r = Rect()
+
+        fun collect(node: AccessibilityNodeInfo?, parentId: Int, depth: Int) {
+            if (node == null || depth > 35 || adNodes.size >= 240) return
+            val id = adNodes.size + 1
+            node.getBoundsInScreen(r)
+            val hint = if (Build.VERSION.SDK_INT >= 26) node.hintText?.toString().orEmpty() else ""
+            adNodes.add(
+                AdSkipper.AdNode(
+                    id = id,
+                    viewId = node.viewIdResourceName.orEmpty(),
+                    className = node.className?.toString().orEmpty(),
+                    text = node.text?.toString().orEmpty(),
+                    contentDescription = node.contentDescription?.toString().orEmpty(),
+                    hintText = hint,
+                    isClickable = node.isClickable,
+                    isEnabled = node.isEnabled,
+                    isVisible = node.isVisibleToUser,
+                    isEditable = node.isEditable,
+                    isFocused = node.isFocused,
+                    isPassword = node.isPassword,
+                    left = r.left,
+                    top = r.top,
+                    right = r.right,
+                    bottom = r.bottom,
+                    parentId = parentId
+                )
+            )
+            rawMap[id] = node
+            for (i in 0 until node.childCount) {
+                collect(node.getChild(i), id, depth + 1)
+            }
+        }
+
+        collect(root, 0, 0)
+        val allowGames = AssistantPrefs.adSkipGamesEnabled(this)
+        val match = AdSkipper.findSkipTarget(pkg, screenW(), screenH(), adNodes, allowGames) ?: return
+        val targetNode = rawMap[match.nodeId] ?: return
+        if (clickNode(targetNode)) {
+            lastAdClickAt = now
+            AssistantPrefs.recordAdSkip(this, match.sourceLabel)
+            AssistantLog.d("AdSkipper skipped [${match.sourceLabel}] reason=${match.reason}")
+            Toast.makeText(applicationContext, "Ad skipped (${match.sourceLabel})", Toast.LENGTH_SHORT).show()
+        }
     }
 
     /** "1.2M views" / "350K views" / "12,345 views" থেকে সংখ্যা বের করে। */
@@ -293,113 +364,5 @@ class AssistantAccessibilityService : AccessibilityService() {
         if (Build.VERSION.SDK_INT < 30) return false
         val f = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return false
         return f.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
-    }
-
-    // ------------------------------------------------- Pack G / H helpers
-
-    fun findNode(predicate: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {
-        val root = rootInActiveWindow ?: return null
-        var hit: AccessibilityNodeInfo? = null
-        walk(root, 0) { n ->
-            if (hit != null) return@walk
-            if (predicate(n)) hit = n
-        }
-        return hit
-    }
-
-    fun findEditable(): AccessibilityNodeInfo? {
-        val focused = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-        if (focused != null && (focused.isEditable || focused.className?.toString()?.contains("EditText", true) == true)) {
-            return focused
-        }
-        return findNode { n ->
-            n.isEditable || n.className?.toString()?.contains("EditText", true) == true
-        }
-    }
-
-    private fun hintTextOf(n: AccessibilityNodeInfo): String =
-        if (Build.VERSION.SDK_INT >= 26) n.hintText?.toString().orEmpty() else ""
-
-    fun findByHints(hints: List<String>): AccessibilityNodeInfo? {
-        val clean = hints.map { it.trim().lowercase() }.filter { it.isNotEmpty() }
-        if (clean.isEmpty()) return null
-        val found = findNode { n ->
-            val t = n.text?.toString().orEmpty().lowercase()
-            val d = n.contentDescription?.toString().orEmpty().lowercase()
-            val h = hintTextOf(n).lowercase()
-            clean.any { hint ->
-                (t.isNotEmpty() && t.contains(hint)) ||
-                    (d.isNotEmpty() && d.contains(hint)) ||
-                    (h.isNotEmpty() && h.contains(hint))
-            }
-        }
-        AssistantLog.d("findByHints($clean) -> ${found != null} (${found?.className})")
-        return found
-    }
-
-    fun findLowestClickableAtBottom(): AccessibilityNodeInfo? {
-        val root = rootInActiveWindow ?: return null
-        val minY = (screenH() * 0.65f).toInt()
-        var best: AccessibilityNodeInfo? = null
-        var bestBottom = Int.MIN_VALUE
-        val r = Rect()
-        walk(root, 0) { n ->
-            if (!n.isClickable) return@walk
-            n.getBoundsInScreen(r)
-            if (r.isEmpty || r.centerY() < minY) return@walk
-            if (r.bottom > bestBottom) {
-                bestBottom = r.bottom
-                best = n
-            }
-        }
-        AssistantLog.d("findLowestClickableAtBottom -> ${best != null}")
-        return best
-    }
-
-    fun clickByHints(hints: List<String>): Boolean {
-        val node = findByHints(hints) ?: return false
-        val ok = clickNode(node)
-        AssistantLog.d("clickByHints($hints) -> $ok")
-        return ok
-    }
-
-    /**
-     * Text বসানোর fallback chain:
-     * a) focus/click + ACTION_SET_TEXT
-     * b) clipboard + ACTION_PASTE (ClipboardMemory-তে সেভ হওয়া ঠেকিয়ে)
-     */
-    fun enterText(node: AccessibilityNodeInfo, text: String): Boolean {
-        node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-        if (!node.isFocused) clickNode(node)
-
-        val args = Bundle().apply {
-            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
-        }
-        if (node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)) {
-            AssistantLog.d("enterText: ACTION_SET_TEXT ok")
-            return true
-        }
-
-        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return false
-        ClipboardMemory.ignoreNext(text)
-        cm.setPrimaryClip(ClipData.newPlainText("banglakeys_assistant", text))
-        node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-        val pasted = node.performAction(AccessibilityNodeInfo.ACTION_PASTE)
-        AssistantLog.d("enterText: ACTION_PASTE -> $pasted")
-        return pasted
-    }
-
-    suspend fun waitForPackage(pkgs: List<String>, timeoutMs: Long): Boolean {
-        val clean = pkgs.map { it.trim() }.filter { it.isNotEmpty() }.toSet()
-        val deadline = System.currentTimeMillis() + timeoutMs
-        while (true) {
-            val fg = foregroundPackage()
-            if (fg.isNotEmpty() && (clean.isEmpty() || fg in clean)) {
-                return true
-            }
-            val rem = deadline - System.currentTimeMillis()
-            if (rem <= 0L) return false
-            delay(minOf(300L, rem))
-        }
     }
 }

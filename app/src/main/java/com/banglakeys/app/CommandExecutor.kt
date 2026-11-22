@@ -1,23 +1,23 @@
 package com.banglakeys.app
 
-import android.app.SearchManager
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.media.AudioManager
 import android.net.Uri
-import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.AlarmClock
 import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.provider.Settings
+import android.widget.Toast
 
 /** Command পেলে আসল কাজটা করে এবং ছোট একটা feedback লেখা ফেরত দেয়। */
 class CommandExecutor(private val appCtx: Context) {
 
     private val handler = Handler(Looper.getMainLooper())
+    private val flowRunner = FlowRunner(appCtx)
     private val svc: AssistantAccessibilityService? get() = AssistantAccessibilityService.instance
 
     private val needA11y = "⚠️ Accessibility চালু করুন (BanglaKeys Assistant অ্যাপ খুলুন)"
@@ -37,41 +37,41 @@ class CommandExecutor(private val appCtx: Context) {
         cmd: Command,
         onProgress: (String) -> Unit = {}
     ): String {
-        val result = when (cmd) {
+        AssistantLog.d("CommandExecutor.executeAsync: $cmd")
+        return when (cmd) {
             is Command.AppChat -> {
                 val flow = cmd.appName?.let { AppFlows.find(it) }
                 if (cmd.appName != null && flow == null) {
-                    "❌ '${cmd.appName}' অ্যাপটি AppFlows-এ নেই"
+                    "❌ '${cmd.appName}' flow পাওয়া যায়নি"
                 } else {
-                    FlowRunner(appCtx).runAppChat(flow, cmd.text, cmd.send, onProgress)
+                    flowRunner.runAppChat(flow, cmd.text, cmd.send, onProgress)
                 }
             }
             is Command.AppCall -> {
                 val flow = AppFlows.find(cmd.appName)
-                    ?: return "❌ '${cmd.appName}' অ্যাপটি AppFlows-এ নেই"
-                FlowRunner(appCtx).runAppCall(flow, cmd.contact, cmd.video, onProgress)
+                    ?: return "❌ '${cmd.appName}' flow পাওয়া যায়নি"
+                flowRunner.runAppCall(flow, cmd.contact, cmd.video, onProgress)
             }
             is Command.AppMessage -> {
                 val flow = AppFlows.find(cmd.appName)
-                    ?: return "❌ '${cmd.appName}' অ্যাপটি AppFlows-এ নেই"
-                FlowRunner(appCtx).runAppMessage(flow, cmd.contact, cmd.text, cmd.send, onProgress)
+                    ?: return "❌ '${cmd.appName}' flow পাওয়া যায়নি"
+                flowRunner.runAppMessage(flow, cmd.contact, cmd.text, cmd.send, onProgress)
             }
             Command.TakePhoto -> {
-                onProgress("ক্যামেরা খোলা হচ্ছে...")
-                if (!openCameraIntent()) {
-                    "❌ ক্যামেরা অ্যাপ খোলা যায়নি"
-                } else {
-                    FlowRunner(appCtx).tapShutterIfPresent()
+                onProgress("ক্যামেরা খোলা হচ্ছে…")
+                val cam = Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)
+                if (!launch(cam)) {
+                    return "❌ ক্যামেরা খোলা যায়নি"
                 }
+                flowRunner.tapShutterIfPresent()
             }
             else -> execute(cmd)
         }
-        AssistantLog.d("ExecutorAsync($cmd) -> $result")
-        return result
     }
 
     fun execute(cmd: Command): String {
-        val result = when (cmd) {
+        AssistantLog.d("CommandExecutor.execute: $cmd")
+        return when (cmd) {
             is Command.OpenApp -> openApp(cmd.name)
             is Command.Call -> call(cmd.target)
             is Command.YoutubeSearch -> youtube(cmd)
@@ -94,22 +94,20 @@ class CommandExecutor(private val appCtx: Context) {
             Command.QuickSettings -> withSvc { it.quickSettings(); "⚙️ quick settings" }
             Command.Lock -> withSvc { if (it.lockScreen()) "🔒 lock" else "Lock Android 9+ লাগে" }
             Command.Screenshot -> withSvc { if (it.screenshot()) "📸 screenshot" else "Screenshot Android 9+ লাগে" }
-            Command.VolumeUp -> volume(AudioManager.ADJUST_RAISE, "🔊 volume up")
-            Command.VolumeDown -> volume(AudioManager.ADJUST_LOWER, "🔉 volume down")
-            Command.Sleep, Command.StopAssistant, Command.PanicStop -> "" // listener service সামলায়
+            is Command.VolumeUp -> volume(AudioManager.ADJUST_RAISE, "🔊 volume up", cmd.steps)
+            is Command.VolumeDown -> volume(AudioManager.ADJUST_LOWER, "🔉 volume down", cmd.steps)
+            Command.Mute -> volume(AudioManager.ADJUST_MUTE, "🔇 mute", 1)
+            Command.Unmute -> volume(AudioManager.ADJUST_UNMUTE, "🔈 unmute", 1)
+            Command.CloseAllApps -> withSvc { closeAll(it) }
+            Command.CloseApp -> withSvc { closeCurrent(it) }
 
-            // Pack F — SAF Files & Folders
-            is Command.CreateFolder -> createFolderSaf(cmd.name, cmd.parentFolder)
-            is Command.CreateFile -> createFileSaf(cmd.name, cmd.ext, cmd.content)
+            // Pack F — Storage (SAF)
+            is Command.CreateFolder -> createFolderSaf(cmd)
+            is Command.CreateFile -> createFileSaf(cmd)
 
-            // Pack G & H synchronous fallback (normally dispatched via executeAsync)
-            is Command.AppChat,
-            is Command.AppCall,
-            is Command.AppMessage -> "⏳ কাজ চলছে…"
-
-            // Pack I — Everyday App Commands
-            Command.OpenCamera -> if (openCameraIntent()) "📷 ক্যামেরা খোলা হয়েছে" else "❌ ক্যামেরা অ্যাপ খোলা যায়নি"
-            Command.TakePhoto -> if (openCameraIntent()) "📷 ক্যামেরা খোলা হয়েছে" else "❌ ক্যামেরা অ্যাপ খোলা যায়নি"
+            // Pack I — Everyday mobile commands
+            Command.OpenCamera -> openCamera()
+            Command.TakePhoto -> openCamera()
             is Command.SetAlarm -> setAlarm(cmd)
             is Command.SetTimer -> setTimer(cmd)
             is Command.Navigate -> navigate(cmd.place)
@@ -118,10 +116,11 @@ class CommandExecutor(private val appCtx: Context) {
             is Command.SaveNote -> saveNote(cmd.text)
             is Command.WriteEmail -> writeEmail(cmd)
             is Command.WriteSms -> writeSms(cmd)
-            is Command.OpenSystemSettings -> openSettings(cmd.target)
+            is Command.OpenSystemSettings -> openSystemSettings(cmd.target)
+
+            Command.Sleep, Command.StopAssistant, Command.PanicStop -> "" // service সামলায়
+            is Command.AppChat, is Command.AppCall, is Command.AppMessage -> "⏳ async flow"
         }
-        AssistantLog.d("Executor($cmd) -> $result")
-        return result
     }
 
     // ------------------------------------------------------------ helpers
@@ -132,17 +131,15 @@ class CommandExecutor(private val appCtx: Context) {
             (svc ?: appCtx).startActivity(intent)
             true
         } catch (e: ActivityNotFoundException) {
+            AssistantLog.w("ActivityNotFound: ${intent.action}", e)
             false
         } catch (e: SecurityException) {
-            false
-        } catch (e: Exception) {
-            AssistantLog.w("launch failed", e)
+            AssistantLog.w("SecurityException launching ${intent.action}", e)
             false
         }
     }
 
     private fun openApp(name: String): String {
-        // স্পষ্ট না হলে আন্দাজ না করে জিজ্ঞাসা করা
         AppResolver.ambiguousPrompt(name)?.let { return it }
         val i = AppResolver.launchIntent(appCtx, name) ?: return "'$name' নামে app পাইনি"
         return if (launch(i)) "📱 $name" else "'$name' খুলতে পারলাম না (Display over other apps permission দিন)"
@@ -183,11 +180,50 @@ class CommandExecutor(private val appCtx: Context) {
         return "⏯ pause/play"
     }
 
-    private fun volume(direction: Int, msg: String): String {
+    private fun volume(direction: Int, msg: String, steps: Int): String {
         val am = appCtx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        am.adjustStreamVolume(AudioManager.STREAM_MUSIC, direction, AudioManager.FLAG_SHOW_UI)
+        for (i in 0 until steps.coerceAtLeast(1)) {
+            val flag = if (i == 0) AudioManager.FLAG_SHOW_UI else 0
+            am.adjustStreamVolume(AudioManager.STREAM_MUSIC, direction, flag)
+        }
         return msg
     }
+
+    // ---------------------------------------------------- app বন্ধ করা
+
+    /** "sob app close koro": Recents খুলে "Clear all / Close all" বাটন খুঁজে চাপে। */
+    private fun closeAll(s: AssistantAccessibilityService): String {
+        s.recents()
+        handler.postDelayed({ clearRecents(0) }, 1000)
+        return "🧹 সব app বন্ধ করছি…"
+    }
+
+    private fun clearRecents(attempt: Int) {
+        val s = svc ?: return
+        if (s.clickByAnyText(AssistantConfig.CLEAR_ALL_LABELS)) {
+            toast("🧹 সব app বন্ধ")
+            return
+        }
+        if (attempt >= 4) {
+            toast("Recents-এ 'Clear all' বাটন পাইনি (AssistantConfig.CLEAR_ALL_LABELS এ আপনার ফোনের লেখা যোগ করুন)")
+            return
+        }
+        s.swipe(if (attempt < 2) Dir.RIGHT else Dir.LEFT)
+        handler.postDelayed({ clearRecents(attempt + 1) }, 800)
+    }
+
+    /** "ei app bondho koro": Recents খুলে চলতি app-এর কার্ড উপরে ঠেলে দেয়। */
+    private fun closeCurrent(s: AssistantAccessibilityService): String {
+        s.recents()
+        handler.postDelayed({ svc?.dismissCurrentCard() }, 900)
+        return "❌ এই app বন্ধ করছি…"
+    }
+
+    private fun toast(msg: String) {
+        Toast.makeText(appCtx, msg, Toast.LENGTH_SHORT).show()
+    }
+
+    // ---------------------------------------------------- Phone Call & YouTube
 
     private fun call(target: String): String {
         val onlyNumber = target.none { it.isLetter() } && target.count { it.isDigit() } >= 5
@@ -218,7 +254,6 @@ class CommandExecutor(private val appCtx: Context) {
             )
         )
         if (!ok) return "YouTube খুলতে পারলাম না"
-        // Accessibility চালু থাকলে result লোড হওয়ার পর ভিডিওতে click
         if (svc != null) handler.postDelayed({ pickVideo(cmd.mostViewed, 0) }, 4000)
         return "▶️ YouTube: $q" + if (cmd.mostViewed) " (most viewed)" else ""
     }
@@ -233,276 +268,199 @@ class CommandExecutor(private val appCtx: Context) {
         if (attempt < 4) {
             handler.postDelayed({ pickVideo(mostViewed, attempt + 1) }, 1500)
         } else {
-            android.widget.Toast.makeText(appCtx, "ভিডিও খুঁজে পাইনি", android.widget.Toast.LENGTH_SHORT).show()
+            Toast.makeText(appCtx, "ভিডিও খুঁজে পাইনি", Toast.LENGTH_SHORT).show()
         }
     }
 
-    // ------------------------------------------------------------ Pack F (SAF DocumentsContract)
+    // ---------------------------------------------------- Pack F (SAF Folder / File via DocumentsContract)
 
-    private data class DocEntry(val docId: String, val name: String, val mime: String)
-
-    private fun sanitizeFileName(raw: String): String {
-        val stripped = raw
-            .replace(Regex("[/\\\\:*?\"<>|]"), " ")
-            .replace(Regex("\\s+"), " ")
-            .trim()
-        return if (stripped.length > 80) stripped.take(80).trim() else stripped
+    private fun rootTreeDocUri(): Pair<Uri, Uri>? {
+        val uriStr = AssistantPrefs.storageTreeUri(appCtx) ?: return null
+        val treeUri = runCatching { Uri.parse(uriStr) }.getOrNull() ?: return null
+        val docId = runCatching { DocumentsContract.getTreeDocumentId(treeUri) }.getOrNull() ?: return null
+        val docUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, docId)
+        return treeUri to docUri
     }
 
-    private fun listChildren(treeUri: Uri, parentDocId: String): List<DocEntry> {
-        val out = ArrayList<DocEntry>()
-        val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, parentDocId)
-        val projection = arrayOf(
+    private fun findChildFolderDocUri(treeUri: Uri, parentDocUri: Uri, folderName: String): Uri? {
+        val parentId = DocumentsContract.getDocumentId(parentDocUri)
+        val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, parentId)
+        val proj = arrayOf(
             DocumentsContract.Document.COLUMN_DOCUMENT_ID,
             DocumentsContract.Document.COLUMN_DISPLAY_NAME,
             DocumentsContract.Document.COLUMN_MIME_TYPE
         )
-        try {
-            appCtx.contentResolver.query(childrenUri, projection, null, null, null)?.use { c ->
+        return runCatching {
+            appCtx.contentResolver.query(childrenUri, proj, null, null, null)?.use { c ->
                 while (c.moveToNext()) {
-                    val id = c.getString(0) ?: continue
-                    val name = c.getString(1) ?: ""
+                    val docId = c.getString(0) ?: continue
+                    val name = c.getString(1) ?: continue
                     val mime = c.getString(2) ?: ""
-                    out.add(DocEntry(id, name, mime))
+                    if (mime == DocumentsContract.Document.MIME_TYPE_DIR &&
+                        name.equals(folderName, ignoreCase = true)
+                    ) {
+                        return DocumentsContract.buildDocumentUriUsingTree(treeUri, docId)
+                    }
                 }
             }
-        } catch (e: Exception) {
-            AssistantLog.w("listChildren failed", e)
-        }
-        return out
+            null
+        }.getOrNull()
     }
 
-    private fun uniqueName(existingNames: Set<String>, base: String, ext: String?): String {
-        val existingLower = existingNames.map { it.lowercase() }.toSet()
-        if (ext == null) {
-            var candidate = base
-            var idx = 2
-            while (candidate.lowercase() in existingLower && idx < 500) {
-                candidate = "$base ($idx)"
-                idx++
-            }
-            return candidate
-        }
-        val cleanExt = ext.lowercase()
-        val stem = if (base.lowercase().endsWith(".$cleanExt")) {
-            base.dropLast(cleanExt.length + 1).trim()
-        } else base
-        val safeStem = if (stem.isEmpty()) "file" else stem
-        var candidate = "$safeStem.$cleanExt"
-        var idx = 2
-        while (candidate.lowercase() in existingLower && idx < 500) {
-            candidate = "$safeStem ($idx).$cleanExt"
-            idx++
-        }
-        return candidate
-    }
-
-    private fun requireStorageTreeUri(): Uri? {
-        if (!AssistantSetup.hasStorageTree(appCtx)) {
-            launch(Intent(appCtx, AssistantActivity::class.java))
-            return null
-        }
-        return AssistantPrefs.storageTreeUri(appCtx)?.let { Uri.parse(it) }
-    }
-
-    private fun createFolderSaf(rawName: String, rawParent: String?): String {
-        val treeUri = requireStorageTreeUri()
-            ?: return "⚠️ আগে Assistant storage folder বেছে নিন"
-        val cleanName = sanitizeFileName(rawName)
-        if (cleanName.isBlank()) return "❌ ফোল্ডারের নাম সঠিক নয়"
-
-        val rootDocId = DocumentsContract.getTreeDocumentId(treeUri)
-        var targetDocId = rootDocId
-        if (!rawParent.isNullOrBlank()) {
-            val cleanParent = sanitizeFileName(rawParent)
-            val rootChildren = listChildren(treeUri, rootDocId)
-            val hit = rootChildren.firstOrNull {
-                it.mime == DocumentsContract.Document.MIME_TYPE_DIR &&
-                    it.name.equals(cleanParent, ignoreCase = true)
-            } ?: return "❌ '$cleanParent' ফোল্ডারটি storage folder-এ পাইনি"
-            targetDocId = hit.docId
-        }
-
-        val children = listChildren(treeUri, targetDocId)
-        val displayName = uniqueName(children.map { it.name }.toSet(), cleanName, null)
-        val parentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, targetDocId)
+    private fun createFolderSaf(cmd: Command.CreateFolder): String {
+        val (treeUri, rootDocUri) = rootTreeDocUri()
+            ?: return "⚠️ আগে Assistant সেটিংস থেকে Storage Folder বেছে নিন"
         return try {
+            var targetParent = rootDocUri
+            val parentName = cmd.parentFolder?.trim()
+            if (!parentName.isNullOrEmpty()) {
+                targetParent = findChildFolderDocUri(treeUri, rootDocUri, parentName)
+                    ?: DocumentsContract.createDocument(
+                        appCtx.contentResolver,
+                        rootDocUri,
+                        DocumentsContract.Document.MIME_TYPE_DIR,
+                        parentName
+                    )
+                    ?: return "❌ প্যারেন্ট ফোল্ডার '$parentName' তৈরি যায়নি"
+            }
             val created = DocumentsContract.createDocument(
                 appCtx.contentResolver,
-                parentUri,
+                targetParent,
                 DocumentsContract.Document.MIME_TYPE_DIR,
-                displayName
+                cmd.name
             )
-            if (created != null) "📁 $displayName তৈরি হয়েছে"
-            else "❌ ফোল্ডার তৈরি করা যায়নি"
+            if (created != null) "📁 ফোল্ডার তৈরি: ${cmd.name}" else "❌ ফোল্ডার তৈরি যায়নি"
         } catch (e: Exception) {
             AssistantLog.w("createFolderSaf failed", e)
-            "❌ ফোল্ডার তৈরি করা যায়নি"
+            "❌ ফোল্ডার তৈরি ব্যর্থ (Storage permission দিন)"
         }
     }
 
-    private fun createFileSaf(rawName: String, ext: String, content: String?): String {
-        val treeUri = requireStorageTreeUri()
-            ?: return "⚠️ আগে Assistant storage folder বেছে নিন"
-        val cleanName = sanitizeFileName(rawName)
-        if (cleanName.isBlank()) return "❌ ফাইলের নাম সঠিক নয়"
-
-        val rootDocId = DocumentsContract.getTreeDocumentId(treeUri)
-        val children = listChildren(treeUri, rootDocId)
-        val displayName = uniqueName(children.map { it.name }.toSet(), cleanName, ext)
-        val mime = when (ext.lowercase()) {
-            "md" -> "text/markdown"
+    private fun createFileSaf(cmd: Command.CreateFile): String {
+        val (_, rootDocUri) = rootTreeDocUri()
+            ?: return "⚠️ আগে Assistant সেটিংস থেকে Storage Folder বেছে নিন"
+        val ext = cmd.ext.trim().lowercase().ifEmpty { "txt" }
+        val mime = when (ext) {
             "csv" -> "text/csv"
+            "md" -> "text/markdown"
             "json" -> "application/json"
             else -> "text/plain"
         }
-        val parentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, rootDocId)
+        val fileName = "${cmd.name}.$ext"
         return try {
-            val created = DocumentsContract.createDocument(
+            val docUri = DocumentsContract.createDocument(
                 appCtx.contentResolver,
-                parentUri,
+                rootDocUri,
                 mime,
-                displayName
-            ) ?: return "❌ ফাইল তৈরি করা যায়নি"
+                fileName
+            ) ?: return "❌ ফাইল '$fileName' তৈরি যায়নি"
 
-            if (!content.isNullOrEmpty()) {
-                appCtx.contentResolver.openOutputStream(created)?.use { os ->
-                    os.write(content.toByteArray(Charsets.UTF_8))
+            val body = cmd.text
+            if (!body.isNullOrEmpty()) {
+                appCtx.contentResolver.openOutputStream(docUri)?.use { out ->
+                    out.write(body.toByteArray(Charsets.UTF_8))
                 }
             }
-            "📄 $displayName তৈরি হয়েছে"
+            "📄 ফাইল তৈরি: $fileName"
         } catch (e: Exception) {
             AssistantLog.w("createFileSaf failed", e)
-            "❌ ফাইল তৈরি করা যায়নি"
+            "❌ ফাইল তৈরি ব্যর্থ (Storage permission দিন)"
         }
     }
 
-    // ------------------------------------------------------------ Pack I (Intents + Notes.kt)
+    // ---------------------------------------------------- Pack I (Everyday mobile utilities)
 
-    private fun openCameraIntent(): Boolean {
-        return launch(Intent(MediaStore.ACTION_IMAGE_CAPTURE)) ||
-            launch(Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)) ||
-            AppResolver.launchIntent(appCtx, "camera")?.let { launch(it) } ?: false
+    private fun openCamera(): String {
+        val intent = Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)
+        return if (launch(intent)) "📷 ক্যামেরা" else "❌ ক্যামেরা খোলা যায়নি"
     }
 
     private fun setAlarm(cmd: Command.SetAlarm): String {
-        if (!AssistantSetup.hasSetAlarm(appCtx)) {
-            return "⚠️ SET_ALARM permission নেই"
-        }
         val i = Intent(AlarmClock.ACTION_SET_ALARM).apply {
             putExtra(AlarmClock.EXTRA_HOUR, cmd.hour24)
             putExtra(AlarmClock.EXTRA_MINUTES, cmd.minute)
             putExtra(AlarmClock.EXTRA_SKIP_UI, true)
-            if (!cmd.label.isNullOrBlank()) putExtra(AlarmClock.EXTRA_MESSAGE, cmd.label)
         }
-        val timeText = String.format("%02d:%02d", cmd.hour24, cmd.minute)
-        return if (launch(i)) "⏰ $timeText-এ alarm সেট হয়েছে" else "❌ Alarm অ্যাপ পাইনি"
+        val label = String.format("%02d:%02d", cmd.hour24, cmd.minute)
+        return if (launch(i)) "⏰ Alarm সেট: $label" else "❌ Alarm সেট করা যায়নি"
     }
 
     private fun setTimer(cmd: Command.SetTimer): String {
-        if (!AssistantSetup.hasSetAlarm(appCtx)) {
-            return "⚠️ SET_ALARM permission নেই"
-        }
         val i = Intent(AlarmClock.ACTION_SET_TIMER).apply {
             putExtra(AlarmClock.EXTRA_LENGTH, cmd.seconds)
             putExtra(AlarmClock.EXTRA_SKIP_UI, true)
-            if (!cmd.label.isNullOrBlank()) putExtra(AlarmClock.EXTRA_MESSAGE, cmd.label)
         }
-        return if (launch(i)) "⏱ ${cmd.seconds} সেকেন্ডের timer সেট হয়েছে" else "❌ Timer অ্যাপ পাইনি"
+        return if (launch(i)) "⏱ Timer: ${cmd.seconds} সেকেন্ড" else "❌ Timer সেট করা যায়নি"
     }
 
     private fun navigate(place: String): String {
-        val uri = Uri.parse("geo:0,0?q=" + Uri.encode(place))
-        val mapsIntent = Intent(Intent.ACTION_VIEW, uri).setPackage("com.google.android.apps.maps")
-        val genericIntent = Intent(Intent.ACTION_VIEW, uri)
-        return if (launch(mapsIntent) || launch(genericIntent)) {
-            "🗺️ $place-এর দিকনির্দেশনা খোলা হয়েছে"
-        } else {
-            "❌ ম্যাপ অ্যাপ পাইনি"
-        }
+        val uri = Uri.parse("google.navigation:q=" + Uri.encode(place))
+        val mapIntent = Intent(Intent.ACTION_VIEW, uri).setPackage("com.google.android.apps.maps")
+        if (launch(mapIntent)) return "🗺️ Navigation: $place"
+        val fallback = Intent(
+            Intent.ACTION_VIEW,
+            Uri.parse("https://www.google.com/maps/search/?api=1&query=" + Uri.encode(place))
+        )
+        return if (launch(fallback)) "🗺️ Maps: $place" else "❌ Maps খোলা যায়নি"
     }
 
     private fun webSearch(query: String): String {
-        val webSearchIntent = Intent(Intent.ACTION_WEB_SEARCH).apply {
-            putExtra(SearchManager.QUERY, query)
-        }
-        val browserFallback = Intent(
+        val i = Intent(
             Intent.ACTION_VIEW,
             Uri.parse("https://www.google.com/search?q=" + Uri.encode(query))
         )
-        return if (launch(webSearchIntent) || launch(browserFallback)) {
-            "🔍 Google-এ খোঁজা হচ্ছে: $query"
-        } else {
-            "❌ সার্চ বা ব্রাউজার অ্যাপ পাইনি"
-        }
+        return if (launch(i)) "🔍 Google: $query" else "❌ Browser খোলা যায়নি"
     }
 
     private fun playSong(query: String): String {
-        val i = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH).apply {
-            putExtra(SearchManager.QUERY, query)
+        val ytMusic = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH).apply {
             putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*")
+            putExtra(android.app.SearchManager.QUERY, query)
         }
-        return if (launch(i)) "🎵 চালানো হচ্ছে: $query" else "❌ মিউজিক অ্যাপ পাইনি"
+        if (launch(ytMusic)) return "🎵 গান: $query"
+        return youtube(Command.YoutubeSearch(query, mostViewed = false))
     }
 
     private fun saveNote(text: String): String {
         Notes(appCtx).add(text)
-        return "📝 নোট সেভ হয়েছে: $text"
+        return "📝 নোট সেভ: $text"
     }
 
     private fun writeEmail(cmd: Command.WriteEmail): String {
-        val address = when {
-            cmd.recipient.contains("@") -> cmd.recipient
-            else -> ContactLookup.findEmail(appCtx, cmd.recipient) ?: ""
-        }
-        val uri = Uri.parse("mailto:" + Uri.encode(address))
-        val i = Intent(Intent.ACTION_SENDTO, uri).apply {
-            if (cmd.subject.isNotBlank()) putExtra(Intent.EXTRA_SUBJECT, cmd.subject)
-            if (cmd.body.isNotBlank()) putExtra(Intent.EXTRA_TEXT, cmd.body)
-        }
-        return if (launch(i)) {
-            "✉️ ইমেইল লেখা হয়েছে — নিজে দেখে Send চাপুন"
+        val recipient = cmd.recipient.trim()
+        val emailAddr = if (recipient.contains("@")) {
+            recipient
         } else {
-            "❌ ইমেইল অ্যাপ পাইনি"
+            ContactLookup.findEmail(appCtx, recipient) ?: recipient
         }
+        val i = Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:" + Uri.encode(emailAddr))).apply {
+            if (cmd.subject.isNotEmpty()) putExtra(Intent.EXTRA_SUBJECT, cmd.subject)
+            if (cmd.body.isNotEmpty()) putExtra(Intent.EXTRA_TEXT, cmd.body)
+        }
+        return if (launch(i)) "✉️ ইমেইল ড্রাফট: $emailAddr" else "❌ ইমেইল অ্যাপ পাওয়া যায়নি"
     }
 
     private fun writeSms(cmd: Command.WriteSms): String {
-        val onlyDigits = cmd.recipient.none { it.isLetter() } && cmd.recipient.count { it.isDigit() } >= 3
-        val number = when {
-            onlyDigits -> cmd.recipient.filter { it.isDigit() || it == '+' }
-            else -> ContactLookup.findNumber(appCtx, cmd.recipient) ?: ""
-        }
-        val uri = Uri.parse("smsto:" + Uri.encode(number))
-        val i = Intent(Intent.ACTION_SENDTO, uri).apply {
-            if (cmd.text.isNotBlank()) putExtra("sms_body", cmd.text)
-        }
-        return if (launch(i)) {
-            "💬 SMS লেখা হয়েছে — নিজে দেখে Send চাপুন"
+        val target = cmd.recipient.trim()
+        val onlyNumber = target.none { it.isLetter() } && target.count { it.isDigit() } >= 5
+        val number = if (onlyNumber) {
+            target.filter { it.isDigit() || it == '+' }
         } else {
-            "❌ SMS অ্যাপ পাইনি"
+            ContactLookup.findNumber(appCtx, target) ?: return "'$target' নামে contact পাইনি"
         }
+        val i = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:" + Uri.encode(number))).apply {
+            if (cmd.text.isNotEmpty()) putExtra("sms_body", cmd.text)
+        }
+        return if (launch(i)) "💬 SMS ড্রাফট: $target" else "❌ SMS অ্যাপ পাওয়া যায়নি"
     }
 
-    private fun openSettings(target: SettingsTarget): String {
-        val ok = when (target) {
-            SettingsTarget.WIFI -> {
-                if (Build.VERSION.SDK_INT >= 29) {
-                    launch(Intent(Settings.Panel.ACTION_INTERNET_CONNECTIVITY)) || launch(Intent(Settings.ACTION_WIFI_SETTINGS))
-                } else {
-                    launch(Intent(Settings.ACTION_WIFI_SETTINGS))
-                }
-            }
-            SettingsTarget.BLUETOOTH -> launch(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
-            SettingsTarget.DISPLAY -> launch(Intent(Settings.ACTION_DISPLAY_SETTINGS))
-            SettingsTarget.SOUND -> launch(Intent(Settings.ACTION_SOUND_SETTINGS))
+    private fun openSystemSettings(target: SettingsTarget): String {
+        val action = when (target) {
+            SettingsTarget.WIFI -> Settings.ACTION_WIFI_SETTINGS
+            SettingsTarget.BLUETOOTH -> Settings.ACTION_BLUETOOTH_SETTINGS
+            SettingsTarget.DISPLAY -> Settings.ACTION_DISPLAY_SETTINGS
+            SettingsTarget.SOUND -> Settings.ACTION_SOUND_SETTINGS
         }
-        val label = when (target) {
-            SettingsTarget.WIFI -> "Wi-Fi"
-            SettingsTarget.BLUETOOTH -> "Bluetooth"
-            SettingsTarget.DISPLAY -> "Display"
-            SettingsTarget.SOUND -> "Sound"
-        }
-        return if (ok) "⚙️ $label settings খোলা হয়েছে" else "❌ $label settings খোলা যায়নি"
+        return if (launch(Intent(action))) "⚙️ ${target.name} সেটিংস" else "❌ সেটিংস খোলা যায়নি"
     }
 }

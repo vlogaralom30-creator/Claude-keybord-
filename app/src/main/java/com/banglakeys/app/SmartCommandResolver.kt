@@ -31,18 +31,20 @@ object SmartCommandResolver {
     // Action ও App কীওয়ার্ডগুলোর Canonical ডিকশনারি (যাতে ভুল বানান/উচ্চারণ ঠিক হয়)
     private val FUZZY_KEYWORDS: Set<String> = setOf(
         // Wake-related excluded from payload rewriting, handled separately
-        "open", "khol", "kholo", "khulo", "launch", "start",
+        "open", "khol", "kholo", "khulo", "dhuko", "chalu", "launch", "start",
         "call", "dial", "ring", "phone", "video", "audio", "voice",
-        "youtube", "search", "khuj", "khoj", "khojo", "khujo",
+        "youtube", "search", "khuj", "khoj", "khojo", "khujo", "gaan", "natok", "movie",
         "click", "tap", "press", "double",
         "type", "write", "likho", "lekho", "likhe", "send", "pathao", "pathan", "enter", "submit",
         "like", "love", "heart", "nice", "wow", "sundor", "darun",
-        "pause", "play", "resume", "stop",
-        "volume", "back", "home", "recent", "recents", "notification", "notifications",
+        "pause", "play", "resume", "stop", "chalao", "dekhao", "thamo",
+        "volume", "awaj", "shobdo", "barao", "komao", "full", "mute", "unmute", "chup",
+        "back", "pechone", "home", "minimize", "ber", "recent", "recents", "notification", "notifications",
         "quick", "settings", "screenshot", "lock",
-        "next", "previous", "prev", "up", "down", "left", "right", "upore", "niche",
-        "sleep", "ghumao", "quit", "exit", "close", "leave", "assistant",
-        "create", "make", "folder", "file", "inside", "camera", "photo", "picture", "selfie",
+        "next", "previous", "prev", "up", "down", "left", "right", "upore", "niche", "uthao", "namao",
+        "sleep", "ghumao", "quit", "exit", "close", "bondho", "clear", "leave", "assistant",
+        "create", "make", "folder", "file", "files", "inside", "camera", "gallery", "calculator", "clock",
+        "photo", "picture", "selfie",
         "alarm", "timer", "minute", "minutes", "second", "seconds", "hour", "hours",
         "navigate", "directions", "google", "song", "music", "note", "save", "email", "sms",
         // Popular apps
@@ -82,7 +84,14 @@ object SmartCommandResolver {
         "scrol" to "up",
         "shob" to "sob",
         "bondho" to "bondho",
-        "bondo" to "bondho"
+        "bondo" to "bondho",
+        "bara o" to "barao",
+        "koma o" to "komao",
+        "minimise" to "minimize",
+        "minimaiz" to "minimize",
+        "myut" to "mute",
+        "dhukoo" to "dhuko",
+        "chalaw" to "chalao"
     )
 
     private val BANGLA_SPELLING_MAP: Map<String, String> = mapOf(
@@ -377,8 +386,12 @@ object SmartCommandResolver {
         Command.QuickSettings -> "Quick Settings"
         Command.Lock -> "Screen Lock"
         Command.Screenshot -> "Screenshot"
-        Command.VolumeUp -> "Volume বাড়ানো"
-        Command.VolumeDown -> "Volume কমানো"
+        is Command.VolumeUp -> if (cmd.steps > 1) "Volume বাড়ানো (${cmd.steps}x)" else "Volume বাড়ানো"
+        is Command.VolumeDown -> if (cmd.steps > 1) "Volume কমানো (${cmd.steps}x)" else "Volume কমানো"
+        Command.Mute -> "Sound Mute"
+        Command.Unmute -> "Sound Unmute"
+        Command.CloseAllApps -> "সব অ্যাপ বন্ধ"
+        Command.CloseApp -> "বর্তমান অ্যাপ বন্ধ"
         Command.Sleep -> "Sleep মোড"
         Command.StopAssistant -> "Assistant বন্ধ"
         Command.PanicStop -> "সব কাজ বন্ধ"

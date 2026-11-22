@@ -14,8 +14,8 @@
 + COMMANDS.md + README-FIRST.md)।
 
 কাজ:
-1. প্রথমে README-FIRST.md আর SETUP-ASSISTANT.md পুরোটা পড়ো, তারপর merge করো।
-2. নতুন ৯টা .kt ফাইল আর res/xml, res/values ফাইল হুবহু আমার প্রজেক্টে যোগ করো
+1. প্রথমে README-FIRST.md, SETUP-ASSISTANT.md আর SETUP-VOCAB-UPDATE.md পুরোটা পড়ো, তারপর merge করো।
+2. নতুন ১০টা .kt ফাইল (BanglaVocab.kt সহ) আর res/xml, res/values ফাইল হুবহু আমার প্রজেক্টে যোগ করো
    (package ঠিক রাখো; আমার package আলাদা হলে সব ফাইলের package লাইন ও import বদলাও)।
 3. AndroidManifest.xml এ SETUP-ASSISTANT.md এর ধাপ ১ অনুযায়ী permission, <queries>, AssistantActivity,
    AssistantAccessibilityService, AssistantListenerService যোগ করো। আগের কিছু মুছো না, ডুপ্লিকেট permission
@@ -31,4 +31,20 @@
    কোন ফাইল নতুন, কোন ফাইল বদলেছে, আর build-এ কী সমস্যা হতে পারে।
 8. কোনো ফাংশন/কমান্ড বাদ দিও না, কোড সংক্ষিপ্ত করার নামে লজিক বদলিও না। অনিশ্চিত হলে আন্দাজে না
    করে আমাকে জিজ্ঞেস করো।
+```
+
+---
+
+## শুধু শব্দভান্ডার আপডেট merge করতে (Assistant আগে থেকেই বসানো থাকলে)
+
+```
+আমার অ্যাপে BanglaKeys Voice Assistant আগে থেকেই merge করা আছে (package: com.banglakeys.app)।
+এখন সাথের zip-এর আপডেট বসাতে চাই: নতুন BanglaVocab.kt, আর বদলানো CommandParser.kt, CommandExecutor.kt,
+AppResolver.kt, AssistantConfig.kt, AssistantAccessibilityService.kt।
+প্রথমে SETUP-VOCAB-UPDATE.md পুরোটা পড়ো, তারপর "Case A" অনুযায়ী merge করো।
+- আমার প্রজেক্টে আগের ফাইলে আমি নিজে যা বদলিয়েছি (যেমন নিজের WAKE_WORDS, CONTACT_GROUPS) সেগুলো নতুন ফাইলে ধরে রাখো।
+- Command.VolumeUp/VolumeDown এখন data class — পুরো প্রজেক্টে এর ব্যবহার মিলিয়ে ঠিক করো।
+- BanglaVocab.kt এর শব্দ-তালিকা ছোট করবে না, কোনো logic বদলাবে না।
+- শেষে চেকলিস্ট দাও: কোন ফাইল নতুন, কোনটা বদলেছে, build-এ কী সমস্যা হতে পারে।
+- অনিশ্চিত হলে আন্দাজ না করে আমাকে জিজ্ঞেস করো।
 ```

@@ -22,7 +22,8 @@ object GeminiCommandInterpreter {
         "open_app", "call", "youtube_search", "swipe", "click_text", "type_text",
         "play_pause", "like", "double_tap", "tap", "enter", "back", "home",
         "recents", "notifications", "quick_settings", "lock", "screenshot",
-        "volume_up", "volume_down", "sleep", "stop_assistant", "panic_stop",
+        "volume_up", "volume_down", "mute", "unmute", "close_all_apps", "close_app",
+        "sleep", "stop_assistant", "panic_stop",
         "create_folder", "create_file", "app_chat", "app_call", "app_message",
         "open_camera", "take_photo", "set_alarm", "set_timer", "navigate",
         "web_search", "play_song", "save_note", "write_email", "write_sms",
@@ -43,8 +44,10 @@ object GeminiCommandInterpreter {
         - click_text: স্ক্রিনের নির্দিষ্ট লেখা/বাটন চাপতে -> "text"।
         - type_text: কোনো লেখা টাইপ করতে -> "text"।
         - play_pause, like, double_tap, tap, enter, back, home, recents, notifications,
-          quick_settings, lock, screenshot, volume_up, volume_down, sleep, stop_assistant,
+          quick_settings, lock, screenshot, mute, unmute, close_all_apps ("সব অ্যাপ বন্ধ করো"),
+          close_app ("এই অ্যাপ বন্ধ করো"), sleep, stop_assistant,
           panic_stop ("সব বন্ধ"/"stop everything"), open_camera, take_photo: অতিরিক্ত ফিল্ড লাগবে না।
+        - volume_up, volume_down: চাইলে "steps" (1-5, যেমন full=5) দিতে পারো।
         - create_folder: ফোল্ডার তৈরি -> "name", এবং ভেতরে হলে "parent_folder"।
         - create_file: ফাইল তৈরি -> "name", "ext" (যেমন txt/csv/md/json), লেখা থাকলে "text"।
         - app_chat: Claude/ChatGPT/Gemini বা বর্তমান অ্যাপে লেখা ও (ইচ্ছায়) সেন্ড -> "app_name" (optional), "text", "send" (true/false)।
@@ -97,6 +100,7 @@ object GeminiCommandInterpreter {
                 put("type", "STRING")
                 put("enum", JSONArray(listOf("wifi", "bluetooth", "display", "sound")))
             })
+            put("steps", JSONObject().put("type", "INTEGER"))
         })
         put("required", JSONArray(listOf("type")))
     }
@@ -197,8 +201,12 @@ object GeminiCommandInterpreter {
         "quick_settings" -> Command.QuickSettings
         "lock" -> Command.Lock
         "screenshot" -> Command.Screenshot
-        "volume_up" -> Command.VolumeUp
-        "volume_down" -> Command.VolumeDown
+        "volume_up" -> Command.VolumeUp(j.optInt("steps", 1).coerceIn(1, 5))
+        "volume_down" -> Command.VolumeDown(j.optInt("steps", 1).coerceIn(1, 5))
+        "mute" -> Command.Mute
+        "unmute" -> Command.Unmute
+        "close_all_apps" -> Command.CloseAllApps
+        "close_app" -> Command.CloseApp
         "sleep" -> Command.Sleep
         "stop_assistant" -> Command.StopAssistant
         "panic_stop" -> Command.PanicStop

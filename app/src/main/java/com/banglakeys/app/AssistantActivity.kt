@@ -2,22 +2,20 @@ package com.banglakeys.app
 
 import android.app.Activity
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import android.text.InputType
-import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
-import android.view.Window
-import android.view.WindowInsets
 import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -26,29 +24,28 @@ import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
-import com.example.MainActivity
 
 /**
- * Setup + control screen (XML layout ছাড়া, pure Views + code-built vector icons)।
- * এখান থেকে: Accessibility, Permissions, Overlay HUD, Continuous/Quiet PTT মোড,
- * SAF storage folder, Confirmation নিয়ন্ত্রণ, Gemini AI Fallback key এবং Quick Test।
+ * BanglaKeys Assistant কনসোল (pure Material-styled View UI + custom Canvas vector icons).
+ *
+ * এখান থেকে: Listening মোড, ৫/৫ সেটআপ ও SAF ফোল্ডার, Side-Edge Overlay ও অবস্থান রিসেট,
+ * Auto Ad Skipper (YouTube + Verified Game/App Ads), কনফার্মেশন সেফটি, Gemini Fallback।
  */
 class AssistantActivity : Activity() {
 
     companion object {
+        private const val REQ_PERMS = 201
         private const val REQ_STORAGE_TREE = 202
     }
 
     private data class Palette(
         val bg: Int,
         val card: Int,
-        val cardAlt: Int,
         val border: Int,
-        val text: Int,
-        val subText: Int,
         val primary: Int,
         val primarySoft: Int,
-        val onPrimary: Int,
+        val text: Int,
+        val subText: Int,
         val ok: Int,
         val okSoft: Int,
         val warn: Int,
@@ -57,75 +54,57 @@ class AssistantActivity : Activity() {
         val dangerSoft: Int
     )
 
-    private data class StatusRowViews(
-        val iconView: ImageView,
-        val subtitleView: TextView,
-        val actionBtn: TextView?
-    )
-
     private lateinit var pal: Palette
 
-    // Hero & quick controls
-    private lateinit var heroStatusIcon: ImageView
-    private lateinit var heroStatusText: TextView
-    private lateinit var btnServiceContainer: LinearLayout
+    // Dynamic status / interactive widgets
+    private lateinit var statusPillText: TextView
+    private lateinit var statusPillBg: LinearLayout
+    private lateinit var statusPillIcon: ImageView
+    private lateinit var btnService: LinearLayout
+    private lateinit var btnServiceText: TextView
     private lateinit var btnServiceIcon: ImageView
-    private lateinit var btnServiceLabel: TextView
-    private lateinit var btnLangLabel: TextView
-    private lateinit var checklistSummaryBadge: TextView
+    private lateinit var btnPttSpeak: LinearLayout
+    private lateinit var btnLang: LinearLayout
+    private lateinit var btnLangText: TextView
 
-    // Checklist rows
-    private lateinit var rowA11y: StatusRowViews
-    private lateinit var rowPerms: StatusRowViews
-    private lateinit var rowOverlay: StatusRowViews
-    private lateinit var rowAlarm: StatusRowViews
-    private lateinit var rowStorage: StatusRowViews
+    private lateinit var chipContinuous: LinearLayout
+    private lateinit var chipContinuousText: TextView
+    private lateinit var chipPtt: LinearLayout
+    private lateinit var chipPttText: TextView
 
-    // Storage folder control + listening mode + switches + seekbar
-    private lateinit var btnModeContinuous: LinearLayout
-    private lateinit var btnModeContinuousIcon: ImageView
-    private lateinit var btnModeContinuousLabel: TextView
-    private lateinit var btnModePtt: LinearLayout
-    private lateinit var btnModePttIcon: ImageView
-    private lateinit var btnModePttLabel: TextView
-    private lateinit var modeHintText: TextView
+    private lateinit var checklistProgress: TextView
+    private val checkRows = ArrayList<Triple<ImageView, TextView, TextView>>()
+    private lateinit var safStatusText: TextView
 
-    private lateinit var btnStorageLabel: TextView
-    private lateinit var btnStorageIcon: ImageView
-    private lateinit var swOverlayHud: Switch
-    private lateinit var swOverlaySub: TextView
-    private lateinit var swAdSkip: Switch
-    private lateinit var swAdSkipSub: TextView
-    private lateinit var swAdSkipGames: Switch
-    private lateinit var adSkipBadge: TextView
-    private lateinit var swConfirmAppCall: Switch
-    private lateinit var swConfirmHumanSend: Switch
-    private lateinit var swConfirmAiChatSend: Switch
-    private lateinit var timeoutBadge: TextView
+    private lateinit var switchOverlay: Switch
+    private lateinit var overlayEdgeText: TextView
+    private lateinit var switchAdSkip: Switch
+    private lateinit var switchAdSkipGames: Switch
+    private lateinit var adSkipStatsText: TextView
+
+    private lateinit var switchConfirmCall: Switch
+    private lateinit var switchConfirmSend: Switch
+    private lateinit var switchConfirmAiSend: Switch
+    private lateinit var timeoutLabel: TextView
     private lateinit var timeoutSeek: SeekBar
 
-    // Gemini AI fallback controls
-    private lateinit var geminiStatusBadge: TextView
-    private lateinit var geminiSubText: TextView
-    private lateinit var geminiInput: EditText
-    private lateinit var btnClearGemini: LinearLayout
+    private lateinit var geminiStatusText: TextView
+    private lateinit var geminiKeyInput: EditText
 
-    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt().coerceAtLeast(1)
 
-    private fun palette(): Palette {
+    private fun buildPalette(): Palette {
         val night = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
             Configuration.UI_MODE_NIGHT_YES
         return if (night) {
             Palette(
-                bg = 0xFF101414.toInt(),
-                card = 0xFF1A2020.toInt(),
-                cardAlt = 0xFF232C2B.toInt(),
-                border = 0xFF2E3B39.toInt(),
-                text = 0xFFE0E5E4.toInt(),
-                subText = 0xFF9FB2AF.toInt(),
+                bg = 0xFF0E1413.toInt(),
+                card = 0xFF171F1E.toInt(),
+                border = 0xFF283533.toInt(),
                 primary = 0xFF4DB6AC.toInt(),
                 primarySoft = 0xFF004D45.toInt(),
-                onPrimary = 0xFF002B26.toInt(),
+                text = 0xFFE3E9E8.toInt(),
+                subText = 0xFF9EB0AD.toInt(),
                 ok = 0xFF4ADE80.toInt(),
                 okSoft = 0xFF133622.toInt(),
                 warn = 0xFFFBBF24.toInt(),
@@ -135,1004 +114,70 @@ class AssistantActivity : Activity() {
             )
         } else {
             Palette(
-                bg = 0xFFF6FAF9.toInt(),
+                bg = 0xFFF2F6F5.toInt(),
                 card = 0xFFFFFFFF.toInt(),
-                cardAlt = 0xFFE9F2F0.toInt(),
-                border = 0xFFD4E3E0.toInt(),
-                text = 0xFF161D1C.toInt(),
-                subText = 0xFF536663.toInt(),
+                border = 0xFFD9E4E1.toInt(),
                 primary = 0xFF00796B.toInt(),
-                primarySoft = 0xFFD6F2EE.toInt(),
-                onPrimary = 0xFFFFFFFF.toInt(),
+                primarySoft = 0xFFD8F3EF.toInt(),
+                text = 0xFF161D1C.toInt(),
+                subText = 0xFF566865.toInt(),
                 ok = 0xFF15803D.toInt(),
                 okSoft = 0xFFDCFCE7.toInt(),
                 warn = 0xFFB45309.toInt(),
                 warnSoft = 0xFFFEF3C7.toInt(),
-                danger = 0xFFDC2626.toInt(),
+                danger = 0xFFB91C1C.toInt(),
                 dangerSoft = 0xFFFEE2E2.toInt()
             )
         }
     }
 
-    private fun roundBg(fill: Int, radiusDp: Int, strokeColor: Int = 0, strokeDp: Int = 0): GradientDrawable =
+    private fun roundedBg(fill: Int, radiusDp: Int, stroke: Int? = null): GradientDrawable =
         GradientDrawable().apply {
-            setColor(fill)
+            shape = GradientDrawable.RECTANGLE
             cornerRadius = dp(radiusDp).toFloat()
-            if (strokeDp > 0 && strokeColor != 0) setStroke(dp(strokeDp), strokeColor)
+            setColor(fill)
+            if (stroke != null) setStroke(dp(1), stroke)
         }
 
-    private fun rippleSelectable(view: View) {
-        val out = TypedValue()
-        if (theme.resolveAttribute(android.R.attr.selectableItemBackground, out, true)) {
-            if (Build.VERSION.SDK_INT >= 23) {
-                view.foreground = getDrawable(out.resourceId)
-            }
-        }
+    private fun rippleCard(view: View, fill: Int, radiusDp: Int, stroke: Int? = null) {
+        val base = roundedBg(fill, radiusDp, stroke)
+        view.background = RippleDrawable(ColorStateList.valueOf(0x2200796B), base, null)
+        view.isClickable = true
+        view.isFocusable = true
     }
 
-    @Suppress("DEPRECATION")
     override fun onCreate(savedInstanceState: Bundle?) {
-        requestWindowFeature(Window.FEATURE_NO_TITLE)
         super.onCreate(savedInstanceState)
-        actionBar?.hide()
-        pal = palette()
+        pal = buildPalette()
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(14), dp(16), dp(24))
             setBackgroundColor(pal.bg)
+            setPadding(dp(16), dp(14), dp(16), dp(28))
         }
 
-        // ------------------------------------------------------------ 1. Hero Header Card
-        val heroCard = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(18), dp(18), dp(18), dp(16))
-            background = GradientDrawable(
-                GradientDrawable.Orientation.TL_BR,
-                intArrayOf(0xFF015E57.toInt(), 0xFF00796B.toInt(), 0xFF00897B.toInt())
-            ).apply {
-                cornerRadius = dp(22).toFloat()
-            }
-        }
+        // ---- Header
+        root.addView(buildHeader())
 
-        val heroTopRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
+        // ---- 1. Status & Service Card
+        root.addView(buildServiceCard())
 
-        val heroAvatar = LinearLayout(this).apply {
-            gravity = Gravity.CENTER
-            background = roundBg(0x2EFFFFFF, 14)
-            layoutParams = LinearLayout.LayoutParams(dp(48), dp(48))
-            addView(ImageView(this@AssistantActivity).apply {
-                setImageDrawable(AssistantIcons.drawable(this@AssistantActivity, AssistantIcons.Kind.BOT, Color.WHITE, 26))
-                contentDescription = "BanglaKeys Assistant icon"
-            })
-        }
-        heroTopRow.addView(heroAvatar)
+        // ---- 2. Side-Edge Overlay & Auto Ad Skipper
+        root.addView(buildOverlayAndAdSkipCard())
 
-        val heroTitles = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-                marginStart = dp(12)
-                marginEnd = dp(8)
-            }
-            addView(TextView(this@AssistantActivity).apply {
-                text = "BanglaKeys Assistant"
-                textSize = 19f
-                setTypeface(null, Typeface.BOLD)
-                setTextColor(Color.WHITE)
-            })
-            addView(TextView(this@AssistantActivity).apply {
-                text = "ভয়েস কমান্ড, লাইভ ওভারলে ও Gemini ফলব্যাক"
-                textSize = 12.5f
-                setTextColor(0xDEFFFFFF.toInt())
-            })
-        }
-        heroTopRow.addView(heroTitles)
+        // ---- 3. 5/5 Setup Checklist & SAF Folder
+        root.addView(buildSetupChecklistCard())
 
-        val backBtn = LinearLayout(this).apply {
-            gravity = Gravity.CENTER
-            background = roundBg(0x26FFFFFF, 22)
-            layoutParams = LinearLayout.LayoutParams(dp(44), dp(44))
-            contentDescription = "Keyboard settings-এ ফিরুন"
-            rippleSelectable(this)
-            setOnClickListener { returnToMain() }
-            addView(ImageView(this@AssistantActivity).apply {
-                setImageDrawable(AssistantIcons.drawable(this@AssistantActivity, AssistantIcons.Kind.BACK, Color.WHITE, 20))
-            })
-        }
-        heroTopRow.addView(backBtn)
-        heroCard.addView(heroTopRow)
+        // ---- 4. Safety & Confirmation Rules
+        root.addView(buildSafetyCard())
 
-        val heroStatusPill = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(12), dp(6), dp(14), dp(6))
-            background = roundBg(0x28FFFFFF, 99)
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(14) }
-        }
-        heroStatusIcon = ImageView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(16), dp(16)).apply { marginEnd = dp(6) }
-        }
-        heroStatusText = TextView(this).apply {
-            textSize = 12.5f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.WHITE)
-        }
-        heroStatusPill.addView(heroStatusIcon)
-        heroStatusPill.addView(heroStatusText)
-        heroCard.addView(heroStatusPill)
-        root.addView(heroCard)
+        // ---- 5. Gemini Fallback + Gesture Test
+        root.addView(buildGeminiAndTestCard())
 
-        // ------------------------------------------------------------ 2. Quick Control Card
-        val quickCard = createCard().apply {
-            (layoutParams as LinearLayout.LayoutParams).topMargin = dp(14)
-        }
-
-        btnServiceContainer = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            minimumHeight = dp(50)
-            setPadding(dp(16), dp(12), dp(16), dp(12))
-            rippleSelectable(this)
-            setOnClickListener {
-                if (AssistantListenerService.running) {
-                    AssistantListenerService.stop(this@AssistantActivity)
-                } else if (!AssistantSetup.isReady(this@AssistantActivity)) {
-                    Toast.makeText(
-                        this@AssistantActivity,
-                        "আগে নিচে থেকে Accessibility ও Microphone চালু করুন",
-                        Toast.LENGTH_LONG
-                    ).show()
-                } else {
-                    AssistantListenerService.start(this@AssistantActivity)
-                }
-                Handler(Looper.getMainLooper()).postDelayed({ refresh() }, 400)
-            }
-        }
-        btnServiceIcon = ImageView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(20), dp(20)).apply { marginEnd = dp(8) }
-        }
-        btnServiceLabel = TextView(this).apply {
-            textSize = 15f
-            setTypeface(null, Typeface.BOLD)
-        }
-        btnServiceContainer.addView(btnServiceIcon)
-        btnServiceContainer.addView(btnServiceLabel)
-        quickCard.addView(btnServiceContainer)
-
-        val quickRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(10) }
-        }
-
-        val btnLangContainer = buildCompactPillButton(
-            kind = AssistantIcons.Kind.GLOBE,
-            labelInit = "",
-            onClick = {
-                AssistantSetup.setBangla(this, !AssistantSetup.isBangla(this))
-                refresh()
-                Toast.makeText(this, "ভাষা বদলাতে Assistant বন্ধ করে আবার চালু করুন", Toast.LENGTH_SHORT).show()
-            }
-        ) { tv -> btnLangLabel = tv }
-        quickRow.addView(btnLangContainer, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-            marginEnd = dp(6)
-        })
-
-        val btnTestContainer = buildCompactPillButton(
-            kind = AssistantIcons.Kind.SWIPE_UP,
-            labelInit = "৩ সেকেন্ড Swipe টেস্ট",
-            onClick = {
-                Toast.makeText(this, "৩ সেকেন্ডে অন্য অ্যাপে যান…", Toast.LENGTH_SHORT).show()
-                Handler(Looper.getMainLooper()).postDelayed({
-                    val msg = CommandExecutor(applicationContext).execute(Command.Swipe(Dir.UP))
-                    Toast.makeText(applicationContext, msg, Toast.LENGTH_SHORT).show()
-                }, 3000)
-            }
-        ) {}
-        quickRow.addView(btnTestContainer, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-            marginStart = dp(6)
-        })
-        quickCard.addView(quickRow)
-
-        // Listening Mode segmented toggle (Continuous vs Quiet Push-to-Talk)
-        quickCard.addView(dividerView().apply {
-            (layoutParams as LinearLayout.LayoutParams).topMargin = dp(12)
-        })
-        quickCard.addView(TextView(this).apply {
-            text = "শোনার ধরন (Listening Mode)"
-            textSize = 13.5f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(pal.text)
-        })
-        modeHintText = TextView(this).apply {
-            textSize = 12f
-            setTextColor(pal.subText)
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(2); bottomMargin = dp(8) }
-        }
-        quickCard.addView(modeHintText)
-
-        val modeRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-        }
-
-        btnModeContinuous = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            minimumHeight = dp(48)
-            setPadding(dp(10), dp(10), dp(10), dp(10))
-            rippleSelectable(this)
-            setOnClickListener {
-                AssistantPrefs.setListeningMode(this@AssistantActivity, ListeningMode.CONTINUOUS)
-                AssistantListenerService.notifyConfigChanged(this@AssistantActivity)
-                refresh()
-            }
-        }
-        btnModeContinuousIcon = ImageView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(18), dp(18)).apply { marginEnd = dp(6) }
-        }
-        btnModeContinuousLabel = TextView(this).apply {
-            text = "Continuous"
-            textSize = 13f
-            setTypeface(null, Typeface.BOLD)
-            maxLines = 1
-        }
-        btnModeContinuous.addView(btnModeContinuousIcon)
-        btnModeContinuous.addView(btnModeContinuousLabel)
-        modeRow.addView(btnModeContinuous, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-            marginEnd = dp(6)
-        })
-
-        btnModePtt = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            minimumHeight = dp(48)
-            setPadding(dp(10), dp(10), dp(10), dp(10))
-            rippleSelectable(this)
-            setOnClickListener {
-                AssistantPrefs.setListeningMode(this@AssistantActivity, ListeningMode.PUSH_TO_TALK)
-                AssistantListenerService.notifyConfigChanged(this@AssistantActivity)
-                refresh()
-            }
-        }
-        btnModePttIcon = ImageView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(18), dp(18)).apply { marginEnd = dp(6) }
-        }
-        btnModePttLabel = TextView(this).apply {
-            text = "Quiet PTT"
-            textSize = 13f
-            setTypeface(null, Typeface.BOLD)
-            maxLines = 1
-        }
-        btnModePtt.addView(btnModePttIcon)
-        btnModePtt.addView(btnModePttLabel)
-        modeRow.addView(btnModePtt, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-            marginStart = dp(6)
-        })
-        quickCard.addView(modeRow)
-        root.addView(quickCard)
-
-        // ------------------------------------------------------------ 3. Permissions & Status Checklist Card
-        val statusCard = createCard().apply {
-            (layoutParams as LinearLayout.LayoutParams).topMargin = dp(14)
-        }
-        val statusHeader = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = dp(10) }
-        }
-        statusHeader.addView(ImageView(this).apply {
-            setImageDrawable(AssistantIcons.drawable(this@AssistantActivity, AssistantIcons.Kind.SHIELD, pal.primary, 20))
-            layoutParams = LinearLayout.LayoutParams(dp(20), dp(20)).apply { marginEnd = dp(8) }
-        })
-        statusHeader.addView(TextView(this).apply {
-            text = "পারমিশন ও সিস্টেম স্ট্যাটাস"
-            textSize = 15.5f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(pal.text)
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        })
-        checklistSummaryBadge = TextView(this).apply {
-            textSize = 12f
-            setTypeface(null, Typeface.BOLD)
-            setPadding(dp(10), dp(4), dp(10), dp(4))
-        }
-        statusHeader.addView(checklistSummaryBadge)
-        statusCard.addView(statusHeader)
-
-        rowA11y = addChecklistRow(
-            parent = statusCard,
-            title = "Accessibility সার্ভিস",
-            actionText = "সেটিংস",
-            onAction = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
-        )
-
-        val restrictedHelper = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(10), dp(8), dp(10), dp(8))
-            background = roundBg(pal.cardAlt, 10)
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(4); bottomMargin = dp(6) }
-            rippleSelectable(this)
-            setOnClickListener {
-                startActivity(
-                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
-                )
-            }
-            addView(ImageView(this@AssistantActivity).apply {
-                setImageDrawable(AssistantIcons.drawable(this@AssistantActivity, AssistantIcons.Kind.APP_INFO, pal.primary, 16))
-                layoutParams = LinearLayout.LayoutParams(dp(16), dp(16)).apply { marginEnd = dp(8) }
-            })
-            addView(TextView(this@AssistantActivity).apply {
-                text = "Android 13+: 'Restricted setting' দেখালে App info খুলে Allow করুন"
-                textSize = 12f
-                setTextColor(pal.primary)
-            })
-        }
-        statusCard.addView(restrictedHelper)
-
-        statusCard.addView(dividerView())
-        rowPerms = addChecklistRow(
-            parent = statusCard,
-            title = "Mic, Contacts ও Call অনুমোদন",
-            actionText = "অনুমতি দিন",
-            onAction = { requestPermissions(AssistantSetup.runtimePermissions(), 201) }
-        )
-
-        statusCard.addView(dividerView())
-        rowOverlay = addChecklistRow(
-            parent = statusCard,
-            title = "Display over other apps",
-            actionText = "সেটিংস",
-            onAction = {
-                startActivity(
-                    Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
-                )
-            }
-        )
-
-        statusCard.addView(dividerView())
-        rowAlarm = addChecklistRow(
-            parent = statusCard,
-            title = "Alarm ও Timer (SET_ALARM)",
-            actionText = null,
-            onAction = null
-        )
-
-        statusCard.addView(dividerView())
-        rowStorage = addChecklistRow(
-            parent = statusCard,
-            title = "Assistant Storage Folder (SAF)",
-            actionText = "বাছুন",
-            onAction = { launchStorageTreePicker() }
-        )
-
-        root.addView(statusCard)
-
-        // ------------------------------------------------------------ 4. Controls & Safety Card
-        val controlsCard = createCard().apply {
-            (layoutParams as LinearLayout.LayoutParams).topMargin = dp(14)
-        }
-        val controlsHeader = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = dp(10) }
-        }
-        controlsHeader.addView(ImageView(this).apply {
-            setImageDrawable(AssistantIcons.drawable(this@AssistantActivity, AssistantIcons.Kind.LOCK, pal.primary, 20))
-            layoutParams = LinearLayout.LayoutParams(dp(20), dp(20)).apply { marginEnd = dp(8) }
-        })
-        controlsHeader.addView(TextView(this).apply {
-            text = "কনফার্মেশন ও স্টোরেজ নিয়ন্ত্রণ"
-            textSize = 15.5f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(pal.text)
-        })
-        controlsCard.addView(controlsHeader)
-
-        val folderBox = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), dp(12), dp(12), dp(12))
-            background = roundBg(pal.cardAlt, 14)
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = dp(12) }
-        }
-        folderBox.addView(TextView(this).apply {
-            text = "ফাইল ও ফোল্ডার তৈরির কমান্ড চালানোর জন্য আপনাকে নিজে ট্যাপ করে একটি ফোল্ডার বেছে দিতে হবে:"
-            textSize = 12.5f
-            setTextColor(pal.subText)
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = dp(10) }
-        })
-        val folderBtnRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            minimumHeight = dp(46)
-            setPadding(dp(14), dp(10), dp(14), dp(10))
-            background = roundBg(pal.primarySoft, 12, pal.primary, 1)
-            rippleSelectable(this)
-            setOnClickListener { launchStorageTreePicker() }
-        }
-        btnStorageIcon = ImageView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(18), dp(18)).apply { marginEnd = dp(8) }
-        }
-        btnStorageLabel = TextView(this).apply {
-            textSize = 13.5f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(pal.primary)
-        }
-        folderBtnRow.addView(btnStorageIcon)
-        folderBtnRow.addView(btnStorageLabel)
-        folderBox.addView(folderBtnRow)
-        controlsCard.addView(folderBox)
-
-        swOverlayHud = addSwitchRow(
-            parent = controlsCard,
-            iconKind = AssistantIcons.Kind.BOT,
-            title = "Side-Edge Command Overlay",
-            subtitle = "স্ক্রিনের পাশে ছোট ট্যাব হিসেবে থাকবে — টেনে বাম/ডানে সরানো যাবে",
-            initial = AssistantPrefs.overlayHudEnabled(this),
-            bindSubtitle = { swOverlaySub = it }
-        ) { checked ->
-            AssistantPrefs.setOverlayHudEnabled(this, checked)
-            AssistantListenerService.notifyConfigChanged(this)
-            refresh()
-        }
-
-        val resetOverlayBtn = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(10), dp(6), dp(12), dp(6))
-            background = roundBg(pal.cardAlt, 10)
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { marginStart = dp(32); topMargin = dp(2); bottomMargin = dp(4) }
-            rippleSelectable(this)
-            setOnClickListener {
-                AssistantPrefs.resetOverlayPosition(this@AssistantActivity)
-                AssistantListenerService.notifyConfigChanged(this@AssistantActivity)
-                Toast.makeText(this@AssistantActivity, "সাইড ট্যাবের পজিশন রিসেট হয়েছে", Toast.LENGTH_SHORT).show()
-            }
-            addView(ImageView(this@AssistantActivity).apply {
-                setImageDrawable(AssistantIcons.drawable(this@AssistantActivity, AssistantIcons.Kind.REFRESH, pal.primary, 14))
-                layoutParams = LinearLayout.LayoutParams(dp(14), dp(14)).apply { marginEnd = dp(6) }
-            })
-            addView(TextView(this@AssistantActivity).apply {
-                text = "সাইড ট্যাব পজিশন রিসেট করুন"
-                textSize = 12f
-                setTypeface(null, Typeface.BOLD)
-                setTextColor(pal.primary)
-            })
-        }
-        controlsCard.addView(resetOverlayBtn)
-
-        controlsCard.addView(dividerView())
-        swConfirmAppCall = addSwitchRow(
-            parent = controlsCard,
-            iconKind = AssistantIcons.Kind.LOCK,
-            title = "App call-এর আগে confirm",
-            subtitle = "imo, WhatsApp বা Messenger কলের আগে হ্যাঁ/না চাইবে",
-            initial = AssistantPrefs.confirmBeforeAppCall(this)
-        ) { AssistantPrefs.setConfirmBeforeAppCall(this, it) }
-
-        controlsCard.addView(dividerView())
-        swConfirmHumanSend = addSwitchRow(
-            parent = controlsCard,
-            iconKind = AssistantIcons.Kind.MESSAGE,
-            title = "মেসেজ পাঠানোর আগে confirm",
-            subtitle = "WhatsApp, imo বা Messenger-এ মেসেজ সেন্ড করার আগে",
-            initial = AssistantPrefs.confirmBeforeHumanSend(this)
-        ) { AssistantPrefs.setConfirmBeforeHumanSend(this, it) }
-
-        controlsCard.addView(dividerView())
-        swConfirmAiChatSend = addSwitchRow(
-            parent = controlsCard,
-            iconKind = AssistantIcons.Kind.SPARKLE,
-            title = "AI chat send-এর আগে confirm",
-            subtitle = "Claude, ChatGPT বা Gemini-তে পাঠানোর আগে জিজ্ঞাসা করবে",
-            initial = AssistantPrefs.confirmBeforeAiChatSend(this)
-        ) { AssistantPrefs.setConfirmBeforeAiChatSend(this, it) }
-
-        controlsCard.addView(dividerView())
-
-        val timeoutHeader = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(10); bottomMargin = dp(6) }
-        }
-        timeoutHeader.addView(ImageView(this).apply {
-            setImageDrawable(AssistantIcons.drawable(this@AssistantActivity, AssistantIcons.Kind.TIMER, pal.primary, 18))
-            layoutParams = LinearLayout.LayoutParams(dp(18), dp(18)).apply { marginEnd = dp(8) }
-        })
-        timeoutHeader.addView(TextView(this).apply {
-            text = "App-flow অপেক্ষার সময়"
-            textSize = 14f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(pal.text)
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        })
-        timeoutBadge = TextView(this).apply {
-            textSize = 12.5f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(pal.primary)
-            setPadding(dp(10), dp(4), dp(10), dp(4))
-            background = roundBg(pal.primarySoft, 8)
-        }
-        timeoutHeader.addView(timeoutBadge)
-        controlsCard.addView(timeoutHeader)
-
-        timeoutSeek = SeekBar(this).apply {
-            max = AssistantPrefs.MAX_FLOW_TIMEOUT_SEC - AssistantPrefs.MIN_FLOW_TIMEOUT_SEC
-            progress = AssistantPrefs.appFlowTimeoutSec(this@AssistantActivity) - AssistantPrefs.MIN_FLOW_TIMEOUT_SEC
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                    val sec = AssistantPrefs.MIN_FLOW_TIMEOUT_SEC + progress
-                    timeoutBadge.text = "$sec সেকেন্ড"
-                    if (fromUser) AssistantPrefs.setAppFlowTimeoutSec(this@AssistantActivity, sec)
-                }
-                override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-                override fun onStopTrackingTouch(seekBar: SeekBar?) {}
-            })
-        }
-        controlsCard.addView(timeoutSeek)
-        root.addView(controlsCard)
-
-        // ------------------------------------------------------------ 4b. Auto Ad Skipper Card
-        val adCard = createCard().apply {
-            (layoutParams as LinearLayout.LayoutParams).topMargin = dp(14)
-        }
-        val adHeader = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = dp(8) }
-        }
-        adHeader.addView(ImageView(this).apply {
-            setImageDrawable(AssistantIcons.drawable(this@AssistantActivity, AssistantIcons.Kind.SKIP_FORWARD, pal.primary, 20))
-            layoutParams = LinearLayout.LayoutParams(dp(20), dp(20)).apply { marginEnd = dp(8) }
-        })
-        adHeader.addView(TextView(this).apply {
-            text = "Auto Ad Skipper (নিরাপদ)"
-            textSize = 15.5f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(pal.text)
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        })
-        adSkipBadge = TextView(this).apply {
-            textSize = 11.5f
-            setTypeface(null, Typeface.BOLD)
-            setPadding(dp(10), dp(4), dp(10), dp(4))
-        }
-        adHeader.addView(adSkipBadge)
-        adCard.addView(adHeader)
-
-        swAdSkip = addSwitchRow(
-            parent = adCard,
-            iconKind = AssistantIcons.Kind.SKIP_FORWARD,
-            title = "YouTube ও Ads অটো স্কিপ",
-            subtitle = "YouTube ভিডিও বিজ্ঞাপনের Skip বাটন আসলে স্বয়ংক্রিয়ভাবে ক্লিক করবে",
-            initial = AssistantPrefs.adSkipEnabled(this),
-            bindSubtitle = { swAdSkipSub = it }
-        ) { checked ->
-            AssistantPrefs.setAdSkipEnabled(this, checked)
-            refresh()
-        }
-
-        adCard.addView(dividerView())
-        swAdSkipGames = addSwitchRow(
-            parent = adCard,
-            iconKind = AssistantIcons.Kind.OVERLAY,
-            title = "গেম ও অ্যাপ Ad Overlay (×)",
-            subtitle = "শুধু যাচাইকৃত Ad-SDK বিজ্ঞাপনের × / Skip Ad বাটন বন্ধ করবে",
-            initial = AssistantPrefs.adSkipGamesEnabled(this)
-        ) { checked ->
-            AssistantPrefs.setAdSkipGamesEnabled(this, checked)
-            refresh()
-        }
-
-        val adGuardNote = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(10), dp(8), dp(10), dp(8))
-            background = roundBg(pal.cardAlt, 10)
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(8) }
-            addView(ImageView(this@AssistantActivity).apply {
-                setImageDrawable(AssistantIcons.drawable(this@AssistantActivity, AssistantIcons.Kind.SHIELD, pal.ok, 16))
-                layoutParams = LinearLayout.LayoutParams(dp(16), dp(16)).apply { marginEnd = dp(8) }
-            })
-            addView(TextView(this@AssistantActivity).apply {
-                text = "রেজিস্ট্রেশন, লগইন, OTP বা ফর্মের ‘Skip’ বাটনে কখনোই ক্লিক করবে না।"
-                textSize = 12f
-                setTextColor(pal.subText)
-            })
-        }
-        adCard.addView(adGuardNote)
-        root.addView(adCard)
-
-        // ------------------------------------------------------------ 5. Gemini AI Fallback Key Card
-        val geminiCard = createCard().apply {
-            (layoutParams as LinearLayout.LayoutParams).topMargin = dp(14)
-        }
-        val geminiHeader = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = dp(8) }
-        }
-        geminiHeader.addView(ImageView(this).apply {
-            setImageDrawable(AssistantIcons.drawable(this@AssistantActivity, AssistantIcons.Kind.SPARKLE, pal.primary, 20))
-            layoutParams = LinearLayout.LayoutParams(dp(20), dp(20)).apply { marginEnd = dp(8) }
-        })
-        geminiHeader.addView(TextView(this).apply {
-            text = "Gemini AI ফলব্যাক (ঐচ্ছিক)"
-            textSize = 15.5f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(pal.text)
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        })
-        geminiStatusBadge = TextView(this).apply {
-            textSize = 11.5f
-            setTypeface(null, Typeface.BOLD)
-            setPadding(dp(10), dp(4), dp(10), dp(4))
-        }
-        geminiHeader.addView(geminiStatusBadge)
-        geminiCard.addView(geminiHeader)
-
-        geminiSubText = TextView(this).apply {
-            textSize = 12.5f
-            setTextColor(pal.subText)
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = dp(10) }
-        }
-        geminiCard.addView(geminiSubText)
-
-        geminiInput = EditText(this).apply {
-            hint = "AIza... (Google AI Studio Gemini API Key)"
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-            setTextColor(pal.text)
-            setHintTextColor(pal.subText)
-            setText(GeminiConfig.getUserKey(this@AssistantActivity))
-            setPadding(dp(12), dp(10), dp(12), dp(10))
-            background = roundBg(pal.cardAlt, 12, pal.border, 1)
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = dp(10) }
-        }
-        geminiCard.addView(geminiInput)
-
-        val geminiBtnRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-        }
-
-        val btnSaveGemini = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            minimumHeight = dp(48)
-            setPadding(dp(14), dp(10), dp(14), dp(10))
-            background = roundBg(pal.primary, 12)
-            rippleSelectable(this)
-            setOnClickListener {
-                val entered = geminiInput.text.toString().trim()
-                GeminiConfig.setKey(this@AssistantActivity, entered)
-                refresh()
-                val msg = when {
-                    entered.isEmpty() -> "কাস্টম Key মুছে ফেলা হয়েছে"
-                    !GeminiConfig.looksLikeStandardGeminiKey(entered) ->
-                        "সেভ হয়েছে — তবে Google AI Studio Gemini API key সাধারণত 'AIza' দিয়ে শুরু হয়"
-                    else -> "Gemini API key সেভ হয়েছে (শুধু এই ফোনেই থাকবে)"
-                }
-                Toast.makeText(this@AssistantActivity, msg, Toast.LENGTH_LONG).show()
-            }
-            addView(ImageView(this@AssistantActivity).apply {
-                setImageDrawable(AssistantIcons.drawable(this@AssistantActivity, AssistantIcons.Kind.CHECK_CIRCLE, pal.onPrimary, 18))
-                layoutParams = LinearLayout.LayoutParams(dp(18), dp(18)).apply { marginEnd = dp(6) }
-            })
-            addView(TextView(this@AssistantActivity).apply {
-                text = "Gemini Key সেভ করুন"
-                textSize = 13.5f
-                setTypeface(null, Typeface.BOLD)
-                setTextColor(pal.onPrimary)
-            })
-        }
-        geminiBtnRow.addView(btnSaveGemini, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-
-        btnClearGemini = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            minimumHeight = dp(48)
-            setPadding(dp(12), dp(10), dp(12), dp(10))
-            background = roundBg(pal.dangerSoft, 12, pal.danger, 1)
-            rippleSelectable(this)
-            setOnClickListener {
-                geminiInput.setText("")
-                GeminiConfig.setKey(this@AssistantActivity, "")
-                refresh()
-                Toast.makeText(this@AssistantActivity, "কাস্টম Key মুছে ফেলা হয়েছে", Toast.LENGTH_SHORT).show()
-            }
-            addView(ImageView(this@AssistantActivity).apply {
-                setImageDrawable(AssistantIcons.drawable(this@AssistantActivity, AssistantIcons.Kind.CLOSE, pal.danger, 16))
-                layoutParams = LinearLayout.LayoutParams(dp(16), dp(16)).apply { marginEnd = dp(6) }
-            })
-            addView(TextView(this@AssistantActivity).apply {
-                text = "মুছুন"
-                textSize = 13f
-                setTypeface(null, Typeface.BOLD)
-                setTextColor(pal.danger)
-            })
-        }
-        geminiBtnRow.addView(btnClearGemini, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.WRAP_CONTENT,
-            LinearLayout.LayoutParams.WRAP_CONTENT
-        ).apply { marginStart = dp(8) })
-        geminiCard.addView(geminiBtnRow)
-        root.addView(geminiCard)
-
-        // ------------------------------------------------------------ 6. Back to Keyboard & Settings Button
-        val returnBtn = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            minimumHeight = dp(50)
-            setPadding(dp(16), dp(12), dp(16), dp(12))
-            background = roundBg(pal.card, 16, pal.border, 1)
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(16) }
-            rippleSelectable(this)
-            setOnClickListener { returnToMain() }
-            addView(ImageView(this@AssistantActivity).apply {
-                setImageDrawable(AssistantIcons.drawable(this@AssistantActivity, AssistantIcons.Kind.KEYBOARD, pal.primary, 20))
-                layoutParams = LinearLayout.LayoutParams(dp(20), dp(20)).apply { marginEnd = dp(10) }
-            })
-            addView(TextView(this@AssistantActivity).apply {
-                text = "Bangla Keys Keyboard ও Settings-এ ফিরুন"
-                textSize = 14.5f
-                setTypeface(null, Typeface.BOLD)
-                setTextColor(pal.primary)
-            })
-        }
-        root.addView(returnBtn)
-
-        val scroll = ScrollView(this).apply {
+        setContentView(ScrollView(this).apply {
             setBackgroundColor(pal.bg)
             addView(root)
-            if (Build.VERSION.SDK_INT >= 30) {
-                setOnApplyWindowInsetsListener { v, insets ->
-                    val sys = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
-                    v.setPadding(sys.left, sys.top, sys.right, sys.bottom)
-                    insets
-                }
-            } else {
-                fitsSystemWindows = true
-            }
-        }
-        setContentView(scroll)
-    }
-
-    private fun createCard(): LinearLayout = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        setPadding(dp(16), dp(16), dp(16), dp(16))
-        background = roundBg(pal.card, 20, pal.border, 1)
-        layoutParams = LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT,
-            LinearLayout.LayoutParams.WRAP_CONTENT
-        )
-    }
-
-    private fun dividerView(): View = View(this).apply {
-        setBackgroundColor(pal.border)
-        layoutParams = LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT,
-            1
-        ).apply {
-            topMargin = dp(8)
-            bottomMargin = dp(8)
-        }
-    }
-
-    private fun buildCompactPillButton(
-        kind: AssistantIcons.Kind,
-        labelInit: String,
-        onClick: () -> Unit,
-        bindText: (TextView) -> Unit
-    ): LinearLayout {
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            minimumHeight = dp(46)
-            setPadding(dp(10), dp(10), dp(10), dp(10))
-            background = roundBg(pal.cardAlt, 14)
-            rippleSelectable(this)
-            setOnClickListener { onClick() }
-        }
-        box.addView(ImageView(this).apply {
-            setImageDrawable(AssistantIcons.drawable(this@AssistantActivity, kind, pal.primary, 18))
-            layoutParams = LinearLayout.LayoutParams(dp(18), dp(18)).apply { marginEnd = dp(6) }
         })
-        val tv = TextView(this).apply {
-            text = labelInit
-            textSize = 12.5f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(pal.text)
-            maxLines = 1
-        }
-        bindText(tv)
-        box.addView(tv)
-        return box
-    }
-
-    private fun addChecklistRow(
-        parent: LinearLayout,
-        title: String,
-        actionText: String?,
-        onAction: (() -> Unit)?
-    ): StatusRowViews {
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(4), 0, dp(4))
-        }
-        val icon = ImageView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(22), dp(22)).apply { marginEnd = dp(12) }
-        }
-        row.addView(icon)
-
-        val textCol = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-                marginEnd = dp(8)
-            }
-            addView(TextView(this@AssistantActivity).apply {
-                text = title
-                textSize = 14f
-                setTypeface(null, Typeface.BOLD)
-                setTextColor(pal.text)
-            })
-        }
-        val sub = TextView(this).apply {
-            textSize = 12f
-            setTextColor(pal.subText)
-        }
-        textCol.addView(sub)
-        row.addView(textCol)
-
-        var btn: TextView? = null
-        if (actionText != null && onAction != null) {
-            btn = TextView(this).apply {
-                text = actionText
-                textSize = 12.5f
-                setTypeface(null, Typeface.BOLD)
-                setTextColor(pal.primary)
-                gravity = Gravity.CENTER
-                minHeight = dp(38)
-                setPadding(dp(12), dp(6), dp(12), dp(6))
-                background = roundBg(pal.primarySoft, 10)
-                rippleSelectable(this)
-                setOnClickListener { onAction() }
-            }
-            row.addView(btn)
-        }
-
-        parent.addView(row)
-        return StatusRowViews(icon, sub, btn)
-    }
-
-    @Suppress("UseSwitchCompatOrMaterialCode")
-    private fun addSwitchRow(
-        parent: LinearLayout,
-        iconKind: AssistantIcons.Kind,
-        title: String,
-        subtitle: String,
-        initial: Boolean,
-        bindSubtitle: ((TextView) -> Unit)? = null,
-        onChange: (Boolean) -> Unit
-    ): Switch {
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(4), 0, dp(4))
-        }
-        row.addView(ImageView(this).apply {
-            setImageDrawable(AssistantIcons.drawable(this@AssistantActivity, iconKind, pal.primary, 20))
-            layoutParams = LinearLayout.LayoutParams(dp(20), dp(20)).apply { marginEnd = dp(12) }
-        })
-        val subTv = TextView(this@AssistantActivity).apply {
-            text = subtitle
-            textSize = 12f
-            setTextColor(pal.subText)
-        }
-        bindSubtitle?.invoke(subTv)
-        row.addView(LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-                marginEnd = dp(12)
-            }
-            addView(TextView(this@AssistantActivity).apply {
-                text = title
-                textSize = 14f
-                setTypeface(null, Typeface.BOLD)
-                setTextColor(pal.text)
-            })
-            addView(subTv)
-        })
-        val sw = Switch(this).apply {
-            isChecked = initial
-            minWidth = dp(48)
-            minHeight = dp(48)
-            setOnCheckedChangeListener { _, checked -> onChange(checked) }
-        }
-        row.addView(sw)
-        parent.addView(row)
-        return sw
-    }
-
-    @Suppress("DEPRECATION")
-    private fun launchStorageTreePicker() {
-        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
-            addFlags(
-                Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
-                    Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
-            )
-        }
-        try {
-            startActivityForResult(intent, REQ_STORAGE_TREE)
-        } catch (e: Exception) {
-            AssistantLog.w("OPEN_DOCUMENT_TREE failed", e)
-            Toast.makeText(this, "Storage folder picker খোলা যায়নি", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    private fun returnToMain() {
-        val intent = Intent(this, MainActivity::class.java)
-        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-        startActivity(intent)
-        finish()
     }
 
     override fun onResume() {
@@ -1147,212 +192,830 @@ class AssistantActivity : Activity() {
         refresh()
     }
 
-    @Suppress("OVERRIDE_DEPRECATION")
+    @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == REQ_STORAGE_TREE && resultCode == RESULT_OK) {
-            val uri = data?.data
+            val uri: Uri? = data?.data
             if (uri != null) {
-                val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                 try {
-                    contentResolver.takePersistableUriPermission(uri, flags)
-                } catch (e: Exception) {
-                    AssistantLog.w("takePersistableUriPermission failed", e)
+                    contentResolver.takePersistableUriPermission(
+                        uri,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                    )
+                } catch (_: Exception) {
                 }
                 AssistantPrefs.setStorageTreeUri(this, uri.toString())
-                Toast.makeText(this, "Assistant storage folder সেভ হয়েছে", Toast.LENGTH_SHORT).show()
+                toast("Storage ফোল্ডার সেভ হয়েছে")
+                refresh()
             }
+        }
+    }
+
+    // ------------------------------------------------------------ Section Builders
+
+    private fun buildHeader(): View {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(14) }
+        }
+
+        val backBtn = LinearLayout(this).apply {
+            gravity = Gravity.CENTER
+            minimumWidth = dp(48)
+            minimumHeight = dp(48)
+            rippleCard(this, pal.card, 14, pal.border)
+            contentDescription = "Back"
+            setOnClickListener { finish() }
+            addView(ImageView(this@AssistantActivity).apply {
+                setImageDrawable(AssistantIcons.drawable(this@AssistantActivity, AssistantIcons.Kind.BACK, pal.text, 20))
+            })
+        }
+        row.addView(backBtn)
+
+        val titleCol = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginStart = dp(12)
+                marginEnd = dp(8)
+            }
+            addView(TextView(this@AssistantActivity).apply {
+                text = "BanglaKeys Assistant"
+                textSize = 20f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(pal.text)
+            })
+            addView(TextView(this@AssistantActivity).apply {
+                text = "ভয়েস কমান্ড, সাইড-এজ ওভারলে ও অ্যাড স্কিপার"
+                textSize = 12.5f
+                setTextColor(pal.subText)
+            })
+        }
+        row.addView(titleCol)
+
+        statusPillBg = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(10), dp(6), dp(12), dp(6))
+            background = roundedBg(pal.primarySoft, 99)
+        }
+        statusPillIcon = ImageView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(15), dp(15)).apply { marginEnd = dp(6) }
+        }
+        statusPillText = TextView(this).apply {
+            textSize = 12f
+            setTypeface(null, Typeface.BOLD)
+        }
+        statusPillBg.addView(statusPillIcon)
+        statusPillBg.addView(statusPillText)
+        row.addView(statusPillBg)
+
+        return row
+    }
+
+    private fun makeCard(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        background = roundedBg(pal.card, 18, pal.border)
+        setPadding(dp(16), dp(14), dp(16), dp(14))
+        layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { bottomMargin = dp(12) }
+    }
+
+    private fun addCardHeader(card: LinearLayout, icon: AssistantIcons.Kind, title: String, subtitle: String? = null) {
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(10) }
+        }
+        header.addView(LinearLayout(this).apply {
+            gravity = Gravity.CENTER
+            background = roundedBg(pal.primarySoft, 10)
+            layoutParams = LinearLayout.LayoutParams(dp(34), dp(34)).apply { marginEnd = dp(10) }
+            addView(ImageView(this@AssistantActivity).apply {
+                setImageDrawable(AssistantIcons.drawable(this@AssistantActivity, icon, pal.primary, 18))
+            })
+        })
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            addView(TextView(this@AssistantActivity).apply {
+                text = title
+                textSize = 15.5f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(pal.text)
+            })
+            if (!subtitle.isNullOrBlank()) {
+                addView(TextView(this@AssistantActivity).apply {
+                    text = subtitle
+                    textSize = 12f
+                    setTextColor(pal.subText)
+                })
+            }
+        }
+        header.addView(col)
+        card.addView(header)
+    }
+
+    private fun buildIconButton(
+        icon: AssistantIcons.Kind,
+        label: String,
+        fg: Int,
+        bg: Int,
+        stroke: Int? = null,
+        onClick: () -> Unit
+    ): Triple<LinearLayout, ImageView, TextView> {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            minimumHeight = dp(48)
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+            rippleCard(this, bg, 14, stroke)
+            setOnClickListener { onClick() }
+        }
+        val iv = ImageView(this).apply {
+            setImageDrawable(AssistantIcons.drawable(this@AssistantActivity, icon, fg, 18))
+            layoutParams = LinearLayout.LayoutParams(dp(18), dp(18)).apply { marginEnd = dp(8) }
+        }
+        val tv = TextView(this).apply {
+            text = label
+            textSize = 14f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(fg)
+        }
+        box.addView(iv)
+        box.addView(tv)
+        return Triple(box, iv, tv)
+    }
+
+    private fun buildServiceCard(): View {
+        val card = makeCard()
+        addCardHeader(
+            card,
+            AssistantIcons.Kind.BOT,
+            "Assistant কন্ট্রোল ও ভাষা",
+            "\"Hey Bot\" বা সাইড ট্যাব থেকে কমান্ড দিন"
+        )
+
+        val svcTriple = buildIconButton(
+            AssistantIcons.Kind.PLAY,
+            "Assistant চালু করুন",
+            Color.WHITE,
+            pal.primary
+        ) {
+            if (AssistantListenerService.running) {
+                AssistantListenerService.stop(this)
+            } else if (!AssistantSetup.isReady(this)) {
+                toast("আগে নিচের Accessibility আর Microphone অনুমতি দিন")
+            } else {
+                AssistantListenerService.start(this)
+            }
+            Handler(Looper.getMainLooper()).postDelayed({ refresh() }, 350)
+        }
+        btnService = svcTriple.first
+        btnServiceIcon = svcTriple.second
+        btnServiceText = svcTriple.third
+        card.addView(btnService, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { bottomMargin = dp(8) })
+
+        val pttTriple = buildIconButton(
+            AssistantIcons.Kind.MIC,
+            "এখনই কথা বলুন (Push-to-Talk)",
+            pal.primary,
+            pal.primarySoft
+        ) {
+            if (!AssistantSetup.isReady(this)) {
+                toast("আগে Accessibility ও Microphone চালু করুন")
+            } else {
+                AssistantListenerService.triggerPtt(this)
+                Handler(Looper.getMainLooper()).postDelayed({ refresh() }, 350)
+            }
+        }
+        btnPttSpeak = pttTriple.first
+        card.addView(btnPttSpeak, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { bottomMargin = dp(8) })
+
+        val langTriple = buildIconButton(
+            AssistantIcons.Kind.GLOBE,
+            "শোনার ভাষা",
+            pal.text,
+            pal.bg,
+            pal.border
+        ) {
+            AssistantSetup.setBangla(this, !AssistantSetup.isBangla(this))
+            AssistantListenerService.notifyConfigChanged(this)
+            refresh()
+            toast("শোনার ভাষা আপডেট হয়েছে")
+        }
+        btnLang = langTriple.first
+        btnLangText = langTriple.third
+        card.addView(btnLang, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { bottomMargin = dp(12) })
+
+        // Listening Mode Toggle Chips
+        card.addView(TextView(this).apply {
+            text = "Listening Mode"
+            textSize = 12.5f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(pal.subText)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(6) }
+        })
+
+        val modeRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        val cChip = buildIconButton(AssistantIcons.Kind.MIC, "Continuous", pal.primary, pal.primarySoft) {
+            AssistantPrefs.setListeningMode(this, ListeningMode.CONTINUOUS)
+            AssistantListenerService.notifyConfigChanged(this)
             refresh()
         }
+        chipContinuous = cChip.first
+        chipContinuousText = cChip.third
+        modeRow.addView(chipContinuous, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+            marginEnd = dp(6)
+        })
+
+        val pChip = buildIconButton(AssistantIcons.Kind.SHIELD, "Quiet PTT", pal.text, pal.bg, pal.border) {
+            AssistantPrefs.setListeningMode(this, ListeningMode.PUSH_TO_TALK)
+            AssistantListenerService.notifyConfigChanged(this)
+            refresh()
+        }
+        chipPtt = pChip.first
+        chipPttText = pChip.third
+        modeRow.addView(chipPtt, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+            marginStart = dp(6)
+        })
+
+        card.addView(modeRow)
+        return card
     }
 
-    private fun applyStatusIcon(view: ImageView, ok: Boolean) {
-        val kind = if (ok) AssistantIcons.Kind.CHECK_CIRCLE else AssistantIcons.Kind.ALERT_CIRCLE
-        val tint = if (ok) pal.ok else pal.danger
-        view.setImageDrawable(AssistantIcons.drawable(this, kind, tint, 22))
+    private fun buildOverlayAndAdSkipCard(): View {
+        val card = makeCard()
+        addCardHeader(
+            card,
+            AssistantIcons.Kind.OVERLAY,
+            "সাইড-এজ ওভারলে ও Auto Ad Skipper",
+            "উপরের স্ক্রিন ফাঁকা রাখতে পাশে ভাসমান ট্যাব + নিরাপদ বিজ্ঞাপন স্কিপার"
+        )
+
+        switchOverlay = addToggleRow(
+            card,
+            "ভাসমান সাইড-এজ ট্যাব দেখান",
+            "বাম বা ডান কিনারায় টেনে নেওয়া যায় (ট্যাপ করলে কমান্ড নেয়)",
+            AssistantPrefs.overlayHudEnabled(this)
+        ) { checked ->
+            AssistantPrefs.setOverlayHudEnabled(this, checked)
+            AssistantListenerService.notifyConfigChanged(this)
+        }
+
+        overlayEdgeText = TextView(this).apply {
+            textSize = 12f
+            setTextColor(pal.subText)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = dp(2)
+                bottomMargin = dp(8)
+            }
+        }
+        card.addView(overlayEdgeText)
+
+        val resetBtn = buildIconButton(
+            AssistantIcons.Kind.REFRESH,
+            "সাইড ট্যাবের অবস্থান রিসেট করুন",
+            pal.primary,
+            pal.primarySoft
+        ) {
+            AssistantPrefs.resetOverlayPosition(this)
+            AssistantListenerService.notifyConfigChanged(this)
+            refresh()
+            toast("ডান পাশে ডিফল্ট অবস্থানে রিসেট হয়েছে")
+        }.first
+        card.addView(resetBtn, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { bottomMargin = dp(12) })
+
+        // Divider
+        card.addView(View(this).apply {
+            setBackgroundColor(pal.border)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(1)
+            ).apply { bottomMargin = dp(10) }
+        })
+
+        val adHead = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(6) }
+            addView(ImageView(this@AssistantActivity).apply {
+                setImageDrawable(AssistantIcons.drawable(this@AssistantActivity, AssistantIcons.Kind.SKIP_FORWARD, pal.primary, 18))
+                layoutParams = LinearLayout.LayoutParams(dp(18), dp(18)).apply { marginEnd = dp(8) }
+            })
+            addView(TextView(this@AssistantActivity).apply {
+                text = "Auto Ad Skipper (Strict Guard)"
+                textSize = 14f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(pal.text)
+            })
+        }
+        card.addView(adHead)
+
+        switchAdSkip = addToggleRow(
+            card,
+            "YouTube ও ভেরিফাইড বিজ্ঞাপন অটো-স্কিপ",
+            "সাইন-আপ, রেজিস্ট্রেশন বা ফর্মের 'Skip' বাটন সম্পূর্ণ ব্লক করা থাকে",
+            AssistantPrefs.adSkipEnabled(this)
+        ) { checked ->
+            AssistantPrefs.setAdSkipEnabled(this, checked)
+        }
+
+        switchAdSkipGames = addToggleRow(
+            card,
+            "গেম ও অ্যাপের (×) ক্লোজ অ্যাড স্কিপ",
+            "কেবল যাচাইকৃত Ad-SDK ওভারলে এবং কাউন্টডাউন শেষ হলেই ক্লিক করবে",
+            AssistantPrefs.adSkipGamesEnabled(this)
+        ) { checked ->
+            AssistantPrefs.setAdSkipGamesEnabled(this, checked)
+        }
+
+        adSkipStatsText = TextView(this).apply {
+            textSize = 12f
+            setTextColor(pal.primary)
+            setTypeface(null, Typeface.BOLD)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(4) }
+        }
+        card.addView(adSkipStatsText)
+
+        return card
     }
+
+    private fun buildSetupChecklistCard(): View {
+        val card = makeCard()
+        val headRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(10) }
+        }
+        headRow.addView(TextView(this).apply {
+            text = "প্রয়োজনীয় অনুমতি ও সেটআপ"
+            textSize = 15.5f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(pal.text)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        checklistProgress = TextView(this).apply {
+            textSize = 12.5f
+            setTypeface(null, Typeface.BOLD)
+            setPadding(dp(10), dp(4), dp(10), dp(4))
+            background = roundedBg(pal.primarySoft, 99)
+            setTextColor(pal.primary)
+        }
+        headRow.addView(checklistProgress)
+        card.addView(headRow)
+
+        fun addChecklistItem(icon: AssistantIcons.Kind, title: String, actionText: String, onClick: () -> Unit) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                minimumHeight = dp(48)
+                setPadding(dp(10), dp(8), dp(10), dp(8))
+                rippleCard(this, pal.bg, 12, pal.border)
+                setOnClickListener { onClick() }
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { bottomMargin = dp(6) }
+            }
+            val iv = ImageView(this).apply {
+                setImageDrawable(AssistantIcons.drawable(this@AssistantActivity, icon, pal.subText, 18))
+                layoutParams = LinearLayout.LayoutParams(dp(18), dp(18)).apply { marginEnd = dp(10) }
+            }
+            val tv = TextView(this).apply {
+                text = title
+                textSize = 13.5f
+                setTextColor(pal.text)
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            }
+            val badge = TextView(this).apply {
+                text = actionText
+                textSize = 12f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(pal.primary)
+            }
+            row.addView(iv)
+            row.addView(tv)
+            row.addView(badge)
+            card.addView(row)
+            checkRows.add(Triple(iv, tv, badge))
+        }
+
+        addChecklistItem(AssistantIcons.Kind.ACCESSIBILITY, "১. Accessibility Service", "চালু করুন") {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        }
+        addChecklistItem(AssistantIcons.Kind.MIC, "২. Microphone Permission", "অনুমতি দিন") {
+            requestPermissions(AssistantSetup.runtimePermissions(), REQ_PERMS)
+        }
+        addChecklistItem(AssistantIcons.Kind.MESSAGE, "৩. Contacts & Phone Call", "অনুমতি দিন") {
+            requestPermissions(AssistantSetup.runtimePermissions(), REQ_PERMS)
+        }
+        addChecklistItem(AssistantIcons.Kind.OVERLAY, "৪. Display Over Other Apps", "সেটিংস") {
+            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+        }
+        addChecklistItem(AssistantIcons.Kind.APP_INFO, "৫. Android 13+ Restricted Setting", "App Info") {
+            startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+        }
+
+        // SAF Storage Folder picker for Pack F
+        safStatusText = TextView(this).apply {
+            textSize = 12f
+            setTextColor(pal.subText)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = dp(4)
+                bottomMargin = dp(6)
+            }
+        }
+        card.addView(safStatusText)
+
+        val safBtn = buildIconButton(
+            AssistantIcons.Kind.FOLDER,
+            "Storage Folder বেছে নিন (ফাইল/ফোল্ডার তৈরি)",
+            pal.text,
+            pal.bg,
+            pal.border
+        ) {
+            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+                addFlags(
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                        Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+                )
+            }
+            try {
+                @Suppress("DEPRECATION")
+                startActivityForResult(intent, REQ_STORAGE_TREE)
+            } catch (_: Exception) {
+                toast("এই ডিভাইসে Folder Picker পাওয়া যায়নি")
+            }
+        }.first
+        card.addView(safBtn, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ))
+
+        return card
+    }
+
+    private fun buildSafetyCard(): View {
+        val card = makeCard()
+        addCardHeader(
+            card,
+            AssistantIcons.Kind.SHIELD,
+            "নিরাপত্তা ও কনফার্মেশন",
+            "ভুল কল বা মেসেজ ঠেকাতে আগে কনফার্ম চাইবে"
+        )
+
+        switchConfirmCall = addToggleRow(
+            card,
+            "ফোন / অ্যাপ কলের আগে Confirm চাইবে",
+            "Call, imo বা WhatsApp কলের আগে হ্যাঁ/বাতিল দেখাবে",
+            AssistantPrefs.confirmBeforeAppCall(this)
+        ) { AssistantPrefs.setConfirmBeforeAppCall(this, it) }
+
+        switchConfirmSend = addToggleRow(
+            card,
+            "মেসেঞ্জার Send করার আগে Confirm চাইবে",
+            "WhatsApp / imo / Messenger মেসেজ পাঠানোর আগে নিশ্চিত করবে",
+            AssistantPrefs.confirmBeforeHumanSend(this)
+        ) { AssistantPrefs.setConfirmBeforeHumanSend(this, it) }
+
+        switchConfirmAiSend = addToggleRow(
+            card,
+            "AI Chat (Claude/ChatGPT/Gemini) Send Confirm",
+            "চালু করলে AI চ্যাটে প্রম্পট সেন্ড করার আগেও Confirm চাইবে",
+            AssistantPrefs.confirmBeforeAiChatSend(this)
+        ) { AssistantPrefs.setConfirmBeforeAiChatSend(this, it) }
+
+        timeoutLabel = TextView(this).apply {
+            textSize = 13f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(pal.text)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = dp(8)
+                bottomMargin = dp(4)
+            }
+        }
+        card.addView(timeoutLabel)
+
+        timeoutSeek = SeekBar(this).apply {
+            max = AssistantPrefs.MAX_FLOW_TIMEOUT_SEC - AssistantPrefs.MIN_FLOW_TIMEOUT_SEC
+            progress = AssistantPrefs.appFlowTimeoutSec(this@AssistantActivity) - AssistantPrefs.MIN_FLOW_TIMEOUT_SEC
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
+                    val sec = AssistantPrefs.MIN_FLOW_TIMEOUT_SEC + p
+                    if (fromUser) AssistantPrefs.setAppFlowTimeoutSec(this@AssistantActivity, sec)
+                    timeoutLabel.text = "App Flow Timeout: $sec সেকেন্ড"
+                }
+                override fun onStartTrackingTouch(sb: SeekBar?) {}
+                override fun onStopTrackingTouch(sb: SeekBar?) {}
+            })
+        }
+        card.addView(timeoutSeek)
+        return card
+    }
+
+    private fun buildGeminiAndTestCard(): View {
+        val card = makeCard()
+        addCardHeader(
+            card,
+            AssistantIcons.Kind.SPARKLE,
+            "Gemini স্মার্ট Fallback ও টেস্ট",
+            "জটিল বাংলা/Banglish কমান্ড স্থানীয় parser না বুঝলে Gemini সাহায্য করবে"
+        )
+
+        geminiStatusText = TextView(this).apply {
+            textSize = 12.5f
+            setTextColor(pal.subText)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(6) }
+        }
+        card.addView(geminiStatusText)
+
+        geminiKeyInput = EditText(this).apply {
+            hint = "Gemini API Key (AIza...)"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            setText(GeminiConfig.getUserKey(this@AssistantActivity))
+            setTextColor(pal.text)
+            setHintTextColor(pal.subText)
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            background = roundedBg(pal.bg, 12, pal.border)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(8) }
+        }
+        card.addView(geminiKeyInput)
+
+        val keyRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(12) }
+        }
+        val saveKeyBtn = buildIconButton(AssistantIcons.Kind.CHECK_CIRCLE, "Key সেভ", Color.WHITE, pal.primary) {
+            val k = geminiKeyInput.text.toString().trim()
+            GeminiConfig.setKey(this, k)
+            refresh()
+            toast(if (k.isEmpty()) "User key মুছে ফেলা হয়েছে" else "Gemini Key সেভ হয়েছে")
+        }.first
+        keyRow.addView(saveKeyBtn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+            marginEnd = dp(6)
+        })
+
+        val clearKeyBtn = buildIconButton(AssistantIcons.Kind.CLOSE, "মুছুন", pal.danger, pal.dangerSoft) {
+            geminiKeyInput.setText("")
+            GeminiConfig.setKey(this, "")
+            refresh()
+            toast("User key মুছে ফেলা হয়েছে")
+        }.first
+        keyRow.addView(clearKeyBtn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+            marginStart = dp(6)
+        })
+        card.addView(keyRow)
+
+        val testBtn = buildIconButton(
+            AssistantIcons.Kind.SWIPE_UP,
+            "টেস্ট: ৩ সেকেন্ড পর 'Up' Swipe (অন্য অ্যাপ খুলুন)",
+            pal.primary,
+            pal.primarySoft
+        ) {
+            toast("৩ সেকেন্ডের মধ্যে TikTok বা Chrome-এ যান…")
+            Handler(Looper.getMainLooper()).postDelayed({
+                val msg = CommandExecutor(applicationContext).execute(Command.Swipe(Dir.UP))
+                toast(msg)
+            }, 3000)
+        }.first
+        card.addView(testBtn, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ))
+
+        return card
+    }
+
+    private fun addToggleRow(
+        parent: LinearLayout,
+        title: String,
+        subtitle: String,
+        initial: Boolean,
+        onToggle: (Boolean) -> Unit
+    ): Switch {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = dp(48)
+            setPadding(0, dp(4), 0, dp(4))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(4) }
+        }
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginEnd = dp(10)
+            }
+            addView(TextView(this@AssistantActivity).apply {
+                text = title
+                textSize = 13.5f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(pal.text)
+            })
+            addView(TextView(this@AssistantActivity).apply {
+                text = subtitle
+                textSize = 12f
+                setTextColor(pal.subText)
+            })
+        }
+        val sw = Switch(this).apply {
+            isChecked = initial
+            setOnCheckedChangeListener { _, isChecked -> onToggle(isChecked) }
+        }
+        row.setOnClickListener { sw.toggle() }
+        row.addView(col)
+        row.addView(sw)
+        parent.addView(row)
+        return sw
+    }
+
+    // ------------------------------------------------------------ Refresh State
 
     private fun refresh() {
-        val a11yOn = AssistantSetup.isAccessibilityOn(this)
-        val a11yConnected = AssistantAccessibilityService.instance != null
-        val micOk = AssistantSetup.hasMic(this)
-        val contactsOk = AssistantSetup.has(this, android.Manifest.permission.READ_CONTACTS)
-        val callOk = AssistantSetup.has(this, android.Manifest.permission.CALL_PHONE)
-        val overlayOk = AssistantSetup.canOverlay(this)
-        val alarmOk = AssistantSetup.hasSetAlarm(this)
-        val storageOk = AssistantSetup.hasStorageTree(this)
-        val listening = AssistantListenerService.running
+        val isRun = AssistantListenerService.running
+        val isReady = AssistantSetup.isReady(this)
+        val a11y = AssistantSetup.isAccessibilityOn(this)
+        val mic = AssistantSetup.hasMic(this)
+        val contacts = AssistantSetup.has(this, android.Manifest.permission.READ_CONTACTS) &&
+            AssistantSetup.has(this, android.Manifest.permission.CALL_PHONE)
+        val overlay = AssistantSetup.canOverlay(this)
 
-        val mode = AssistantPrefs.listeningMode(this)
-        val isPtt = mode == ListeningMode.PUSH_TO_TALK
-
+        // Status pill
         when {
-            listening && isPtt -> {
-                heroStatusIcon.setImageDrawable(AssistantIcons.drawable(this, AssistantIcons.Kind.BOT, 0xFF86EFAC.toInt(), 16))
-                heroStatusText.text = "Quiet PTT প্রস্তুত (ট্যাপ করে কথা বলুন)"
+            isRun -> {
+                statusPillBg.background = roundedBg(pal.okSoft, 99)
+                statusPillIcon.setImageDrawable(AssistantIcons.drawable(this, AssistantIcons.Kind.CHECK_CIRCLE, pal.ok, 15))
+                statusPillText.setTextColor(pal.ok)
+                statusPillText.text = "চালু আছে"
             }
-            listening -> {
-                heroStatusIcon.setImageDrawable(AssistantIcons.drawable(this, AssistantIcons.Kind.CHECK_CIRCLE, 0xFF86EFAC.toInt(), 16))
-                heroStatusText.text = "Assistant এখন শুনছে (Continuous)"
-            }
-            AssistantSetup.isReady(this) -> {
-                heroStatusIcon.setImageDrawable(AssistantIcons.drawable(this, AssistantIcons.Kind.PLAY, Color.WHITE, 14))
-                heroStatusText.text = "চালু করার জন্য প্রস্তুত"
+            isReady -> {
+                statusPillBg.background = roundedBg(pal.primarySoft, 99)
+                statusPillIcon.setImageDrawable(AssistantIcons.drawable(this, AssistantIcons.Kind.BOT, pal.primary, 15))
+                statusPillText.setTextColor(pal.primary)
+                statusPillText.text = "প্রস্তুত"
             }
             else -> {
-                heroStatusIcon.setImageDrawable(AssistantIcons.drawable(this, AssistantIcons.Kind.ALERT_CIRCLE, 0xFFFDE68A.toInt(), 16))
-                heroStatusText.text = "সেটআপ বাকি আছে (নিচে দেখুন)"
+                statusPillBg.background = roundedBg(pal.warnSoft, 99)
+                statusPillIcon.setImageDrawable(AssistantIcons.drawable(this, AssistantIcons.Kind.ALERT_CIRCLE, pal.warn, 15))
+                statusPillText.setTextColor(pal.warn)
+                statusPillText.text = "সেটআপ বাকি"
             }
         }
 
-        if (listening) {
-            btnServiceContainer.background = roundBg(pal.dangerSoft, 14, pal.danger, 1)
+        // Service button
+        if (isRun) {
+            rippleCard(btnService, pal.dangerSoft, 14)
             btnServiceIcon.setImageDrawable(AssistantIcons.drawable(this, AssistantIcons.Kind.STOP, pal.danger, 18))
-            btnServiceLabel.setTextColor(pal.danger)
-            btnServiceLabel.text = "Assistant বন্ধ করুন"
+            btnServiceText.setTextColor(pal.danger)
+            btnServiceText.text = "Assistant বন্ধ করুন"
         } else {
-            btnServiceContainer.background = roundBg(pal.primary, 14)
-            btnServiceIcon.setImageDrawable(AssistantIcons.drawable(this, AssistantIcons.Kind.PLAY, pal.onPrimary, 18))
-            btnServiceLabel.setTextColor(pal.onPrimary)
-            btnServiceLabel.text = "Assistant চালু করুন"
+            rippleCard(btnService, pal.primary, 14)
+            btnServiceIcon.setImageDrawable(AssistantIcons.drawable(this, AssistantIcons.Kind.PLAY, Color.WHITE, 18))
+            btnServiceText.setTextColor(Color.WHITE)
+            btnServiceText.text = "Assistant চালু করুন"
         }
 
-        btnLangLabel.text = if (AssistantSetup.isBangla(this)) "বাংলা (bn-BD)" else "English (en-US)"
+        val isBangla = AssistantSetup.isBangla(this)
+        btnLangText.text = "শোনার ভাষা: " + if (isBangla) "বাংলা (bn-BD)" else "English (en-US)"
 
-        if (!isPtt) {
-            btnModeContinuous.background = roundBg(pal.primarySoft, 14, pal.primary, 1)
-            btnModeContinuousIcon.setImageDrawable(AssistantIcons.drawable(this, AssistantIcons.Kind.MIC, pal.primary, 18))
-            btnModeContinuousLabel.setTextColor(pal.primary)
-
-            btnModePtt.background = roundBg(pal.cardAlt, 14)
-            btnModePttIcon.setImageDrawable(AssistantIcons.drawable(this, AssistantIcons.Kind.BOT, pal.subText, 18))
-            btnModePttLabel.setTextColor(pal.subText)
-
-            modeHintText.text = "সবসময় শুনবে — \"Hey Bot\" বলে বা সক্রিয় থাকা অবস্থায় সরাসরি কমান্ড দিন"
+        // Mode chips
+        val mode = AssistantPrefs.listeningMode(this)
+        if (mode == ListeningMode.CONTINUOUS) {
+            rippleCard(chipContinuous, pal.primarySoft, 12, pal.primary)
+            chipContinuousText.setTextColor(pal.primary)
+            rippleCard(chipPtt, pal.bg, 12, pal.border)
+            chipPttText.setTextColor(pal.subText)
         } else {
-            btnModeContinuous.background = roundBg(pal.cardAlt, 14)
-            btnModeContinuousIcon.setImageDrawable(AssistantIcons.drawable(this, AssistantIcons.Kind.MIC, pal.subText, 18))
-            btnModeContinuousLabel.setTextColor(pal.subText)
-
-            btnModePtt.background = roundBg(pal.primarySoft, 14, pal.primary, 1)
-            btnModePttIcon.setImageDrawable(AssistantIcons.drawable(this, AssistantIcons.Kind.BOT, pal.primary, 18))
-            btnModePttLabel.setTextColor(pal.primary)
-
-            modeHintText.text = "নিঃশব্দ মোড — কোনো বিরক্তিকর বিপ নেই; পাশের ভাসমান ট্যাব বা BOT কী ট্যাপ করে বলুন"
+            rippleCard(chipContinuous, pal.bg, 12, pal.border)
+            chipContinuousText.setTextColor(pal.subText)
+            rippleCard(chipPtt, pal.primarySoft, 12, pal.primary)
+            chipPttText.setTextColor(pal.primary)
         }
 
-        applyStatusIcon(rowA11y.iconView, a11yOn)
-        rowA11y.subtitleView.text = when {
-            a11yOn && a11yConnected -> "চালু ও সংযুক্ত (কাজের জন্য প্রস্তুত)"
-            a11yOn -> "চালু আছে (সংযুক্ত নয় — পুনরায় টগল করতে পারেন)"
-            else -> "ভয়েস কন্ট্রোল ও Auto Ad Skipper-এর জন্য চালু করুন"
+        // Checklist progress (out of 5 including overlay & SAF)
+        val safOk = AssistantSetup.hasStorageTree(this)
+        val states = listOf(a11y, mic, contacts, overlay, a11y)
+        val doneCount = listOf(a11y, mic, contacts, overlay, safOk).count { it }
+        checklistProgress.text = "$doneCount/5 সম্পন্ন"
+        checklistProgress.background = roundedBg(if (doneCount == 5) pal.okSoft else pal.primarySoft, 99)
+        checklistProgress.setTextColor(if (doneCount == 5) pal.ok else pal.primary)
+
+        for (idx in checkRows.indices) {
+            val (iv, _, badge) = checkRows[idx]
+            val ok = states.getOrNull(idx) == true
+            if (idx < 4) {
+                iv.setImageDrawable(
+                    AssistantIcons.drawable(
+                        this,
+                        if (ok) AssistantIcons.Kind.CHECK_CIRCLE else AssistantIcons.Kind.ALERT_CIRCLE,
+                        if (ok) pal.ok else pal.warn,
+                        18
+                    )
+                )
+                badge.text = if (ok) "চালু" else "ঠিক করুন"
+                badge.setTextColor(if (ok) pal.ok else pal.warn)
+            }
         }
-
-        val permsOk = micOk && contactsOk && callOk
-        applyStatusIcon(rowPerms.iconView, micOk)
-        rowPerms.subtitleView.text =
-            "Mic: ${if (micOk) "OK" else "নেই"} • Contacts: ${if (contactsOk) "OK" else "নেই"} • Call: ${if (callOk) "OK" else "নেই"}"
-        rowPerms.actionBtn?.text = if (permsOk) "আপডেট" else "অনুমতি দিন"
-
-        applyStatusIcon(rowOverlay.iconView, overlayOk)
-        rowOverlay.subtitleView.text =
-            if (overlayOk) "অনুমোদিত (সাইড ট্যাব ও ব্যাকগ্রাউন্ড অ্যাপ কাজ করবে)"
-            else "সাইড-এজ ওভারলে ও ব্যাকগ্রাউন্ড অ্যাপ খোলার জন্য প্রয়োজন"
-
-        applyStatusIcon(rowAlarm.iconView, alarmOk)
-        rowAlarm.subtitleView.text =
-            if (alarmOk) "সক্রিয় (Alarm ও Timer কমান্ড কাজ করবে)"
-            else "Manifest-এ SET_ALARM অনুপস্থিত"
-
-        applyStatusIcon(rowStorage.iconView, storageOk)
-        rowStorage.subtitleView.text =
-            if (storageOk) "নির্বাচিত (ফাইল ও ফোল্ডার তৈরি হবে)"
-            else "এখনো বাছা হয়নি — ট্যাপ করে বাছুন"
-
-        val readyCount = listOf(a11yOn, micOk, overlayOk, alarmOk, storageOk).count { it }
-        checklistSummaryBadge.text = "$readyCount/5 প্রস্তুত"
-        if (readyCount == 5) {
-            checklistSummaryBadge.setTextColor(pal.ok)
-            checklistSummaryBadge.background = roundBg(pal.okSoft, 8)
+        safStatusText.text = if (safOk) {
+            "Storage Folder সেট করা আছে (ফাইল ও ফোল্ডার তৈরি চালু)"
         } else {
-            checklistSummaryBadge.setTextColor(pal.warn)
-            checklistSummaryBadge.background = roundBg(pal.warnSoft, 8)
+            "ফাইল/ফোল্ডার তৈরির কমান্ডের জন্য একটি Storage Folder বেছে নিন"
         }
 
-        if (storageOk) {
-            btnStorageIcon.setImageDrawable(AssistantIcons.drawable(this, AssistantIcons.Kind.CHECK_CIRCLE, pal.ok, 18))
-            btnStorageLabel.text = "Storage folder পরিবর্তন করুন (নির্বাচিত)"
-        } else {
-            btnStorageIcon.setImageDrawable(AssistantIcons.drawable(this, AssistantIcons.Kind.FOLDER, pal.primary, 18))
-            btnStorageLabel.text = "Assistant storage folder বেছে নিন"
-        }
+        // Side-Edge & Ad Skipper
+        switchOverlay.isChecked = AssistantPrefs.overlayHudEnabled(this)
+        val edgeLabel = if (AssistantPrefs.overlayEdge(this) == OverlayEdge.LEFT) "বাম কিনারা (Left)" else "ডান কিনারা (Right)"
+        val pct = (AssistantPrefs.overlayYRatio(this) * 100).toInt()
+        overlayEdgeText.text = "বর্তমান অবস্থান: $edgeLabel · উচ্চতা $pct%"
 
-        swOverlayHud.isChecked = AssistantPrefs.overlayHudEnabled(this)
-        swOverlaySub.text = if (overlayOk) {
-            "স্ক্রিনের পাশে ছোট ট্যাব হিসেবে থাকবে — টেনে বাম/ডানে সরানো যাবে"
-        } else {
-            "সাইড-এজ ট্যাব দেখতে উপরের 'Display over other apps' অনুমতি দিন"
-        }
-
-        val adSkipOn = AssistantPrefs.adSkipEnabled(this)
+        switchAdSkip.isChecked = AssistantPrefs.adSkipEnabled(this)
+        switchAdSkipGames.isChecked = AssistantPrefs.adSkipGamesEnabled(this)
         val skipped = AssistantPrefs.adSkipCount(this)
-        val lastSrc = AssistantPrefs.lastAdSkipInfo(this)
-        swAdSkip.isChecked = adSkipOn
-        swAdSkipGames.isChecked = AssistantPrefs.adSkipGamesEnabled(this)
-        swAdSkipGames.isEnabled = adSkipOn
-        adSkipBadge.text = if (lastSrc != null && skipped > 0) "$skipped স্কিপড ($lastSrc)" else "$skipped স্কিপড"
-        if (adSkipOn && a11yOn) {
-            adSkipBadge.setTextColor(pal.ok)
-            adSkipBadge.background = roundBg(pal.okSoft, 8)
+        val last = AssistantPrefs.lastAdSkipInfo(this)
+        adSkipStatsText.text = if (skipped > 0) {
+            "মোট স্কিপ করা বিজ্ঞাপন: $skipped টি" + if (last != null) " (সর্বশেষ: $last)" else ""
         } else {
-            adSkipBadge.setTextColor(pal.warn)
-            adSkipBadge.background = roundBg(pal.warnSoft, 8)
-        }
-        swAdSkipSub.text = if (a11yOn) {
-            "YouTube ও যাচাইকৃত বিজ্ঞাপনের Skip বাটন স্বয়ংক্রিয়ভাবে চাপবে"
-        } else {
-            "কাজ করার জন্য উপরের ‘Accessibility সার্ভিস’ চালু করুন"
+            "এখনো কোনো বিজ্ঞাপন স্কিপ হয়নি — সক্রিয় আছে"
         }
 
-        swConfirmAppCall.isChecked = AssistantPrefs.confirmBeforeAppCall(this)
-        swConfirmHumanSend.isChecked = AssistantPrefs.confirmBeforeHumanSend(this)
-        swConfirmAiChatSend.isChecked = AssistantPrefs.confirmBeforeAiChatSend(this)
-
+        // Safety & Timeout
+        switchConfirmCall.isChecked = AssistantPrefs.confirmBeforeAppCall(this)
+        switchConfirmSend.isChecked = AssistantPrefs.confirmBeforeHumanSend(this)
+        switchConfirmAiSend.isChecked = AssistantPrefs.confirmBeforeAiChatSend(this)
         val sec = AssistantPrefs.appFlowTimeoutSec(this)
-        timeoutBadge.text = "$sec সেকেন্ড"
-        val expectedProg = sec - AssistantPrefs.MIN_FLOW_TIMEOUT_SEC
-        if (timeoutSeek.progress != expectedProg) timeoutSeek.progress = expectedProg
+        timeoutLabel.text = "App Flow Timeout: $sec সেকেন্ড"
+        timeoutSeek.progress = sec - AssistantPrefs.MIN_FLOW_TIMEOUT_SEC
 
-        // Gemini fallback status refresh
-        val keySrc = GeminiConfig.keySource(this)
-        val activeKey = GeminiConfig.getKey(this)
-        when (keySrc) {
-            GeminiConfig.KeySource.USER_SETTINGS -> {
-                val validFmt = GeminiConfig.looksLikeStandardGeminiKey(activeKey)
-                geminiStatusBadge.text = if (validFmt) "সক্রিয় (নিজস্ব Key)" else "অস্বাভাবিক ফরম্যাট"
-                geminiStatusBadge.setTextColor(if (validFmt) pal.ok else pal.warn)
-                geminiStatusBadge.background = roundBg(if (validFmt) pal.okSoft else pal.warnSoft, 8)
-                geminiSubText.text = if (validFmt) {
-                    "লোকাল ও ফাজি পার্সার না বুঝলে Gemini স্বয়ংক্রিয়ভাবে কমান্ড বুঝে নেবে।"
-                } else {
-                    "Key সেভ করা আছে, তবে Google AI Studio Gemini API key সাধারণত 'AIza...' দিয়ে শুরু হয়।"
-                }
-                btnClearGemini.visibility = View.VISIBLE
-            }
-            GeminiConfig.KeySource.BUILD_CONFIG -> {
-                geminiStatusBadge.text = "সক্রিয় (Secrets)"
-                geminiStatusBadge.setTextColor(pal.ok)
-                geminiStatusBadge.background = roundBg(pal.okSoft, 8)
-                geminiSubText.text = "AI Studio Secrets (GEMINI_API_KEY) থেকে সক্রিয় আছে। চাইলে নিচে নিজস্ব Key-ও দিতে পারেন।"
-                btnClearGemini.visibility = View.GONE
-            }
-            GeminiConfig.KeySource.NONE -> {
-                geminiStatusBadge.text = "সেট করা নেই"
-                geminiStatusBadge.setTextColor(pal.subText)
-                geminiStatusBadge.background = roundBg(pal.cardAlt, 8)
-                geminiSubText.text = "স্থানীয় কমান্ডের বাইরে জটিল কথাও বুঝতে Gemini API Key (AIza...) নিচে পেস্ট করুন অথবা AI Studio Secrets-এ GEMINI_API_KEY দিন।"
-                btnClearGemini.visibility = View.GONE
-            }
+        // Gemini status
+        geminiStatusText.text = when (GeminiConfig.keySource(this)) {
+            GeminiConfig.KeySource.USER_SETTINGS -> "স্ট্যাটাস: আপনার সেভ করা Gemini API Key সক্রিয়"
+            GeminiConfig.KeySource.BUILD_CONFIG -> "স্ট্যাটাস: বিল্ট-ইন Secrets Key সক্রিয়"
+            GeminiConfig.KeySource.NONE -> "স্ট্যাটাস: Key সেট নেই (চাইলে নিচে দিন, নইলে লোকাল কমান্ড চলবে)"
         }
+    }
+
+    private fun toast(msg: String) {
+        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
     }
 }

@@ -4,7 +4,6 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 
@@ -35,23 +34,11 @@ object AssistantSetup {
 
     fun canOverlay(ctx: Context): Boolean = Settings.canDrawOverlays(ctx)
 
-    fun hasSetAlarm(ctx: Context): Boolean = has(ctx, "com.android.alarm.permission.SET_ALARM")
+    fun hasSetAlarm(ctx: Context): Boolean =
+        has(ctx, "com.android.alarm.permission.SET_ALARM")
 
-    fun hasStorageTree(ctx: Context): Boolean {
-        val uriStr = AssistantPrefs.storageTreeUri(ctx) ?: return false
-        val uri = try {
-            Uri.parse(uriStr)
-        } catch (_: Exception) {
-            return false
-        }
-        return try {
-            ctx.contentResolver.persistedUriPermissions.any {
-                it.uri == uri && it.isReadPermission && it.isWritePermission
-            }
-        } catch (_: Exception) {
-            false
-        }
-    }
+    fun hasStorageTree(ctx: Context): Boolean =
+        AssistantPrefs.storageTreeUri(ctx) != null
 
     /** Assistant চালানোর ন্যূনতম শর্ত: Accessibility ON + Mic permission। */
     fun isReady(ctx: Context): Boolean = isAccessibilityOn(ctx) && hasMic(ctx)

@@ -35,6 +35,18 @@ object AssistantConfig {
 
     const val YOUTUBE_PKG = "com.google.android.youtube"
 
+    /** "ber hao" / "exit app" বললে true = Home-এ যাবে, false = Back চাপবে। */
+    const val LEAVE_APP_GOES_HOME = true
+
+    /**
+     * "sob app close koro" বললে Recents খুলে এই লেখার বাটন খোঁজা হয়।
+     * আপনার ফোনের বাটনে অন্য লেখা থাকলে (Samsung: "Close all", Pixel/Xiaomi: "Clear all") এখানে যোগ করুন।
+     */
+    val CLEAR_ALL_LABELS = listOf(
+        "clear all", "close all", "clear everything", "close all apps",
+        "সব বন্ধ", "সব মুছুন", "সব সাফ", "সবকিছু সাফ", "সবগুলি বন্ধ"
+    )
+
     /**
      * একই মানুষের বিভিন্ন নাম। "call ammi" বললে নিচের পুরো গ্রুপ দিয়ে contact খোঁজা হবে।
      * নিজের contact-এর নাম অনুযায়ী যোগ/বদল করুন।

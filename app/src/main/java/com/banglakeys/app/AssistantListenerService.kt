@@ -18,16 +18,21 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.widget.Toast
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.launch
 
 /**
- * আপগ্রেডেড 2-mode (Continuous + Quiet Push-to-Talk) Voice Assistant Foreground Service
- * + Live Floating Command Overlay Pill + N-best/Fuzzy SmartCommandResolver + Gemini Fallback।
+ * ২-মোড ভয়েস অ্যাসিস্ট্যান্ট Foreground Service:
+ *  - CONTINUOUS: "Hey Bot ..." শুনলে জেগে ওঠে + awake window জুড়ে ধারাবাহিক কমান্ড নেয়।
+ *  - PUSH_TO_TALK: মাইক চুপ থাকে; overlay side-tab বা notification বাটন চাপলে একবার শোনে।
+ *
+ * নোট: SmartCommandResolver দিয়ে N-best + Banglish fuzzy ম্যাচিং করে, প্রয়োজনে
+ * GeminiCommandInterpreter fallback চালায়, এবং ঝুঁকিপূর্ণ কল/মেসেজে Confirm নেয়।
  */
 class AssistantListenerService : Service() {
 
@@ -37,7 +42,6 @@ class AssistantListenerService : Service() {
         const val ACTION_REFRESH_CONFIG = "com.banglakeys.app.ASSISTANT_REFRESH_CONFIG"
         private const val CHANNEL_ID = "assistant_listen"
         private const val NOTIF_ID = 4201
-        private const val CONFIRM_TIMEOUT_MS = 10_000L
 
         @Volatile
         var running: Boolean = false
@@ -55,18 +59,14 @@ class AssistantListenerService : Service() {
         }
 
         fun triggerPtt(ctx: Context) {
-            val active = instance
-            if (running && active != null) {
-                active.handler.post { active.triggerPttInternal() }
-            } else {
-                val i = Intent(ctx, AssistantListenerService::class.java).setAction(ACTION_TRIGGER_PTT)
-                if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i)
-            }
+            val i = Intent(ctx, AssistantListenerService::class.java).setAction(ACTION_TRIGGER_PTT)
+            if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i)
         }
 
         fun notifyConfigChanged(ctx: Context) {
-            val active = instance ?: return
-            active.handler.post { active.applyConfigAndIdleUi() }
+            if (!running) return
+            val i = Intent(ctx, AssistantListenerService::class.java).setAction(ACTION_REFRESH_CONFIG)
+            if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i)
         }
 
         /** Keyboard-এর নিজের voice typing চলার সময় true দিন, শেষ হলে false (mic conflict এড়াতে)। */
@@ -76,33 +76,21 @@ class AssistantListenerService : Service() {
     }
 
     private val handler = Handler(Looper.getMainLooper())
-    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
     private var recognizer: SpeechRecognizer? = null
     private lateinit var executor: CommandExecutor
-    private var overlay: CommandOverlayManager? = null
+    private lateinit var overlay: CommandOverlayManager
 
     private var awakeUntil = 0L
     private var paused = false
     private var pttSessionActive = false
-    private var geminiBusy = false
-    private val restart = Runnable { listenOnce() }
-
-    private var pending: Command? = null
-    private var pendingHeardText: String = ""
+    private var geminiInFlight = false
+    private var pendingCommand: Command? = null
     private var pendingSummary: String = ""
-    private val confirmTimeoutRunnable = Runnable {
-        if (pending != null) {
-            AssistantLog.d("Confirmation timeout for $pending")
-            clearPending()
-            showResult(
-                heard = null,
-                summary = null,
-                msg = "সময় শেষ, বাতিল হয়েছে",
-                ok = false,
-                canRetry = false
-            )
-        }
-    }
+    private var activeFlowJob: Job? = null
+
+    private val restart = Runnable { listenOnce() }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -113,7 +101,10 @@ class AssistantListenerService : Service() {
                 return START_NOT_STICKY
             }
             ACTION_REFRESH_CONFIG -> {
-                if (running) applyConfigAndIdleUi()
+                if (running) {
+                    startAsForeground()
+                    applyModeChange()
+                }
                 return START_NOT_STICKY
             }
         }
@@ -125,27 +116,28 @@ class AssistantListenerService : Service() {
             return START_NOT_STICKY
         }
 
-        if (!running) {
+        val firstStart = !running
+        if (firstStart) {
             executor = CommandExecutor(applicationContext)
             overlay = CommandOverlayManager(
                 ctx = applicationContext,
-                onConfirmClick = { confirmPendingFromUi() },
-                onCancelClick = { cancelPendingFromUi() },
-                onStopFlowClick = { dispatchCommand(Command.PanicStop, "Stop button", "সব কাজ বন্ধ") },
-                onPttTriggerClick = { triggerPttInternal() },
-                onDismissOrSleepClick = { sleepOrDormantInternal() }
+                onConfirmClick = { confirmPendingCommand() },
+                onCancelClick = { cancelPendingCommand() },
+                onStopFlowClick = { panicStopAll() },
+                onPttTriggerClick = { beginPttListening() },
+                onDismissOrSleepClick = { dismissActiveListening() }
             )
             running = true
             instance = this
-            AssistantLog.d("AssistantListenerService started (mode=${AssistantPrefs.listeningMode(this)})")
+        }
 
-            if (intent?.action == ACTION_TRIGGER_PTT) {
-                triggerPttInternal()
-            } else {
-                applyConfigAndIdleUi()
+        if (intent?.action == ACTION_TRIGGER_PTT) {
+            beginPttListening()
+        } else if (firstStart) {
+            renderIdleOverlay()
+            if (AssistantPrefs.listeningMode(this) == ListeningMode.CONTINUOUS) {
+                listenOnce()
             }
-        } else if (intent?.action == ACTION_TRIGGER_PTT) {
-            triggerPttInternal()
         }
         return START_NOT_STICKY
     }
@@ -153,93 +145,91 @@ class AssistantListenerService : Service() {
     override fun onDestroy() {
         running = false
         instance = null
-        geminiBusy = false
-        clearPending()
-        serviceScope.cancel()
         handler.removeCallbacksAndMessages(null)
-        destroyRecognizer()
-        overlay?.hide()
-        overlay = null
-        AssistantLog.d("AssistantListenerService destroyed")
+        activeFlowJob?.cancel()
+        serviceScope.cancel()
+        recognizer?.destroy()
+        recognizer = null
+        if (::overlay.isInitialized) overlay.hide()
         super.onDestroy()
     }
 
-    // ------------------------------------------------------------ mode & listening
+    // ------------------------------------------------------------ mode & overlay helpers
 
-    private fun isPttMode(): Boolean = AssistantPrefs.listeningMode(this) == ListeningMode.PUSH_TO_TALK
-
-    private fun applyConfigAndIdleUi() {
-        if (!running || paused) return
-        handler.removeCallbacks(restart)
-        if (!AssistantPrefs.overlayHudEnabled(this) || !AssistantSetup.canOverlay(this)) {
-            overlay?.hide()
-        } else {
-            overlay?.refreshPosition()
-        }
-        if (isPttMode()) {
-            pttSessionActive = false
-            destroyRecognizer()
-            renderIdleOverlay()
-        } else {
-            renderIdleOverlay()
-            listenOnce()
-        }
-    }
+    private fun currentMode(): ListeningMode = AssistantPrefs.listeningMode(this)
 
     private fun idleOverlayState(): CommandOverlayManager.OverlayState {
-        return if (isPttMode()) {
-            CommandOverlayManager.OverlayState.Dormant(AssistantSetup.isBangla(this))
-        } else {
-            val remSec = remainingAwakeSec()
-            CommandOverlayManager.OverlayState.Listening(
-                partialText = "",
-                awakeSec = remSec,
-                isPtt = false
-            )
+        val now = SystemClock.elapsedRealtime()
+        val bangla = AssistantSetup.isBangla(this)
+        return when {
+            pttSessionActive -> CommandOverlayManager.OverlayState.Listening("", null, isPtt = true)
+            currentMode() == ListeningMode.PUSH_TO_TALK ->
+                CommandOverlayManager.OverlayState.Dormant(isBangla = bangla)
+            now < awakeUntil -> {
+                val sec = ((awakeUntil - now) / 1000L).toInt().coerceAtLeast(1)
+                CommandOverlayManager.OverlayState.Listening("", sec, isPtt = false)
+            }
+            else -> CommandOverlayManager.OverlayState.Listening("", null, isPtt = false)
         }
     }
 
     private fun renderIdleOverlay() {
-        overlay?.render(idleOverlayState())
+        if (!::overlay.isInitialized) return
+        overlay.render(idleOverlayState())
     }
 
-    private fun remainingAwakeSec(): Int? {
-        val remMs = awakeUntil - SystemClock.elapsedRealtime()
-        return if (remMs > 0L) ((remMs + 999L) / 1000L).toInt() else null
+    private fun applyModeChange() {
+        overlay.refreshPosition()
+        if (paused) return
+        if (currentMode() == ListeningMode.PUSH_TO_TALK) {
+            if (!pttSessionActive) {
+                handler.removeCallbacks(restart)
+                recognizer?.cancel()
+                recognizer?.destroy()
+                recognizer = null
+            }
+            renderIdleOverlay()
+        } else {
+            renderIdleOverlay()
+            if (recognizer == null) scheduleNext(200)
+        }
     }
 
-    private fun triggerPttInternal() {
-        if (!running || paused || geminiBusy) return
+    private fun beginPttListening() {
+        if (!running) return
+        paused = false
+        pendingCommand = null
         pttSessionActive = true
         awakeUntil = SystemClock.elapsedRealtime() + AssistantConfig.AWAKE_WINDOW_MS
-        overlay?.render(
-            CommandOverlayManager.OverlayState.Listening(
-                partialText = "",
-                awakeSec = null,
-                isPtt = true
-            )
-        )
+        overlay.render(CommandOverlayManager.OverlayState.Listening("", null, isPtt = true))
         handler.removeCallbacks(restart)
         listenOnce()
     }
 
-    private fun sleepOrDormantInternal() {
-        clearPending()
-        geminiBusy = false
+    private fun dismissActiveListening() {
         awakeUntil = 0L
-        if (isPttMode()) {
-            pttSessionActive = false
+        pttSessionActive = false
+        pendingCommand = null
+        if (currentMode() == ListeningMode.PUSH_TO_TALK) {
             handler.removeCallbacks(restart)
-            destroyRecognizer()
-            renderIdleOverlay()
-        } else {
-            renderIdleOverlay()
+            recognizer?.cancel()
+            recognizer?.destroy()
+            recognizer = null
         }
+        renderIdleOverlay()
     }
 
+    // ------------------------------------------------------------ listening
+
     private fun scheduleNext(delayMs: Long) {
-        if (isPttMode() && pending == null && !pttSessionActive) return
         handler.removeCallbacks(restart)
+        if (!running || paused) return
+        val shouldContinue =
+            currentMode() == ListeningMode.CONTINUOUS || pttSessionActive || pendingCommand != null
+        if (!shouldContinue) {
+            renderIdleOverlay()
+            return
+        }
         handler.postDelayed(restart, delayMs)
     }
 
@@ -247,25 +237,21 @@ class AssistantListenerService : Service() {
         paused = p
         if (p) {
             handler.removeCallbacks(restart)
-            destroyRecognizer()
-            overlay?.hide()
-        } else if (running) {
-            applyConfigAndIdleUi()
-        }
-    }
-
-    private fun destroyRecognizer() {
-        try {
             recognizer?.cancel()
             recognizer?.destroy()
-        } catch (_: Exception) {
+            recognizer = null
+            if (::overlay.isInitialized) overlay.hide()
+        } else if (running) {
+            renderIdleOverlay()
+            if (currentMode() == ListeningMode.CONTINUOUS || pttSessionActive) {
+                scheduleNext(400)
+            }
         }
-        recognizer = null
     }
 
     private fun listenOnce() {
-        if (!running || paused || geminiBusy) return
-        if (isPttMode() && !pttSessionActive && pending == null) {
+        if (!running || paused || geminiInFlight) return
+        if (currentMode() == ListeningMode.PUSH_TO_TALK && !pttSessionActive && pendingCommand == null) {
             renderIdleOverlay()
             return
         }
@@ -274,19 +260,13 @@ class AssistantListenerService : Service() {
             stopSelf()
             return
         }
-        destroyRecognizer()
+        recognizer?.destroy()
         val r = SpeechRecognizer.createSpeechRecognizer(this)
         recognizer = r
         r.setRecognitionListener(object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) {
-                if (pending == null && !geminiBusy) {
-                    overlay?.render(
-                        CommandOverlayManager.OverlayState.Listening(
-                            partialText = "",
-                            awakeSec = if (pttSessionActive) null else remainingAwakeSec(),
-                            isPtt = pttSessionActive
-                        )
-                    )
+                if (pendingCommand == null && activeFlowJob?.isActive != true) {
+                    renderIdleOverlay()
                 }
             }
 
@@ -296,24 +276,25 @@ class AssistantListenerService : Service() {
             override fun onEndOfSpeech() {}
             override fun onEvent(eventType: Int, params: Bundle?) {}
 
-            // পুরো বাক্য শেষ হওয়ার অপেক্ষা না করে, এখন পর্যন্ত যা শোনা গেছে তা
-            // লাইভ overlay-তে দেখায় ও awake window refresh করে।
             override fun onPartialResults(partialResults: Bundle?) {
+                if (pendingCommand != null || activeFlowJob?.isActive == true) return
                 val text = partialResults
                     ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     ?.firstOrNull()
-                if (text.isNullOrBlank()) return
+                    .orEmpty()
+                    .trim()
+                if (text.isEmpty()) return
+
                 val now = SystemClock.elapsedRealtime()
-                val smartWoke = SmartCommandResolver.splitWakeSmart(text).first
-                val shouldShow = pttSessionActive || now < awakeUntil || smartWoke || looksLikeWakeStart(text)
-                if (now < awakeUntil || smartWoke) {
-                    awakeUntil = now + AssistantConfig.AWAKE_WINDOW_MS
-                }
-                if (shouldShow && pending == null && !geminiBusy) {
-                    overlay?.render(
+                val alreadyAwake = pttSessionActive || now < awakeUntil
+                val (woke, rest) = SmartCommandResolver.splitWakeSmart(text)
+                if (alreadyAwake || woke) {
+                    val sec = if (now < awakeUntil) ((awakeUntil - now) / 1000L).toInt().coerceAtLeast(1) else null
+                    val display = if (woke) rest.ifEmpty { "শুনছি…" } else text
+                    overlay.render(
                         CommandOverlayManager.OverlayState.Listening(
-                            partialText = text,
-                            awakeSec = if (pttSessionActive) null else remainingAwakeSec(),
+                            partialText = display,
+                            awakeSec = sec,
                             isPtt = pttSessionActive
                         )
                     )
@@ -326,18 +307,10 @@ class AssistantListenerService : Service() {
                     stopSelf()
                     return
                 }
-                if (isPttMode()) {
-                    val wasPtt = pttSessionActive
+                if (pttSessionActive) {
                     pttSessionActive = false
-                    if (pending != null || geminiBusy) return
-                    if (wasPtt && error == SpeechRecognizer.ERROR_NO_MATCH) {
-                        showResult(
-                            heard = null,
-                            summary = null,
-                            msg = "কিছু শোনা যায়নি — আবার চেষ্টা করুন",
-                            ok = false,
-                            canRetry = true
-                        )
+                    if (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
+                        showFeedback(null, null, "কথা শোনা যায়নি", isSuccess = false, canRetry = true)
                     } else {
                         renderIdleOverlay()
                     }
@@ -355,13 +328,10 @@ class AssistantListenerService : Service() {
 
             override fun onResults(results: Bundle?) {
                 val list = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty()
-                handleResults(list)
-                if (isPttMode()) {
-                    pttSessionActive = false
-                    if (pending != null) {
-                        scheduleNext(350)
-                    }
-                } else if (!geminiBusy) {
+                val wasPtt = pttSessionActive
+                pttSessionActive = false
+                handleResults(list, wasPtt)
+                if (currentMode() == ListeningMode.CONTINUOUS || pendingCommand != null) {
                     scheduleNext(250)
                 }
             }
@@ -375,316 +345,236 @@ class AssistantListenerService : Service() {
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
-            putExtra("android.speech.extra.SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS", 2500L)
-            putExtra("android.speech.extra.SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS", 2000L)
-            putExtra("android.speech.extra.SPEECH_INPUT_MINIMUM_LENGTH_MILLIS", 15000L)
         }
         r.startListening(intent)
     }
 
-    private fun looksLikeWakeStart(text: String): Boolean {
-        val low = text.trim().lowercase()
-        return low.startsWith("hey") || low.startsWith("hay") || low.startsWith("hi ") ||
-            low.startsWith("ok ") || low.startsWith("হেই") || low.startsWith("হে ") ||
-            low.startsWith("হাই") || low.startsWith("ওকে")
-    }
+    // ------------------------------------------------------------- commands & confirmation
 
-    // ------------------------------------------------------------- confirmation (overlay + voice)
-
-    private fun setPending(cmd: Command, heardText: String, summary: String, question: String) {
-        clearPending()
-        pending = cmd
-        pendingHeardText = heardText
-        pendingSummary = summary
-        handler.postDelayed(confirmTimeoutRunnable, CONFIRM_TIMEOUT_MS)
-        AssistantLog.d("Pending confirm set: $cmd -> $question")
-        overlay?.render(
-            CommandOverlayManager.OverlayState.AwaitingConfirm(
-                heardText = heardText,
-                actionSummary = summary,
-                question = question
-            )
-        )
-        if (overlay?.isOverlayPermittedAndEnabled() != true) {
-            toast(question)
-        }
-    }
-
-    private fun clearPending() {
-        pending = null
-        pendingHeardText = ""
-        pendingSummary = ""
-        handler.removeCallbacks(confirmTimeoutRunnable)
-    }
-
-    private fun confirmPendingFromUi() {
-        val current = pending ?: return
-        val heard = pendingHeardText
-        val summary = pendingSummary
-        clearPending()
-        awakeUntil = SystemClock.elapsedRealtime() + AssistantConfig.AWAKE_WINDOW_MS
-        AssistantLog.d("Overlay Confirm tapped -> executing $current")
-        dispatchCommand(current, heard, summary)
-    }
-
-    private fun cancelPendingFromUi() {
-        if (pending == null) return
-        val heard = pendingHeardText
-        val summary = pendingSummary
-        clearPending()
-        AssistantLog.d("Overlay Cancel tapped")
-        showResult(
-            heard = heard,
-            summary = summary,
-            msg = "বাতিল হয়েছে",
-            ok = false,
-            canRetry = false
-        )
-    }
-
-    private fun confirmationQuestion(cmd: Command): String? = when (cmd) {
-        is Command.AppCall -> {
-            if (AssistantPrefs.confirmBeforeAppCall(this)) {
-                "${cmd.appName}-তে ${cmd.contact}-কে ${if (cmd.video) "video " else ""}call করব?"
-            } else null
-        }
-        is Command.AppMessage -> {
-            if (cmd.send && AssistantPrefs.confirmBeforeHumanSend(this)) {
-                "${cmd.appName}-তে ${cmd.contact}-কে মেসেজ পাঠাব?"
-            } else null
-        }
-        is Command.AppChat -> {
-            if (cmd.send && AssistantPrefs.confirmBeforeAiChatSend(this)) {
-                "${cmd.appName ?: "এই app"}-এ পাঠাব?"
-            } else null
-        }
-        else -> null
-    }
-
-    private fun matchConfirmReply(candidates: List<String>): Boolean? {
-        for (raw in candidates) {
-            val (_, rest) = SmartCommandResolver.splitWakeSmart(raw)
-            val norm = rest.lowercase().trim()
-            val tokens = norm.split(Regex("\\s+")).filter { it.isNotEmpty() }
-            if (norm in CommandParser.CONFIRM_YES_WORDS || tokens.any { it in CommandParser.CONFIRM_YES_WORDS }) {
-                return true
-            }
-            if (norm in CommandParser.CONFIRM_NO_WORDS || tokens.any { it in CommandParser.CONFIRM_NO_WORDS }) {
-                return false
-            }
-        }
-        return null
-    }
-
-    // ------------------------------------------------------------- commands
-
-    private fun handleResults(candidates: List<String>) {
+    private fun handleResults(candidates: List<String>, wasPtt: Boolean) {
         if (candidates.isEmpty()) return
         val now = SystemClock.elapsedRealtime()
-        AssistantLog.d("Heard: $candidates (awake=${now < awakeUntil}, ptt=$pttSessionActive, pending=${pending != null})")
 
-        // 1. Check pending confirmation first
-        val currentPending = pending
-        if (currentPending != null) {
-            for (text in candidates) {
-                val (woke, rest) = SmartCommandResolver.splitWakeSmart(text)
-                val targetText = if (woke) rest else text
-                if (CommandParser.parse(targetText) == Command.PanicStop) {
-                    dispatchCommand(Command.PanicStop, text, "সব কাজ বন্ধ")
-                    return
-                }
-            }
-            when (matchConfirmReply(candidates)) {
-                true -> {
-                    confirmPendingFromUi()
-                    return
-                }
-                false -> {
-                    cancelPendingFromUi()
-                    return
-                }
-                null -> {
-                    AssistantLog.d("Waiting confirmation (ignored unrelated utterance)")
-                    return
-                }
-            }
+        // ১) Pending Confirmation থাকলে আগে হ্যাঁ/না শুনি
+        if (pendingCommand != null) {
+            if (handleConfirmationVoice(candidates)) return
+            // নতুন সরাসরি কমান্ড হলে আগের confirm বাতিল করে নতুনটি প্রসেস করি
+            pendingCommand = null
         }
 
-        // 2. Smart multi-candidate + fuzzy local command resolution (0ms, free)
-        val alreadyAwake = (now < awakeUntil) || pttSessionActive
+        val alreadyAwake = wasPtt || now < awakeUntil
         val res = SmartCommandResolver.resolve(candidates, alreadyAwake)
 
+        if (!res.woke && !alreadyAwake) return
+
+        // শুধু "Hey Bot" বললে
         if (res.woke && res.command == null && res.normalizedText.isBlank()) {
             awakeUntil = now + AssistantConfig.AWAKE_WINDOW_MS
-            AssistantLog.d("Woke up (no command yet)")
-            overlay?.render(
+            overlay.render(
                 CommandOverlayManager.OverlayState.Listening(
-                    partialText = "",
-                    awakeSec = remainingAwakeSec(),
-                    isPtt = pttSessionActive
+                    partialText = "বলুন…",
+                    awakeSec = (AssistantConfig.AWAKE_WINDOW_MS / 1000L).toInt(),
+                    isPtt = wasPtt
                 )
             )
-            if (overlay?.isOverlayPermittedAndEnabled() != true) {
-                toast("বলুন…")
+            if (!::overlay.isInitialized || !overlay.isOverlayPermittedAndEnabled()) {
+                toast("🎤 বলুন…")
             }
             return
         }
 
         val cmd = res.command
         if (cmd != null) {
-            AssistantLog.d("Resolved locally (fuzzy=${res.fuzzyCorrected}): '${res.heardText}' -> $cmd")
-            acceptAndRunCommand(cmd, res.heardText, res.summary ?: SmartCommandResolver.describe(cmd))
+            awakeUntil = now + AssistantConfig.AWAKE_WINDOW_MS
+            dispatchCommand(cmd, res.heardText, res.summary)
             return
         }
 
-        // 3. Gemini AI fallback (যখন local + fuzzy দুটোই না বুঝে এবং API key সেট করা থাকে)
-        val spoken = res.heardText
-        if (alreadyAwake && spoken.isNotBlank()) {
-            if (GeminiConfig.hasKey(this)) {
-                geminiBusy = true
-                overlay?.render(
-                    CommandOverlayManager.OverlayState.RunningFlow(
-                        appLabel = "Gemini AI",
-                        stepStatus = "“$spoken” বিশ্লেষণ করা হচ্ছে…"
-                    )
+        // ২) স্থানীয় resolver না পারলে Gemini Fallback (যদি key থাকে)
+        val fallbackQuery = res.heardText.ifBlank { candidates.first() }
+        if (GeminiConfig.hasKey(applicationContext) && fallbackQuery.isNotBlank()) {
+            geminiInFlight = true
+            overlay.render(
+                CommandOverlayManager.OverlayState.Listening(
+                    partialText = "Gemini দিয়ে বোঝা হচ্ছে…",
+                    awakeSec = null,
+                    isPtt = false
                 )
-                GeminiCommandInterpreter.interpret(this, spoken) { geminiCmd ->
-                    geminiBusy = false
-                    if (!running || paused) return@interpret
-                    if (geminiCmd != null) {
-                        AssistantLog.d("Resolved by Gemini: '$spoken' -> $geminiCmd")
-                        acceptAndRunCommand(geminiCmd, spoken, SmartCommandResolver.describe(geminiCmd))
-                    } else {
-                        showResult(
-                            heard = spoken,
-                            summary = null,
-                            msg = "কমান্ড বুঝিনি — আবার বলুন",
-                            ok = false,
-                            canRetry = isPttMode()
-                        )
-                    }
-                    if (!isPttMode()) scheduleNext(250)
+            )
+            GeminiCommandInterpreter.interpret(applicationContext, fallbackQuery) { gCmd ->
+                geminiInFlight = false
+                if (!running) return@interpret
+                if (gCmd != null) {
+                    awakeUntil = SystemClock.elapsedRealtime() + AssistantConfig.AWAKE_WINDOW_MS
+                    dispatchCommand(gCmd, fallbackQuery, SmartCommandResolver.describe(gCmd))
+                } else {
+                    showFeedback(fallbackQuery, null, "বুঝিনি: $fallbackQuery", isSuccess = false, canRetry = true)
                 }
-            } else {
-                AssistantLog.d("Unrecognized while awake (no Gemini key): '$spoken'")
-                showResult(
-                    heard = spoken,
-                    summary = null,
-                    msg = "কমান্ড বুঝিনি — আবার বলুন",
-                    ok = false,
-                    canRetry = isPttMode()
-                )
+                if (currentMode() == ListeningMode.CONTINUOUS) scheduleNext(250)
+            }
+            return
+        }
+
+        if (fallbackQuery.isNotBlank()) {
+            showFeedback(fallbackQuery, null, "বুঝিনি: $fallbackQuery", isSuccess = false, canRetry = true)
+        }
+    }
+
+    private fun handleConfirmationVoice(candidates: List<String>): Boolean {
+        for (raw in candidates) {
+            val low = " " + raw.lowercase().trim() + " "
+            if (CommandParser.CONFIRM_YES_WORDS.any { low.contains(" $it ") }) {
+                confirmPendingCommand()
+                return true
+            }
+            if (CommandParser.CONFIRM_NO_WORDS.any { low.contains(" $it ") }) {
+                cancelPendingCommand()
+                return true
             }
         }
+        return false
     }
 
-    private fun acceptAndRunCommand(cmd: Command, heardText: String, summary: String) {
-        awakeUntil = SystemClock.elapsedRealtime() + AssistantConfig.AWAKE_WINDOW_MS
-        val question = confirmationQuestion(cmd)
-        if (question != null) {
-            setPending(cmd, heardText, summary, question)
-            return
-        }
-        dispatchCommand(cmd, heardText, summary)
+    private fun needsConfirmation(cmd: Command): String? = when (cmd) {
+        is Command.Call ->
+            if (AssistantPrefs.confirmBeforeAppCall(this)) "${cmd.target}-কে ফোন কল করবেন?" else null
+        is Command.AppCall ->
+            if (AssistantPrefs.confirmBeforeAppCall(this)) {
+                "${cmd.appName}-তে ${cmd.contact}-কে ${if (cmd.video) "ভিডিও" else "অডিও"} কল করবেন?"
+            } else null
+        is Command.AppMessage ->
+            if (cmd.send && AssistantPrefs.confirmBeforeHumanSend(this)) {
+                "${cmd.appName}-তে ${cmd.contact}-কে মেসেজ পাঠাবেন?"
+            } else null
+        is Command.AppChat ->
+            if (cmd.send && AssistantPrefs.confirmBeforeAiChatSend(this)) {
+                "${cmd.appName ?: "অ্যাপ"}-এ লেখা সেন্ড করবেন?"
+            } else null
+        else -> null
     }
 
-    private fun dispatchCommand(cmd: Command, heardText: String, summary: String) {
+    private fun dispatchCommand(cmd: Command, heardText: String?, summary: String?) {
         when (cmd) {
             Command.Sleep -> {
                 awakeUntil = 0L
-                pttSessionActive = false
-                showResult(
-                    heard = heardText,
-                    summary = summary,
-                    msg = "ঘুমালাম — \"Hey Bot\" বললে জাগবো",
-                    ok = true,
-                    canRetry = false
-                )
+                pendingCommand = null
+                showFeedback(heardText, summary, "ঘুমালাম — \"Hey Bot\" বললে জাগবো", isSuccess = true, canRetry = false)
+                return
             }
             Command.StopAssistant -> {
-                toast("Assistant বন্ধ")
+                pendingCommand = null
+                toast("🤖 Assistant বন্ধ")
                 stopSelf()
+                return
             }
             Command.PanicStop -> {
-                clearPending()
-                geminiBusy = false
-                serviceScope.coroutineContext.cancelChildren()
-                awakeUntil = 0L
-                pttSessionActive = false
-                AssistantLog.d("PanicStop executed — cancelled pending and running flows")
-                showResult(
-                    heard = heardText,
-                    summary = summary,
-                    msg = "সব কাজ বন্ধ করা হয়েছে",
-                    ok = false,
-                    canRetry = false
-                )
+                panicStopAll()
+                return
             }
-            else -> {
-                if (executor.isAsync(cmd)) {
-                    overlay?.render(
-                        CommandOverlayManager.OverlayState.RunningFlow(
-                            appLabel = summary,
-                            stepStatus = "শুরু হচ্ছে..."
-                        )
-                    )
-                    serviceScope.launch {
-                        val feedback = executor.executeAsync(cmd) { step ->
-                            overlay?.render(
-                                CommandOverlayManager.OverlayState.RunningFlow(
-                                    appLabel = summary,
-                                    stepStatus = step
-                                )
-                            )
-                        }
-                        val ok = !feedback.startsWith("❌") && !feedback.startsWith("⚠️") &&
-                            !feedback.startsWith("⏱") && !feedback.startsWith("🔒")
-                        showResult(
-                            heard = heardText,
-                            summary = summary,
-                            msg = feedback,
-                            ok = ok,
-                            canRetry = false
-                        )
+            else -> {}
+        }
+
+        val question = needsConfirmation(cmd)
+        if (question != null) {
+            pendingCommand = cmd
+            pendingSummary = summary ?: SmartCommandResolver.describe(cmd)
+            overlay.render(
+                CommandOverlayManager.OverlayState.AwaitingConfirm(
+                    heardText = heardText.orEmpty(),
+                    actionSummary = pendingSummary,
+                    question = question
+                )
+            )
+            return
+        }
+
+        executeNow(cmd, heardText, summary ?: SmartCommandResolver.describe(cmd))
+    }
+
+    private fun confirmPendingCommand() {
+        val cmd = pendingCommand ?: return
+        val sum = pendingSummary
+        pendingCommand = null
+        pendingSummary = ""
+        executeNow(cmd, null, sum)
+    }
+
+    private fun cancelPendingCommand() {
+        pendingCommand = null
+        pendingSummary = ""
+        showFeedback(null, null, "বাতিল করা হয়েছে", isSuccess = false, canRetry = false)
+    }
+
+    private fun panicStopAll() {
+        pendingCommand = null
+        pendingSummary = ""
+        activeFlowJob?.cancel()
+        activeFlowJob = null
+        awakeUntil = 0L
+        pttSessionActive = false
+        showFeedback(null, "সব কাজ বন্ধ", "থামানো হয়েছে", isSuccess = true, canRetry = false)
+    }
+
+    private fun executeNow(cmd: Command, heardText: String?, summary: String) {
+        if (executor.isAsync(cmd)) {
+            activeFlowJob?.cancel()
+            val label = when (cmd) {
+                is Command.AppChat -> cmd.appName ?: "Chat"
+                is Command.AppCall -> cmd.appName
+                is Command.AppMessage -> cmd.appName
+                else -> "Assistant"
+            }
+            overlay.render(CommandOverlayManager.OverlayState.RunningFlow(label, "শুরু হচ্ছে…"))
+            activeFlowJob = serviceScope.launch {
+                try {
+                    val result = executor.executeAsync(cmd) { progress ->
+                        overlay.render(CommandOverlayManager.OverlayState.RunningFlow(label, progress))
                     }
-                } else {
-                    val feedback = executor.execute(cmd)
-                    val ok = !feedback.startsWith("❌") && !feedback.startsWith("⚠️") &&
-                        !feedback.contains("পাইনি") && !feedback.contains("নির্দিষ্ট নাম বলুন")
-                    showResult(
-                        heard = heardText,
-                        summary = summary,
-                        msg = feedback,
-                        ok = ok,
-                        canRetry = false
-                    )
+                    val ok = !result.startsWith("❌") && !result.startsWith("⚠️") && !result.startsWith("⏱")
+                    showFeedback(heardText, summary, result, isSuccess = ok, canRetry = !ok)
+                } catch (_: CancellationException) {
+                    showFeedback(heardText, summary, "থামানো হয়েছে", isSuccess = false, canRetry = false)
+                } catch (e: Exception) {
+                    AssistantLog.w("Async command failed", e)
+                    showFeedback(heardText, summary, "কাজটি সম্পন্ন হয়নি", isSuccess = false, canRetry = true)
                 }
+            }
+        } else {
+            val result = executor.execute(cmd)
+            if (result.isNotBlank()) {
+                val ok = !result.startsWith("⚠️") && !result.startsWith("❌") && !result.contains("পাইনি") && !result.contains("পারলাম না")
+                showFeedback(heardText, summary, result, isSuccess = ok, canRetry = !ok)
+            } else {
+                renderIdleOverlay()
             }
         }
     }
 
-    private fun showResult(
-        heard: String?,
+    private fun showFeedback(
+        heardText: String?,
         summary: String?,
-        msg: String,
-        ok: Boolean,
+        message: String,
+        isSuccess: Boolean,
         canRetry: Boolean
     ) {
-        if (overlay?.isOverlayPermittedAndEnabled() == true) {
-            overlay?.renderResultWithAutoReset(
+        if (::overlay.isInitialized && overlay.isOverlayPermittedAndEnabled()) {
+            overlay.renderResultWithAutoReset(
                 CommandOverlayManager.OverlayState.ResultFeedback(
-                    heardText = heard,
+                    heardText = heardText,
                     commandSummary = summary,
-                    message = msg,
-                    isSuccess = ok,
+                    message = message,
+                    isSuccess = isSuccess,
                     canRetry = canRetry
                 ),
-                resetAfterMs = 2600L
-            ) {
-                if (!running || paused || pending != null) null else idleOverlayState()
-            }
+                resetAfterMs = 2600L,
+                nextStateSupplier = {
+                    if (running && pendingCommand == null && activeFlowJob?.isActive != true) {
+                        idleOverlayState()
+                    } else null
+                }
+            )
         } else {
-            toast(msg)
+            toast(message)
         }
     }
 
@@ -707,20 +597,31 @@ class AssistantListenerService : Service() {
             Intent(this, AssistantListenerService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
+        val pttPi = PendingIntent.getService(
+            this, 2,
+            Intent(this, AssistantListenerService::class.java).setAction(ACTION_TRIGGER_PTT),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
         val openPi = PendingIntent.getActivity(
             this, 1, Intent(this, AssistantActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
+
+        val isPtt = currentMode() == ListeningMode.PUSH_TO_TALK
+        val contentText = if (isPtt) {
+            "Quiet Push-to-Talk চালু — পাশে ট্যাপ বা 'বলুন' চাপুন"
+        } else {
+            "\"Hey Bot\" বলে কমান্ড দিন"
+        }
+
         val b = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, CHANNEL_ID)
         else @Suppress("DEPRECATION") Notification.Builder(this)
         @Suppress("DEPRECATION")
         val n = b.setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentTitle("BanglaKeys Assistant চালু")
-            .setContentText(
-                if (isPttMode()) "পাশের ভাসমান ট্যাব বা কীবোর্ড ট্যাপ করে কথা বলুন"
-                else "\"Hey Bot\" বলে কমান্ড দিন"
-            )
+            .setContentText(contentText)
             .setContentIntent(openPi)
+            .addAction(android.R.drawable.ic_btn_speak_now, "বলুন", pttPi)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "বন্ধ করুন", stopPi)
             .setOngoing(true)
             .build()

@@ -717,4 +717,84 @@ class ExampleRobolectricTest {
     )
     assertEquals(null, com.banglakeys.app.AdSkipper.findSkipTarget("com.some.editor.app", 1080, 1920, regularDialog, allowGameAds = true))
   }
+
+  @Test
+  fun `banglaVocab update parses volume steps, mute, close apps, leave app, implicit youtube, and files`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+
+    // App opening including Files fallback
+    assertEquals(Command.OpenApp("tiktok"), CommandParser.parse("tiktok khulo"))
+    assertEquals(Command.OpenApp("file"), CommandParser.parse("file e dhuko"))
+    assertEquals(Command.OpenApp("ফাইল"), CommandParser.parse("ফাইল এ ঢুকো"))
+    val filesIntent = AppResolver.launchIntent(context, "file")
+    assertNotNull(filesIntent)
+
+    // Leave app & minimize
+    assertEquals(Command.Home, CommandParser.parse("ber hao"))
+    assertEquals(Command.Home, CommandParser.parse("বের হও"))
+    assertEquals(Command.Home, CommandParser.parse("bahire jao"))
+    assertEquals(Command.Home, CommandParser.parse("minimize koro"))
+    assertEquals(Command.Home, CommandParser.parse("মিনিমাইজ করো"))
+
+    // Back
+    assertEquals(Command.Back, CommandParser.parse("back hao"))
+    assertEquals(Command.Back, CommandParser.parse("pechone jao"))
+
+    // Implicit YouTube play (with hyphen normalization and Bangla media terms)
+    assertEquals(
+      Command.YoutubeSearch("tum hi ho", mostViewed = false),
+      CommandParser.parse("youtube search koro tum hi ho")
+    )
+    assertEquals(
+      Command.YoutubeSearch("adele hello", mostViewed = false),
+      CommandParser.parse("adele-hello video play koro")
+    )
+    assertEquals(
+      Command.YoutubeSearch("tum hi ho", mostViewed = false),
+      CommandParser.parse("tum hi ho gaan chalao")
+    )
+
+    // Swipes
+    assertEquals(Command.Swipe(Dir.UP), CommandParser.parse("upore uthao"))
+    assertEquals(Command.Swipe(Dir.UP), CommandParser.parse("উপরে উঠাও"))
+    assertEquals(Command.Swipe(Dir.DOWN), CommandParser.parse("niche namao"))
+    assertEquals(Command.Swipe(Dir.DOWN), CommandParser.parse("নিচে নামাও"))
+
+    // Volume steps, Mute, Unmute
+    assertEquals(Command.VolumeUp(1), CommandParser.parse("volume barao"))
+    assertEquals(Command.VolumeDown(1), CommandParser.parse("awaj komao"))
+    assertEquals(Command.VolumeUp(5), CommandParser.parse("volume full koro"))
+    assertEquals(Command.VolumeDown(5), CommandParser.parse("volume komao onek"))
+    assertEquals(Command.Mute, CommandParser.parse("mute"))
+    assertEquals(Command.Mute, CommandParser.parse("chup"))
+    assertEquals(Command.Unmute, CommandParser.parse("unmute"))
+    assertEquals(Command.Unmute, CommandParser.parse("আওয়াজ চালু"))
+
+    // CloseAllApps vs CloseApp vs Home
+    assertEquals(Command.CloseAllApps, CommandParser.parse("sob app close koro"))
+    assertEquals(Command.CloseAllApps, CommandParser.parse("সব অ্যাপ বন্ধ করো"))
+    assertEquals(Command.CloseApp, CommandParser.parse("ei app bondho koro"))
+    assertEquals(Command.CloseApp, CommandParser.parse("এই অ্যাপ বন্ধ করো"))
+
+    // SmartCommandResolver & Gemini mappings for new commands
+    assertTrue(SmartCommandResolver.describe(Command.VolumeUp(5)).contains("5x"))
+    assertEquals("Sound Mute", SmartCommandResolver.describe(Command.Mute))
+    assertEquals("সব অ্যাপ বন্ধ", SmartCommandResolver.describe(Command.CloseAllApps))
+    assertEquals("বর্তমান অ্যাপ বন্ধ", SmartCommandResolver.describe(Command.CloseApp))
+
+    assertEquals(
+      Command.VolumeUp(5),
+      GeminiCommandInterpreter.parseJsonResponse("""{"type":"volume_up","steps":5}""")
+    )
+    assertEquals(Command.Mute, GeminiCommandInterpreter.parseJsonResponse("""{"type":"mute"}"""))
+    assertEquals(Command.Unmute, GeminiCommandInterpreter.parseJsonResponse("""{"type":"unmute"}"""))
+    assertEquals(
+      Command.CloseAllApps,
+      GeminiCommandInterpreter.parseJsonResponse("""{"type":"close_all_apps"}""")
+    )
+    assertEquals(
+      Command.CloseApp,
+      GeminiCommandInterpreter.parseJsonResponse("""{"type":"close_app"}""")
+    )
+  }
 }

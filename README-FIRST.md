@@ -8,10 +8,11 @@
 
 ## এই zip-এ কী কী আছে
 
-**নতুন ৯টা Kotlin ফাইল** (`app/src/main/java/com/banglakeys/app/`) — সোজা কপি করে বসান:
+**নতুন ১০টা Kotlin ফাইল** (`app/src/main/java/com/banglakeys/app/`) — সোজা কপি করে বসান:
 
 | ফাইল | কাজ |
 |---|---|
+| `BanglaVocab.kt` | বাংলা/Banglish/English শব্দভান্ডার — নতুন শব্দ শেখাতে শুধু এটা এডিট করুন |
 | `AssistantConfig.kt` | Wake word, contact-এর ডাকনাম, up/down-এর দিক — সব সেটিং |
 | `AssistantSetup.kt` | Permission / Accessibility চালু আছে কিনা চেক |
 | `AssistantAccessibilityService.kt` | ফোন চালানোর ইঞ্জিন: swipe, tap, double tap, back, screen-এ বাটন খোঁজা |
@@ -29,6 +30,7 @@ values/assistant_strings.xml
 ```
 
 **Docs:**
+- `SETUP-VOCAB-UPDATE.md` — **শব্দভান্ডার আপডেট**: কী নতুন, কীভাবে merge, কীভাবে টেস্ট (AI-কে এটাই দিন)
 - `SETUP-ASSISTANT.md` — **কোথায় কী বদলাতে হবে** (Manifest, Layouts.kt, KeyboardView.kt, BanglaIME.kt)
 - `COMMANDS.md` — কী বললে কী হয়, আর নতুন কমান্ড কীভাবে বানাবেন
 - `AI-MERGE-PROMPT.md` — AI দিয়ে merge করালে যে prompt দেবেন
