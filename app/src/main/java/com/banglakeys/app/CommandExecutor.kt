@@ -33,27 +33,31 @@ class CommandExecutor(private val appCtx: Context) {
         else -> false
     }
 
-    suspend fun executeAsync(cmd: Command): String {
+    suspend fun executeAsync(
+        cmd: Command,
+        onProgress: (String) -> Unit = {}
+    ): String {
         val result = when (cmd) {
             is Command.AppChat -> {
                 val flow = cmd.appName?.let { AppFlows.find(it) }
                 if (cmd.appName != null && flow == null) {
                     "❌ '${cmd.appName}' অ্যাপটি AppFlows-এ নেই"
                 } else {
-                    FlowRunner(appCtx).runAppChat(flow, cmd.text, cmd.send)
+                    FlowRunner(appCtx).runAppChat(flow, cmd.text, cmd.send, onProgress)
                 }
             }
             is Command.AppCall -> {
                 val flow = AppFlows.find(cmd.appName)
                     ?: return "❌ '${cmd.appName}' অ্যাপটি AppFlows-এ নেই"
-                FlowRunner(appCtx).runAppCall(flow, cmd.contact, cmd.video)
+                FlowRunner(appCtx).runAppCall(flow, cmd.contact, cmd.video, onProgress)
             }
             is Command.AppMessage -> {
                 val flow = AppFlows.find(cmd.appName)
                     ?: return "❌ '${cmd.appName}' অ্যাপটি AppFlows-এ নেই"
-                FlowRunner(appCtx).runAppMessage(flow, cmd.contact, cmd.text, cmd.send)
+                FlowRunner(appCtx).runAppMessage(flow, cmd.contact, cmd.text, cmd.send, onProgress)
             }
             Command.TakePhoto -> {
+                onProgress("ক্যামেরা খোলা হচ্ছে...")
                 if (!openCameraIntent()) {
                     "❌ ক্যামেরা অ্যাপ খোলা যায়নি"
                 } else {
@@ -138,6 +142,8 @@ class CommandExecutor(private val appCtx: Context) {
     }
 
     private fun openApp(name: String): String {
+        // স্পষ্ট না হলে আন্দাজ না করে জিজ্ঞাসা করা
+        AppResolver.ambiguousPrompt(name)?.let { return it }
         val i = AppResolver.launchIntent(appCtx, name) ?: return "'$name' নামে app পাইনি"
         return if (launch(i)) "📱 $name" else "'$name' খুলতে পারলাম না (Display over other apps permission দিন)"
     }
@@ -212,6 +218,7 @@ class CommandExecutor(private val appCtx: Context) {
             )
         )
         if (!ok) return "YouTube খুলতে পারলাম না"
+        // Accessibility চালু থাকলে result লোড হওয়ার পর ভিডিওতে click
         if (svc != null) handler.postDelayed({ pickVideo(cmd.mostViewed, 0) }, 4000)
         return "▶️ YouTube: $q" + if (cmd.mostViewed) " (most viewed)" else ""
     }

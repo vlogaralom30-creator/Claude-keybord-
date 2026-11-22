@@ -61,18 +61,15 @@ object Layouts {
                 Key("⌫", KeyType.DELETE, 1.5f)
         )
 
-        // Row 4
+        // Row 4 (৭টি key — হালকা ও MIC সহজে নাগালে)
         rows.add(
             listOf(
                 Key("?123", KeyType.SYMBOLS, 1.5f),
                 Key("LANG", KeyType.LANG, 1f),
                 Key(","),
-                Key(" ", KeyType.SPACE, 2f),
+                Key(" ", KeyType.SPACE, 2.8f),
                 if (bangla) Key("।", alt = ".") else Key("."),
-                Key("NOTE", KeyType.NOTEPAD, 1f),
-                Key("Tr", KeyType.TRANSLATE, 1f),
-                Key("MIC", KeyType.MIC, 1f),
-                Key("BOT", KeyType.ASSISTANT, 1f),
+                Key("MIC", KeyType.MIC, 1.2f),
                 Key("ENTER", KeyType.ENTER, 1.5f),
             )
         )
@@ -86,7 +83,11 @@ object Layouts {
         letterRows(numberRow, false, false)
 
     fun symbols(bnDigits: Boolean, taka: Boolean): List<List<Key>> = listOf(
-        letters(digitsOf(bnDigits)),
+        letters(digitsOf(bnDigits)) + listOf(
+            Key("NOTE", KeyType.NOTEPAD, 1f),
+            Key("Tr", KeyType.TRANSLATE, 1f),
+            Key("BOT", KeyType.ASSISTANT, 1f),
+        ),
         letters(if (taka) "@#৳_&-+()/" else "@#\$_&-+()/"),
         listOf(Key("=\\<", KeyType.SYMBOLS2, 1.5f)) +
             letters("*\"':;!?") +
@@ -105,7 +106,7 @@ object Layouts {
             Key("<"),
             Key(" ", KeyType.SPACE, 4f),
             Key(">"),
-            Key("⏎", KeyType.ENTER, 2f),
+            Key("ENTER", KeyType.ENTER, 2f),
         ),
     )
 
@@ -138,6 +139,6 @@ object Layouts {
         Key(","),
         Key(" ", KeyType.SPACE, 4f),
         Key("."),
-        Key("⏎", KeyType.ENTER, 2f),
+        Key("ENTER", KeyType.ENTER, 2f),
     )
 }

@@ -7,13 +7,16 @@ import com.banglakeys.app.AppResolver
 import com.banglakeys.app.AssistantPrefs
 import com.banglakeys.app.ClipboardMemory
 import com.banglakeys.app.Command
+import com.banglakeys.app.CommandOverlayManager
 import com.banglakeys.app.CommandParser
 import com.banglakeys.app.Dir
 import com.banglakeys.app.KeyType
 import com.banglakeys.app.Layouts
+import com.banglakeys.app.ListeningMode
 import com.banglakeys.app.Notes
 import com.banglakeys.app.Phonetic
 import com.banglakeys.app.SettingsTarget
+import com.banglakeys.app.SmartCommandResolver
 import com.banglakeys.app.Suggestions
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -72,14 +75,21 @@ class ExampleRobolectricTest {
     assertEquals(3, rows.size)
 
     val phoneticBottom = Layouts.phonetic(numberRow = false, bnDigits = true).last()
+    assertEquals(7, phoneticBottom.size)
     assertTrue(phoneticBottom.any { it.type == KeyType.MIC })
-    assertTrue(phoneticBottom.any { it.type == KeyType.NOTEPAD })
-    assertTrue(phoneticBottom.any { it.type == KeyType.TRANSLATE })
-    assertTrue(phoneticBottom.any { it.type == KeyType.ASSISTANT })
+    assertTrue(phoneticBottom.any { it.type == KeyType.ENTER })
+    assertFalse(phoneticBottom.any { it.type == KeyType.NOTEPAD })
+    assertFalse(phoneticBottom.any { it.type == KeyType.TRANSLATE })
+    assertFalse(phoneticBottom.any { it.type == KeyType.ASSISTANT })
+
+    val symbolsFirstRow = Layouts.symbols(bnDigits = true, taka = true).first()
+    assertTrue(symbolsFirstRow.any { it.type == KeyType.NOTEPAD })
+    assertTrue(symbolsFirstRow.any { it.type == KeyType.TRANSLATE })
+    assertTrue(symbolsFirstRow.any { it.type == KeyType.ASSISTANT })
   }
 
   @Test
-  fun `existing regression commands still parse identically`() {
+  fun `existing regression commands and v2 fixes parse accurately`() {
     val (woke, rest) = CommandParser.splitWake("Hey Bot open TikTok")
     assertTrue(woke)
     assertEquals(Command.OpenApp("tiktok"), CommandParser.parse(rest))
@@ -97,6 +107,15 @@ class ExampleRobolectricTest {
     )
     assertEquals(Command.PanicStop, CommandParser.parse("stop everything"))
     assertEquals(Command.PanicStop, CommandParser.parse("সব বন্ধ"))
+    assertEquals(Command.Home, CommandParser.parse("exit app"))
+    assertEquals(Command.Home, CommandParser.parse("close app"))
+    assertEquals(Command.Home, CommandParser.parse("অ্যাপ বন্ধ"))
+    assertEquals(Command.StopAssistant, CommandParser.parse("quit"))
+
+    assertNotNull(AppResolver.ambiguousPrompt("reel"))
+    assertNotNull(AppResolver.ambiguousPrompt("shorts"))
+    assertNotNull(AppResolver.ambiguousPrompt("ভিডিও"))
+    assertEquals(null, AppResolver.ambiguousPrompt("tiktok"))
   }
 
   @Test
@@ -265,5 +284,108 @@ class ExampleRobolectricTest {
       d.setBounds(0, 0, d.intrinsicWidth, d.intrinsicHeight)
       d.draw(android.graphics.Canvas(bmp))
     }
+  }
+
+  @Test
+  fun `smart command resolver handles N-best, fuzzy wake, and Banglish mishearings`() {
+    // 1. Fuzzy wake word "hey board up" -> woke = true, Swipe(UP)
+    val wakeRes = SmartCommandResolver.resolve(listOf("hey board up"), alreadyAwake = false)
+    assertTrue(wakeRes.woke)
+    assertEquals(Command.Swipe(Dir.UP), wakeRes.command)
+
+    // 2. N-best picks accurate candidate from index 2 when index 0 is garbled
+    val nBest = SmartCommandResolver.resolve(
+      candidates = listOf("oh pen dick duck", "open tick tuck", "open tiktok"),
+      alreadyAwake = true
+    )
+    assertEquals(Command.OpenApp("tiktok"), nBest.command)
+    assertNotNull(nBest.summary)
+
+    // 3. Phonetic & fuzzy token normalization: "kholoo whatsapp" / "open tiktak"
+    val fuzzyOpen = SmartCommandResolver.resolve(listOf("open tiktak"), alreadyAwake = true)
+    assertEquals(Command.OpenApp("tiktok"), fuzzyOpen.command)
+    assertTrue(fuzzyOpen.fuzzyCorrected)
+
+    val fuzzyBanglish = SmartCommandResolver.resolve(listOf("kholoo whatsapp"), alreadyAwake = true)
+    assertEquals(Command.OpenApp("whatsapp"), fuzzyBanglish.command)
+
+    // 4. Imo call mishearing: "emo te fatema ke call koro"
+    val emoCall = SmartCommandResolver.resolve(listOf("emo te fatema ke call koro"), alreadyAwake = true)
+    assertEquals(Command.AppCall("imo", "fatema", video = false), emoCall.command)
+
+    // 5. Payload preservation: free text after "type" must NOT be rewritten to keywords
+    val typed = SmartCommandResolver.resolve(listOf("type tiktak kholoo"), alreadyAwake = true)
+    assertEquals(Command.TypeText("tiktak kholoo"), typed.command)
+
+    // 6. Describe produces human-readable summary
+    assertTrue(SmartCommandResolver.describe(Command.AppCall("imo", "fatema", video = true)).contains("imo"))
+  }
+
+  @Test
+  fun `listening mode and overlay HUD prefs persist properly`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    assertEquals(ListeningMode.CONTINUOUS, AssistantPrefs.listeningMode(context))
+    assertTrue(AssistantPrefs.overlayHudEnabled(context))
+
+    AssistantPrefs.setListeningMode(context, ListeningMode.PUSH_TO_TALK)
+    AssistantPrefs.setOverlayHudEnabled(context, false)
+
+    assertEquals(ListeningMode.PUSH_TO_TALK, AssistantPrefs.listeningMode(context))
+    assertFalse(AssistantPrefs.overlayHudEnabled(context))
+  }
+
+  @Test
+  fun `command overlay manager renders all pill states cleanly`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    var confirmClicks = 0
+    var cancelClicks = 0
+    var stopClicks = 0
+    var pttClicks = 0
+    var dismissClicks = 0
+
+    val overlay = CommandOverlayManager(
+      ctx = context,
+      onConfirmClick = { confirmClicks++ },
+      onCancelClick = { cancelClicks++ },
+      onStopFlowClick = { stopClicks++ },
+      onPttTriggerClick = { pttClicks++ },
+      onDismissOrSleepClick = { dismissClicks++ }
+    )
+
+    val states = listOf(
+      CommandOverlayManager.OverlayState.Dormant(isBangla = true),
+      CommandOverlayManager.OverlayState.Listening(partialText = "open tiktok", awakeSec = 10, isPtt = false),
+      CommandOverlayManager.OverlayState.AwaitingConfirm(
+        heardText = "imo te fatema ke call koro",
+        actionSummary = "imo অডিও কল: fatema",
+        question = "imo-তে fatema-কে কল করবেন?"
+      ),
+      CommandOverlayManager.OverlayState.RunningFlow(appLabel = "WhatsApp", stepStatus = "অপেক্ষা করা হচ্ছে…"),
+      CommandOverlayManager.OverlayState.ResultFeedback(
+        heardText = "unknown phrase",
+        commandSummary = null,
+        message = "কমান্ড বোঝা যায়নি",
+        isSuccess = false,
+        canRetry = true
+      )
+    )
+
+    for (state in states) {
+      val v = overlay.buildViewForState(state)
+      v.measure(
+        android.view.View.MeasureSpec.makeMeasureSpec(1000, android.view.View.MeasureSpec.AT_MOST),
+        android.view.View.MeasureSpec.makeMeasureSpec(800, android.view.View.MeasureSpec.AT_MOST)
+      )
+      assertTrue(v.measuredWidth > 0)
+      assertTrue(v.measuredHeight > 0)
+      v.layout(0, 0, v.measuredWidth, v.measuredHeight)
+      val bmp = android.graphics.Bitmap.createBitmap(
+        v.measuredWidth,
+        v.measuredHeight,
+        android.graphics.Bitmap.Config.ARGB_8888
+      )
+      v.draw(android.graphics.Canvas(bmp))
+    }
+    assertEquals(0, confirmClicks + cancelClicks + stopClicks + pttClicks + dismissClicks)
   }
 }

@@ -78,9 +78,19 @@ class AssistantActivity : Activity() {
     private lateinit var rowAlarm: StatusRowViews
     private lateinit var rowStorage: StatusRowViews
 
-    // Storage folder control + switches + seekbar
+    // Storage folder control + listening mode + switches + seekbar
+    private lateinit var btnModeContinuous: LinearLayout
+    private lateinit var btnModeContinuousIcon: ImageView
+    private lateinit var btnModeContinuousLabel: TextView
+    private lateinit var btnModePtt: LinearLayout
+    private lateinit var btnModePttIcon: ImageView
+    private lateinit var btnModePttLabel: TextView
+    private lateinit var modeHintText: TextView
+
     private lateinit var btnStorageLabel: TextView
     private lateinit var btnStorageIcon: ImageView
+    private lateinit var swOverlayHud: Switch
+    private lateinit var swOverlaySub: TextView
     private lateinit var swConfirmAppCall: Switch
     private lateinit var swConfirmHumanSend: Switch
     private lateinit var swConfirmAiChatSend: Switch
@@ -318,6 +328,89 @@ class AssistantActivity : Activity() {
             marginStart = dp(6)
         })
         quickCard.addView(quickRow)
+
+        // Listening Mode segmented toggle (Continuous vs Quiet Push-to-Talk)
+        quickCard.addView(dividerView().apply {
+            (layoutParams as LinearLayout.LayoutParams).topMargin = dp(12)
+        })
+        quickCard.addView(TextView(this).apply {
+            text = "শোনার ধরন (Listening Mode)"
+            textSize = 13.5f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(pal.text)
+        })
+        modeHintText = TextView(this).apply {
+            textSize = 12f
+            setTextColor(pal.subText)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(2); bottomMargin = dp(8) }
+        }
+        quickCard.addView(modeHintText)
+
+        val modeRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+
+        btnModeContinuous = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            minimumHeight = dp(48)
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            rippleSelectable(this)
+            setOnClickListener {
+                AssistantPrefs.setListeningMode(this@AssistantActivity, ListeningMode.CONTINUOUS)
+                AssistantListenerService.notifyConfigChanged(this@AssistantActivity)
+                refresh()
+            }
+        }
+        btnModeContinuousIcon = ImageView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(18), dp(18)).apply { marginEnd = dp(6) }
+        }
+        btnModeContinuousLabel = TextView(this).apply {
+            text = "Continuous"
+            textSize = 13f
+            setTypeface(null, Typeface.BOLD)
+            maxLines = 1
+        }
+        btnModeContinuous.addView(btnModeContinuousIcon)
+        btnModeContinuous.addView(btnModeContinuousLabel)
+        modeRow.addView(btnModeContinuous, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+            marginEnd = dp(6)
+        })
+
+        btnModePtt = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            minimumHeight = dp(48)
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            rippleSelectable(this)
+            setOnClickListener {
+                AssistantPrefs.setListeningMode(this@AssistantActivity, ListeningMode.PUSH_TO_TALK)
+                AssistantListenerService.notifyConfigChanged(this@AssistantActivity)
+                refresh()
+            }
+        }
+        btnModePttIcon = ImageView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(18), dp(18)).apply { marginEnd = dp(6) }
+        }
+        btnModePttLabel = TextView(this).apply {
+            text = "Quiet PTT"
+            textSize = 13f
+            setTypeface(null, Typeface.BOLD)
+            maxLines = 1
+        }
+        btnModePtt.addView(btnModePttIcon)
+        btnModePtt.addView(btnModePttLabel)
+        modeRow.addView(btnModePtt, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+            marginStart = dp(6)
+        })
+        quickCard.addView(modeRow)
         root.addView(quickCard)
 
         // ------------------------------------------------------------ 3. Permissions & Status Checklist Card
@@ -490,6 +583,20 @@ class AssistantActivity : Activity() {
         controlsCard.addView(folderBox)
 
         // Switches
+        swOverlayHud = addSwitchRow(
+            parent = controlsCard,
+            iconKind = AssistantIcons.Kind.BOT,
+            title = "Live Command Overlay Pill",
+            subtitle = "স্ক্রিনের উপরে লাইভ শোনা কথা, কমান্ড ও হ্যাঁ/না বাটন দেখাবে",
+            initial = AssistantPrefs.overlayHudEnabled(this),
+            bindSubtitle = { swOverlaySub = it }
+        ) { checked ->
+            AssistantPrefs.setOverlayHudEnabled(this, checked)
+            AssistantListenerService.notifyConfigChanged(this)
+            refresh()
+        }
+
+        controlsCard.addView(dividerView())
         swConfirmAppCall = addSwitchRow(
             parent = controlsCard,
             iconKind = AssistantIcons.Kind.LOCK,
@@ -721,6 +828,7 @@ class AssistantActivity : Activity() {
         title: String,
         subtitle: String,
         initial: Boolean,
+        bindSubtitle: ((TextView) -> Unit)? = null,
         onChange: (Boolean) -> Unit
     ): Switch {
         val row = LinearLayout(this).apply {
@@ -732,6 +840,12 @@ class AssistantActivity : Activity() {
             setImageDrawable(AssistantIcons.drawable(this@AssistantActivity, iconKind, pal.primary, 20))
             layoutParams = LinearLayout.LayoutParams(dp(20), dp(20)).apply { marginEnd = dp(12) }
         })
+        val subTv = TextView(this@AssistantActivity).apply {
+            text = subtitle
+            textSize = 12f
+            setTextColor(pal.subText)
+        }
+        bindSubtitle?.invoke(subTv)
         row.addView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
@@ -743,11 +857,7 @@ class AssistantActivity : Activity() {
                 setTypeface(null, Typeface.BOLD)
                 setTextColor(pal.text)
             })
-            addView(TextView(this@AssistantActivity).apply {
-                text = subtitle
-                textSize = 12f
-                setTextColor(pal.subText)
-            })
+            addView(subTv)
         })
         val sw = Switch(this).apply {
             isChecked = initial
@@ -832,11 +942,18 @@ class AssistantActivity : Activity() {
         val storageOk = AssistantSetup.hasStorageTree(this)
         val listening = AssistantListenerService.running
 
+        val mode = AssistantPrefs.listeningMode(this)
+        val isPtt = mode == ListeningMode.PUSH_TO_TALK
+
         // Hero status pill
         when {
+            listening && isPtt -> {
+                heroStatusIcon.setImageDrawable(AssistantIcons.drawable(this, AssistantIcons.Kind.BOT, 0xFF86EFAC.toInt(), 16))
+                heroStatusText.text = "Quiet PTT প্রস্তুত (ট্যাপ করে কথা বলুন)"
+            }
             listening -> {
                 heroStatusIcon.setImageDrawable(AssistantIcons.drawable(this, AssistantIcons.Kind.CHECK_CIRCLE, 0xFF86EFAC.toInt(), 16))
-                heroStatusText.text = "Assistant এখন শুনছে"
+                heroStatusText.text = "Assistant এখন শুনছে (Continuous)"
             }
             AssistantSetup.isReady(this) -> {
                 heroStatusIcon.setImageDrawable(AssistantIcons.drawable(this, AssistantIcons.Kind.PLAY, Color.WHITE, 14))
@@ -862,6 +979,29 @@ class AssistantActivity : Activity() {
         }
 
         btnLangLabel.text = if (AssistantSetup.isBangla(this)) "বাংলা (bn-BD)" else "English (en-US)"
+
+        // Listening Mode pill states
+        if (!isPtt) {
+            btnModeContinuous.background = roundBg(pal.primarySoft, 14, pal.primary, 1)
+            btnModeContinuousIcon.setImageDrawable(AssistantIcons.drawable(this, AssistantIcons.Kind.MIC, pal.primary, 18))
+            btnModeContinuousLabel.setTextColor(pal.primary)
+
+            btnModePtt.background = roundBg(pal.cardAlt, 14)
+            btnModePttIcon.setImageDrawable(AssistantIcons.drawable(this, AssistantIcons.Kind.BOT, pal.subText, 18))
+            btnModePttLabel.setTextColor(pal.subText)
+
+            modeHintText.text = "সবসময় শুনবে — \"Hey Bot\" বলে বা সক্রিয় থাকা অবস্থায় সরাসরি কমান্ড দিন"
+        } else {
+            btnModeContinuous.background = roundBg(pal.cardAlt, 14)
+            btnModeContinuousIcon.setImageDrawable(AssistantIcons.drawable(this, AssistantIcons.Kind.MIC, pal.subText, 18))
+            btnModeContinuousLabel.setTextColor(pal.subText)
+
+            btnModePtt.background = roundBg(pal.primarySoft, 14, pal.primary, 1)
+            btnModePttIcon.setImageDrawable(AssistantIcons.drawable(this, AssistantIcons.Kind.BOT, pal.primary, 18))
+            btnModePttLabel.setTextColor(pal.primary)
+
+            modeHintText.text = "নিঃশব্দ মোড — কোনো বিরক্তিকর বিপ নেই; উপরের ভাসমান পিল বা BOT কী ট্যাপ করে বলুন"
+        }
 
         // Checklist rows
         applyStatusIcon(rowA11y.iconView, a11yOn)
@@ -911,6 +1051,12 @@ class AssistantActivity : Activity() {
             btnStorageLabel.text = "Assistant storage folder বেছে নিন"
         }
 
+        swOverlayHud.isChecked = AssistantPrefs.overlayHudEnabled(this)
+        swOverlaySub.text = if (overlayOk) {
+            "স্ক্রিনের উপরে লাইভ শোনা কথা, কমান্ড ও হ্যাঁ/না বাটন দেখাবে"
+        } else {
+            "ভাসমান কমান্ড পিল দেখতে উপরের 'Display over other apps' অনুমতি দিন"
+        }
         swConfirmAppCall.isChecked = AssistantPrefs.confirmBeforeAppCall(this)
         swConfirmHumanSend.isChecked = AssistantPrefs.confirmBeforeHumanSend(this)
         swConfirmAiChatSend.isChecked = AssistantPrefs.confirmBeforeAiChatSend(this)

@@ -3,8 +3,13 @@ package com.banglakeys.app
 import android.content.Context
 import android.content.SharedPreferences
 
+enum class ListeningMode {
+    CONTINUOUS,
+    PUSH_TO_TALK
+}
+
 /**
- * Assistant runtime preferences (T11 minimal slice, backed by AssistantConfig.PREFS).
+ * Assistant runtime preferences (backed by AssistantConfig.PREFS).
  */
 object AssistantPrefs {
 
@@ -14,6 +19,8 @@ object AssistantPrefs {
     private const val KEY_CONFIRM_AI_CHAT_SEND = "confirm_before_ai_chat_send"
     private const val KEY_APP_FLOW_TIMEOUT_SEC = "app_flow_timeout_sec"
     private const val KEY_BLOCKED_PACKAGES = "blocked_packages"
+    private const val KEY_LISTENING_MODE = "listening_mode"
+    private const val KEY_OVERLAY_HUD_ENABLED = "overlay_hud_enabled"
 
     const val MIN_FLOW_TIMEOUT_SEC = 2
     const val MAX_FLOW_TIMEOUT_SEC = 15
@@ -70,5 +77,21 @@ object AssistantPrefs {
 
     fun setBlockedPackages(ctx: Context, pkgs: Set<String>) {
         prefs(ctx).edit().putStringSet(KEY_BLOCKED_PACKAGES, pkgs.toSet()).apply()
+    }
+
+    fun listeningMode(ctx: Context): ListeningMode {
+        val raw = prefs(ctx).getString(KEY_LISTENING_MODE, ListeningMode.CONTINUOUS.name)
+        return ListeningMode.values().firstOrNull { it.name == raw } ?: ListeningMode.CONTINUOUS
+    }
+
+    fun setListeningMode(ctx: Context, mode: ListeningMode) {
+        prefs(ctx).edit().putString(KEY_LISTENING_MODE, mode.name).apply()
+    }
+
+    fun overlayHudEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean(KEY_OVERLAY_HUD_ENABLED, true)
+
+    fun setOverlayHudEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean(KEY_OVERLAY_HUD_ENABLED, enabled).apply()
     }
 }

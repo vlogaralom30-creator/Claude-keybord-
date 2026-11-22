@@ -68,7 +68,12 @@ class FlowRunner(private val ctx: Context) {
 
     // ------------------------------------------------------------ Pack G (AI chat / type+send)
 
-    suspend fun runAppChat(flow: AppFlow?, text: String, send: Boolean): String {
+    suspend fun runAppChat(
+        flow: AppFlow?,
+        text: String,
+        send: Boolean,
+        onProgress: (String) -> Unit = {}
+    ): String {
         val svc = AssistantAccessibilityService.instance
             ?: return "⚠️ Accessibility চালু করুন (BanglaKeys Assistant অ্যাপ খুলুন)"
         val appLabel = flow?.key ?: "এই app"
@@ -77,6 +82,7 @@ class FlowRunner(private val ctx: Context) {
 
         if (flow != null) {
             AssistantLog.d("FlowRunner.runAppChat: launching ${flow.key}, send=$send")
+            onProgress("${flow.key} খোলা হচ্ছে...")
             if (!openFlowApp(flow)) {
                 return "❌ ${flow.key} অ্যাপটি ফোনে পাইনি"
             }
@@ -90,6 +96,7 @@ class FlowRunner(private val ctx: Context) {
 
         if (isBlocked(svc)) return "🔒 এই app-এ assistant বন্ধ"
 
+        onProgress("$appLabel-এ লেখার বক্স খোঁজা হচ্ছে...")
         val hints = flow?.inputHints ?: DEFAULT_INPUT_HINTS
         val inputNode = waitForValue(stepTimeout) {
             svc.findEditable()
@@ -101,6 +108,7 @@ class FlowRunner(private val ctx: Context) {
             return "❌ $appLabel-এ লেখার বক্স পাইনি"
         }
 
+        onProgress("লেখা বসানো হচ্ছে...")
         val typed = svc.enterText(inputNode, text)
         AssistantLog.d("FlowRunner.runAppChat: enterText -> $typed")
         if (!typed) {
@@ -114,6 +122,7 @@ class FlowRunner(private val ctx: Context) {
         delay(SEND_SETTLE_MS)
         if (isBlocked(svc)) return "🔒 এই app-এ assistant বন্ধ"
 
+        onProgress("Send বাটন চাপা হচ্ছে...")
         val sendHints = flow?.sendHints ?: DEFAULT_SEND_HINTS
         val sent = waitFor(2500L) {
             svc.clickByHints(sendHints)
@@ -183,9 +192,11 @@ class FlowRunner(private val ctx: Context) {
         flow: AppFlow,
         contact: String,
         openTimeout: Long,
-        stepTimeout: Long
+        stepTimeout: Long,
+        onProgress: (String) -> Unit
     ): String? {
         AssistantLog.d("FlowRunner: opening ${flow.key} for contact='$contact'")
+        onProgress("${flow.key} খোলা হচ্ছে...")
         if (!openFlowApp(flow)) {
             return "❌ ${flow.key} অ্যাপটি ফোনে পাইনি"
         }
@@ -195,7 +206,7 @@ class FlowRunner(private val ctx: Context) {
         if (isBlocked(svc)) return "🔒 এই app-এ assistant বন্ধ"
         delay(500)
 
-        // Step 1: find & click search button (unless an editable search box is already open)
+        onProgress("${flow.key}-তে Search খোঁজা হচ্ছে...")
         val searchClicked = waitFor(stepTimeout) {
             svc.clickByHints(flow.searchHints)
         }
@@ -205,7 +216,6 @@ class FlowRunner(private val ctx: Context) {
         }
         delay(350)
 
-        // Step 2: find search input & enter contact name
         val searchInput = waitForValue(stepTimeout) {
             svc.findEditable() ?: svc.findByHints(flow.searchHints)
         }
@@ -213,6 +223,7 @@ class FlowRunner(private val ctx: Context) {
             AssistantLog.d("FlowRunner(${flow.key}): search input not found")
             return "⚠️ ${flow.key}-তে search বক্স পাইনি"
         }
+        onProgress("$contact খোঁজা হচ্ছে...")
         val variants = contactVariants(contact)
         val queryName = variants.firstOrNull { it != contact && it.length >= 2 && it.any { ch -> ch in 'a'..'z' || ch in 'A'..'Z' } }
             ?: contact
@@ -223,7 +234,6 @@ class FlowRunner(private val ctx: Context) {
         }
         delay(600)
 
-        // Step 3: click FIRST matching contact result (try typed query variants, else fallback with original)
         var resultNode = waitForValue(stepTimeout) {
             findMatchingContactNode(svc, variants)
         }
@@ -238,26 +248,33 @@ class FlowRunner(private val ctx: Context) {
             AssistantLog.d("FlowRunner(${flow.key}): contact '$contact' not found in results (variants=$variants)")
             return "⚠️ ${flow.key}-তে '$contact' খুঁজে পাইনি"
         }
+        onProgress("$contact-এ ক্লিক করা হচ্ছে...")
         val clickedContact = svc.clickNode(resultNode)
         AssistantLog.d("FlowRunner(${flow.key}): click contact node -> $clickedContact")
         if (!clickedContact) {
             return "⚠️ ${flow.key}-তে '$contact'-এ ক্লিক করা যায়নি"
         }
         delay(500)
-        return null // null means success up to opened chat/profile screen
+        return null
     }
 
-    suspend fun runAppCall(flow: AppFlow, contact: String, video: Boolean): String {
+    suspend fun runAppCall(
+        flow: AppFlow,
+        contact: String,
+        video: Boolean,
+        onProgress: (String) -> Unit = {}
+    ): String {
         val svc = AssistantAccessibilityService.instance
             ?: return "⚠️ Accessibility চালু করুন (BanglaKeys Assistant অ্যাপ খুলুন)"
         val openTimeout = maxOf(flow.openTimeoutMs, AssistantPrefs.appFlowTimeoutMs(ctx))
         val stepTimeout = maxOf(flow.stepTimeoutMs, AssistantPrefs.appFlowTimeoutMs(ctx))
 
-        val err = openSearchAndSelectContact(svc, flow, contact, openTimeout, stepTimeout)
+        val err = openSearchAndSelectContact(svc, flow, contact, openTimeout, stepTimeout, onProgress)
         if (err != null) return err
 
         val callHints = if (video) flow.videoCallHints else flow.audioCallHints
         val callLabel = if (video) "video call" else "audio call"
+        onProgress("${flow.key}-তে $callLabel করা হচ্ছে...")
         val callClicked = waitFor(stepTimeout) {
             svc.clickByHints(callHints)
         }
@@ -269,17 +286,24 @@ class FlowRunner(private val ctx: Context) {
         }
     }
 
-    suspend fun runAppMessage(flow: AppFlow, contact: String, text: String, send: Boolean): String {
+    suspend fun runAppMessage(
+        flow: AppFlow,
+        contact: String,
+        text: String,
+        send: Boolean,
+        onProgress: (String) -> Unit = {}
+    ): String {
         val svc = AssistantAccessibilityService.instance
             ?: return "⚠️ Accessibility চালু করুন (BanglaKeys Assistant অ্যাপ খুলুন)"
         val openTimeout = maxOf(flow.openTimeoutMs, AssistantPrefs.appFlowTimeoutMs(ctx))
         val stepTimeout = maxOf(flow.stepTimeoutMs, AssistantPrefs.appFlowTimeoutMs(ctx))
 
-        val err = openSearchAndSelectContact(svc, flow, contact, openTimeout, stepTimeout)
+        val err = openSearchAndSelectContact(svc, flow, contact, openTimeout, stepTimeout, onProgress)
         if (err != null) return err
 
         if (isBlocked(svc)) return "🔒 এই app-এ assistant বন্ধ"
 
+        onProgress("মেসেজ বক্স খোঁজা হচ্ছে...")
         val msgInput = waitForValue(stepTimeout) {
             svc.findEditable() ?: svc.findByHints(flow.inputHints)
         }
@@ -287,6 +311,7 @@ class FlowRunner(private val ctx: Context) {
             AssistantLog.d("FlowRunner(${flow.key}): message input not found")
             return "⚠️ ${flow.key}-তে মেসেজ লেখার বক্স পাইনি"
         }
+        onProgress("মেসেজ লেখা হচ্ছে...")
         if (!svc.enterText(msgInput, text)) {
             return "⚠️ ${flow.key}-তে মেসেজ লেখা যায়নি"
         }
@@ -297,6 +322,7 @@ class FlowRunner(private val ctx: Context) {
         delay(SEND_SETTLE_MS)
         if (isBlocked(svc)) return "🔒 এই app-এ assistant বন্ধ"
 
+        onProgress("মেসেজ পাঠানো হচ্ছে...")
         val sent = waitFor(2500L) {
             svc.clickByHints(flow.sendHints)
         }

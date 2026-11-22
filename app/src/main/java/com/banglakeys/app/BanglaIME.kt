@@ -297,18 +297,29 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
     }
 
     override fun onAssistant() {
-        if (AssistantListenerService.running) {
-            AssistantListenerService.stop(this)
-            android.widget.Toast.makeText(this, "Assistant বন্ধ", android.widget.Toast.LENGTH_SHORT).show()
-        } else if (!AssistantSetup.isReady(this)) {
+        if (!AssistantSetup.isReady(this)) {
             val i = Intent(this, AssistantActivity::class.java)
             i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             startActivity(i)
+            return
+        }
+        val isPtt = AssistantPrefs.listeningMode(this) == ListeningMode.PUSH_TO_TALK
+        if (AssistantListenerService.running) {
+            if (isPtt) {
+                AssistantListenerService.triggerPtt(this)
+            } else {
+                AssistantListenerService.stop(this)
+                android.widget.Toast.makeText(this, "Assistant বন্ধ", android.widget.Toast.LENGTH_SHORT).show()
+            }
         } else {
-            AssistantListenerService.start(this)
-            android.widget.Toast.makeText(
-                this, "Assistant চালু — \"Hey Bot\" বলুন", android.widget.Toast.LENGTH_SHORT
-            ).show()
+            if (isPtt) {
+                AssistantListenerService.triggerPtt(this)
+            } else {
+                AssistantListenerService.start(this)
+                android.widget.Toast.makeText(
+                    this, "Assistant চালু — \"Hey Bot\" বলুন", android.widget.Toast.LENGTH_SHORT
+                ).show()
+            }
         }
     }
 

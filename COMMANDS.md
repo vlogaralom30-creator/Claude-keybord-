@@ -6,7 +6,7 @@
 
 | কী বলবেন | কী হবে |
 |---|---|
-| `open tiktok` / `tiktok khulo` / `টিকটক খোলো` | app খোলে (যেকোনো ইনস্টল করা app-এর নামেই) |
+| `open tiktok` / `tiktok khulo` / `টিকটক খোলো` | app খোলে (শুধু "reel"/"shorts"/"video" বললে কোন app তা জিজ্ঞাসা করে) |
 | `up` / `next` / `উপরে` | আঙুল নিচ থেকে উপরে swipe (পরের ভিডিও) |
 | `down` / `previous` / `নিচে` | আঙুল উপর থেকে নিচে swipe (আগের ভিডিও) |
 | `left` / `right` | বাঁ / ডানে swipe |
@@ -20,6 +20,7 @@
 | `youtube search tum hi ho song` | YouTube খুলে search করে প্রথম ভিডিও চালায় |
 | `youtube search arijit singh most viewed` | search করে screen-এ দেখা ভিডিওগুলোর মধ্যে সবচেয়ে বেশি view-ওয়ালা চালায় |
 | `call mim` / `ammi ke call koro` / `call 017...` | contact খুঁজে call করে |
+| `exit app` / `close app` / `ber hon` / `অ্যাপ বন্ধ` | বর্তমান app থেকে Home-এ ফিরে আসে |
 | `back` / `home` / `recents` | Back / Home / Recent apps |
 | `notifications` / `quick settings` | নোটিফিকেশন / Quick settings নামায় |
 | `screenshot` / `lock` | screenshot / screen lock (Android 9+) |

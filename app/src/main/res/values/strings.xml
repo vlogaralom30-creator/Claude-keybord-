@@ -38,7 +38,7 @@
     <string name="pref_bndigits_desc">Use Bengali numerals in Bangla mode</string>
     <string name="pref_height_title">Keyboard height</string>
     <string name="section_tips">Phonetic Guide &amp; Tips</string>
-    <string name="tips_summary">Space চেপে ধরলে keyboard বদলানোর menu আসে। Notepad চাপলে সেভ করা নোট, Tr চাপলে বাংলা ↔ English অনুবাদ, Mic চাপলে Voice Typing, এবং Assistant আইকন চাপলে Voice Assistant ব্যবহার করা যায়। ব্যঞ্জনের পর ব্যঞ্জন লিখলে যুক্তাক্ষর হয় (kt → ক্ত), এবং ‘o’ দিয়ে যুক্তাক্ষর ভাঙা যায়।</string>
+    <string name="tips_summary">Space চেপে ধরলে keyboard বদলানোর menu আসে। নিচে Mic বাটন চাপলে Voice Typing, এবং ?123-এর প্রথম সারিতে Notepad, Tr (অনুবাদ) ও Assistant বাটন পাওয়া যাবে। ব্যঞ্জনের পর ব্যঞ্জন লিখলে যুক্তাক্ষর হয় (kt → ক্ত), এবং ‘o’ দিয়ে যুক্তাক্ষর ভাঙা যায়।</string>
     <string name="notepad_notes_title">Notepad</string>
     <string name="notepad_notes_subtitle">পরে কাজে লাগবে এমন লাইন এখানে সেভ রাখুন।</string>
     <string name="notepad_input_hint">নতুন note লিখুন…</string>

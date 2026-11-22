@@ -34,7 +34,10 @@ object AssistantIcons {
         SPARKLE,
         TIMER,
         KEYBOARD,
-        BACK
+        BACK,
+        MIC,
+        CLOSE,
+        REFRESH
     }
 
     fun drawable(ctx: Context, kind: Kind, color: Int, sizeDp: Int = 20): Drawable {
@@ -256,6 +259,34 @@ object AssistantIcons {
                     path.moveTo(cx - 1f * u, cy - 5.5f * u)
                     path.lineTo(cx - 6.5f * u, cy)
                     path.lineTo(cx - 1f * u, cy + 5.5f * u)
+                    canvas.drawPath(path, strokePaint)
+                }
+
+                Kind.MIC -> {
+                    // Capsule head
+                    rect.set(cx - 3.2f * u, cy - 9.2f * u, cx + 3.2f * u, cy + 1.8f * u)
+                    canvas.drawRoundRect(rect, 3.2f * u, 3.2f * u, strokePaint)
+                    // Cradle arc
+                    rect.set(cx - 6.4f * u, cy - 4.2f * u, cx + 6.4f * u, cy + 5.4f * u)
+                    canvas.drawArc(rect, 0f, 180f, false, strokePaint)
+                    // Stem & base
+                    canvas.drawLine(cx, cy + 5.4f * u, cx, cy + 9.2f * u, strokePaint)
+                    canvas.drawLine(cx - 4.2f * u, cy + 9.2f * u, cx + 4.2f * u, cy + 9.2f * u, strokePaint)
+                }
+
+                Kind.CLOSE -> {
+                    canvas.drawLine(cx - 6f * u, cy - 6f * u, cx + 6f * u, cy + 6f * u, strokePaint)
+                    canvas.drawLine(cx + 6f * u, cy - 6f * u, cx - 6f * u, cy + 6f * u, strokePaint)
+                }
+
+                Kind.REFRESH -> {
+                    rect.set(cx - 7.5f * u, cy - 7.5f * u, cx + 7.5f * u, cy + 7.5f * u)
+                    canvas.drawArc(rect, -45f, 275f, false, strokePaint)
+                    // Arrowhead at ~ -45 deg (top right)
+                    path.reset()
+                    path.moveTo(cx + 2.2f * u, cy - 8.2f * u)
+                    path.lineTo(cx + 6.6f * u, cy - 5.2f * u)
+                    path.lineTo(cx + 3.2f * u, cy - 2.0f * u)
                     canvas.drawPath(path, strokePaint)
                 }
             }

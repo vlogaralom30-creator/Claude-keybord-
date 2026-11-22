@@ -207,7 +207,6 @@ object CommandParser {
             .removeSuffix("টা")
             .removeSuffix("ta")
             .removeSuffix("টার")
-            .removeSuffix("টার")
             .removeSuffix("baje")
             .removeSuffix("বাজে")
             .removeSuffix("মিনিট")
@@ -221,7 +220,6 @@ object CommandParser {
         if (tokens.isEmpty()) return tokens to false
         var end = tokens.size
         var foundSend = false
-        // Handle trailing "send koro" / "send করো"
         if (end >= 2 && tokens[end - 2] in SEND_WORDS && tokens[end - 1] in setOf("koro", "kor", "dao", "করো", "দাও", "দিন")) {
             end -= 2
             foundSend = true
@@ -230,7 +228,6 @@ object CommandParser {
             foundSend = true
         }
         if (!foundSend) return tokens to false
-        // Also drop connector word directly preceding the send phrase ("... and send", "... লিখে পাঠাও" keeps লিখে for type detection? No, only drop "and"/"then"/"tarpor"/"ও")
         if (end > 0 && tokens[end - 1] in setOf("and", "then", "tarpor", "এবং", "তারপর", "আর", "করে")) {
             end -= 1
         }
@@ -287,10 +284,19 @@ object CommandParser {
         fun has(vararg w: String) = w.any { n.contains(" $it ") }
         fun rest(drop: Set<String>) = tokens.filter { it !in drop }.joinToString(" ")
 
-        // ---- 1. Panic stop / Quit / Sleep
+        // ---- 1. Panic stop / Exit current app / Quit assistant / Sleep
         if (has("stop everything", "sob bondho", "shob bondho", "সব বন্ধ", "stop all", "cancel everything")) {
             return Command.PanicStop
         }
+        // বর্তমান app থেকে বের হওয়া (home-এ ফিরে যাওয়া) — "exit"/"quit" assistant-বন্ধ-করার সাথে না গুলিয়ে
+        if (has(
+                "close app", "exit app", "quit app", "leave app",
+                "ber hon", "ber hou", "ber hoye jao", "ber hoye jan", "beriye jao",
+                "app bondho", "app theke ber", "অ্যাপ বন্ধ", "বন্ধ করো অ্যাপ",
+                "বের হও", "বেরিয়ে যাও", "অ্যাপ থেকে বের"
+            )
+        ) return Command.Home
+
         if (has("quit", "exit", "কুইট") ||
             (has("assistant", "bot", "বট") && has("off", "stop", "bondho", "বন্ধ"))
         ) return Command.StopAssistant
@@ -351,7 +357,7 @@ object CommandParser {
         }
         if (has("enter", "submit", "এন্টার")) return Command.Enter
 
-        // Like / reaction
+        // Like / reaction (wow, nice, sundor ... সবই Like)
         if (has(
                 "like", "love", "heart", "nice", "wow", "sundor", "sundar", "darun",
                 "লাইক", "সুন্দর", "দারুণ", "বাহ"
@@ -418,10 +424,9 @@ object CommandParser {
         val hasType = beforeSend.any { it in TYPE_WORDS }
         val hasRecipientMarker = beforeSend.any { it == "ke" || it == "কে" || it == "to" || (it.endsWith("কে") && it.length > 3) }
         if (!hasSend && !hasType && !hasRecipientMarker) {
-            return null // Plain "open imo" / "open whatsapp" falls through to OpenApp
+            return null
         }
 
-        // Clean tokens excluding app range and leading postpositions/open words
         val cleaned = ArrayList<String>()
         for (i in beforeSend.indices) {
             if (i in appStart until appEnd) continue
@@ -431,7 +436,6 @@ object CommandParser {
         }
         if (cleaned.isEmpty()) return null
 
-        // Split contact & text
         val typeIdx = cleaned.indexOfFirst { it in TYPE_WORDS }
         val keIdx = cleaned.indexOfFirst { it == "ke" || it == "কে" || it == "to" }
         val attachedKeIdx = cleaned.indexOfFirst { it.endsWith("কে") && it.length > 3 }
@@ -487,15 +491,8 @@ object CommandParser {
 
             val typeIdx = remaining.indexOfFirst { it in TYPE_WORDS }
             val textTokens: List<String> = when {
-                // "... type <TEXT>" (type comes before text)
-                typeIdx >= 0 && typeIdx < remaining.size - 1 -> {
-                    remaining.subList(typeIdx + 1, remaining.size)
-                }
-                // "<TEXT> likho" (Bangla/Banglish SOV order: type word at end)
-                typeIdx == remaining.size - 1 && typeIdx > 0 -> {
-                    remaining.subList(0, typeIdx)
-                }
-                // No type word, but explicit trailing send: "open claude hi send"
+                typeIdx >= 0 && typeIdx < remaining.size - 1 -> remaining.subList(typeIdx + 1, remaining.size)
+                typeIdx == remaining.size - 1 && typeIdx > 0 -> remaining.subList(0, typeIdx)
                 hasSend -> remaining
                 else -> return null
             }
@@ -506,7 +503,6 @@ object CommandParser {
             return null
         }
 
-        // No app named: ONLY intercept if trailing send word is present AND a type word is present ("type hi and send")
         if (hasSend) {
             val ti = baseTokens.indexOfFirst { it in TYPE_WORDS }
             val textTokens = when {
@@ -529,7 +525,6 @@ object CommandParser {
         val hasFolder = tokens.any { it in FOLDER_WORDS }
         val hasFile = tokens.any { it in FILE_WORDS }
 
-        // Folder: "create folder photos", "folder banao photos", "create folder tour inside photos", "photos er moddhe folder banao tour"
         if (hasFolder && (hasCreate || tokens.any { it in INSIDE_WORDS })) {
             val insideIdx = tokens.indexOfFirst { it in INSIDE_WORDS }
             val folderIdx = tokens.indexOfFirst { it in FOLDER_WORDS }
@@ -540,13 +535,11 @@ object CommandParser {
 
             if (insideIdx >= 0) {
                 if (insideIdx < folderIdx) {
-                    // "photos er moddhe folder banao tour"
                     val left = tokens.subList(0, insideIdx).filter { it !in dropF }
                     val right = tokens.subList(insideIdx + 1, tokens.size).filter { it !in dropF }
                     parent = left.joinToString(" ").trim().takeIf { it.isNotBlank() }
                     name = right.joinToString(" ").trim()
                 } else {
-                    // "create folder tour inside photos"
                     val left = tokens.subList(0, insideIdx).filter { it !in dropF }
                     val right = tokens.subList(insideIdx + 1, tokens.size).filter { it !in dropF }
                     name = left.joinToString(" ").trim()
@@ -560,10 +553,8 @@ object CommandParser {
             }
         }
 
-        // File: "create file notes", "create file notes dot txt", "create file shopping with text milk eggs bread"
         if (hasFile && hasCreate) {
             val dropFile = CREATE_WORDS + FILE_WORDS + setOf("a", "an", "the", "ekta", "একটা")
-            // Find "with text" / "with content" / "lekha"
             var splitIdx = -1
             var contentStart = -1
             for (i in tokens.indices) {
@@ -616,7 +607,6 @@ object CommandParser {
     private fun parsePackI(n: String, tokens: List<String>): Command? {
         fun has(vararg w: String) = w.any { n.contains(" $it ") }
 
-        // 1. Open system settings (wifi / bluetooth / display / sound)
         if (tokens.any { it in SETTINGS_WORDS }) {
             when {
                 has("wifi", "wi fi", "wi-fi", "ওয়াইফাই", "ওয়াই ফাই") -> return Command.OpenSystemSettings(SettingsTarget.WIFI)
@@ -626,7 +616,6 @@ object CommandParser {
             }
         }
 
-        // 2. Take photo / Open camera
         if (tokens.any { it in PHOTO_WORDS } && tokens.any { it in TAKE_WORDS }) {
             return Command.TakePhoto
         }
@@ -634,17 +623,14 @@ object CommandParser {
             return Command.OpenCamera
         }
 
-        // 3. Set alarm
         if (tokens.any { it in ALARM_WORDS }) {
             parseAlarm(tokens)?.let { return it }
         }
 
-        // 4. Set timer
         if (tokens.any { it in TIMER_WORDS }) {
             parseTimer(tokens)?.let { return it }
         }
 
-        // 5. Navigate
         for (phrase in NAV_PHRASES) {
             val idx = n.indexOf(" $phrase ")
             if (idx >= 0) {
@@ -658,17 +644,13 @@ object CommandParser {
             if (place.isNotBlank()) return Command.Navigate(place)
         }
 
-        // 6. Google / Web search (keep youtube separate)
         if (tokens.any { it in GOOGLE_WORDS } && tokens.any { it in SEARCH_WORDS }) {
             val drop = GOOGLE_WORDS + SEARCH_WORDS + FILLERS + setOf("e", "te", "এ", "তে", "about")
             val q = tokens.filter { it !in drop }.joinToString(" ").trim()
             if (q.isNotBlank()) return Command.WebSearch(q)
         }
 
-        // 7. Save note (keyboard Notes.kt)
         if (tokens.any { it in NOTE_WORDS } && tokens.any { it in SAVE_NOTE_WORDS }) {
-            val idx = tokens.indexOfFirst { it in NOTE_WORDS || it in SAVE_NOTE_WORDS }
-            // Find last anchor among save/note tokens so "save note buy milk" or "note likho buy milk" leaves "buy milk"
             var anchor = -1
             for (i in tokens.indices) {
                 if (tokens[i] in NOTE_WORDS || tokens[i] in SAVE_NOTE_WORDS || tokens[i] in setOf("koro", "kor", "করো", "দাও", "dao")) {
@@ -685,19 +667,16 @@ object CommandParser {
             if (noteText.isNotBlank()) return Command.SaveNote(noteText)
         }
 
-        // 8. Write email (never auto-send)
         if (tokens.any { it in EMAIL_WORDS } && (tokens.any { it in TYPE_WORDS } || tokens.any { it in SEND_WORDS } || tokens.contains("to"))) {
             parseWriteEmail(tokens)?.let { return it }
         }
 
-        // 9. Write SMS (never auto-send)
         if (tokens.any { it == "sms" || it == "এসএমএস" } &&
             (tokens.any { it in TYPE_WORDS } || tokens.any { it in SEND_WORDS } || tokens.contains("to") || tokens.size >= 3)
         ) {
             parseWriteSms(tokens)?.let { return it }
         }
 
-        // 10. Play song (only if NOT youtube!)
         val isYt = has("youtube", "you tube", "yt", "ইউটিউব", "ইউটিউবে", "iutub")
         if (!isYt && tokens.any { it in SONG_WORDS } && tokens.any { it in PLAY_WORDS }) {
             val drop = SONG_WORDS + PLAY_WORDS + FILLERS + setOf("a", "the", "ekta", "একটা")
@@ -765,7 +744,6 @@ object CommandParser {
             }
         }
         if (!foundUnit && lastNum != null && lastNum > 0) {
-            // Default to minutes when user says "set timer 5" / "5 timer"
             totalSeconds = lastNum * 60
         }
         return if (totalSeconds > 0) Command.SetTimer(totalSeconds) else null

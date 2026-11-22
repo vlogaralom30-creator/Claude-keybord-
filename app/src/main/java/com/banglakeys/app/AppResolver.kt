@@ -18,6 +18,36 @@ object AppResolver {
         listOf("play store", "playstore", "প্লে স্টোর") to listOf("com.android.vending")
     ) + AppFlows.all.map { it.names to it.packages }
 
+    // "reel", "shorts", "video" ইত্যাদি একাধিক app হতে পারে এমন শব্দ — এগুলো শুনলে
+    // আন্দাজ করে একটা app খুলে ফেলার বদলে, কোনটা চান তা স্পষ্ট করে জিজ্ঞাসা করা হয়।
+    private val AMBIGUOUS: Map<String, List<String>> = mapOf(
+        "reel" to listOf("TikTok", "Instagram Reels", "Facebook Reels"),
+        "reels" to listOf("TikTok", "Instagram Reels", "Facebook Reels"),
+        "short" to listOf("YouTube Shorts", "Instagram Reels", "TikTok"),
+        "shorts" to listOf("YouTube Shorts", "Instagram Reels", "TikTok"),
+        "video" to listOf("YouTube", "TikTok", "Facebook"),
+        "videos" to listOf("YouTube", "TikTok", "Facebook"),
+        "রিল" to listOf("TikTok", "Instagram Reels", "Facebook Reels"),
+        "ভিডিও" to listOf("YouTube", "TikTok", "Facebook"),
+    )
+
+    /**
+     * [spoken] যদি একটা নির্দিষ্ট app না বুঝিয়ে একাধিক app হতে পারে এমন ছোট শব্দ হয়
+     * (যেমন শুধু "reel" বা "shorts"), তাহলে স্পষ্ট জিজ্ঞাসা লেখা ফেরত দেয়; নাহলে null।
+     * null মানে [launchIntent] দিয়ে সরাসরি app খোঁজা নিরাপদ।
+     */
+    fun ambiguousPrompt(spoken: String): String? {
+        val q = spoken.trim().lowercase()
+        val options = AMBIGUOUS[q] ?: return null
+        return "\"$spoken\" বললে কোনটা বোঝাচ্ছেন — ${options.joinToString(" / ")}? নির্দিষ্ট নাম বলুন।"
+    }
+
+    fun isKnownAppName(spoken: String): Boolean {
+        val q = spoken.trim().lowercase()
+        if (q.isEmpty()) return false
+        return KNOWN.any { (names, _) -> names.any { q == it || q.contains(it) } }
+    }
+
     fun launchIntent(ctx: Context, spoken: String): Intent? {
         val pm = ctx.packageManager
         val q = spoken.trim().lowercase()
