@@ -16,7 +16,7 @@
     <string name="btn_select_keyboard">২. Keyboard বেছে নিন</string>
     <string name="tools_section_title">Assistant &amp; Notepad Tools</string>
     <string name="btn_open_notepad">Notepad ও Clipboard Memory</string>
-    <string name="btn_open_assistant">BanglaKeys Assistant (🤖)</string>
+    <string name="btn_open_assistant">BanglaKeys Assistant</string>
     <string name="notepad_card_desc">ভয়েস কমান্ড অ্যাসিস্ট্যান্ট চালু করুন অথবা সেভ করা snippet ও সাম্প্রতিক clipboard history পরিচালনা করুন।</string>
     <string name="section_test">Keyboard &amp; Test করুন</string>
     <string name="show_preview_keyboard">কিবোর্ড দেখুন</string>
@@ -38,7 +38,7 @@
     <string name="pref_bndigits_desc">Use Bengali numerals in Bangla mode</string>
     <string name="pref_height_title">Keyboard height</string>
     <string name="section_tips">Phonetic Guide &amp; Tips</string>
-    <string name="tips_summary">Space চেপে ধরলে keyboard বদলানোর menu আসে। 📝 চাপলে Notepad panel, Tr চাপলে বাংলা ↔ English অনুবাদ, 🎤 চাপলে Voice Typing, ও 🤖 চাপলে Voice Assistant ব্যবহার করা যায়। ব্যঞ্জনের পর ব্যঞ্জন লিখলে যুক্তাক্ষর হয় (kt → ক্ত), এবং ‘o’ দিয়ে যুক্তাক্ষর ভাঙা যায়।</string>
+    <string name="tips_summary">Space চেপে ধরলে keyboard বদলানোর menu আসে। Notepad চাপলে সেভ করা নোট, Tr চাপলে বাংলা ↔ English অনুবাদ, Mic চাপলে Voice Typing, এবং Assistant আইকন চাপলে Voice Assistant ব্যবহার করা যায়। ব্যঞ্জনের পর ব্যঞ্জন লিখলে যুক্তাক্ষর হয় (kt → ক্ত), এবং ‘o’ দিয়ে যুক্তাক্ষর ভাঙা যায়।</string>
     <string name="notepad_notes_title">Notepad</string>
     <string name="notepad_notes_subtitle">পরে কাজে লাগবে এমন লাইন এখানে সেভ রাখুন।</string>
     <string name="notepad_input_hint">নতুন note লিখুন…</string>

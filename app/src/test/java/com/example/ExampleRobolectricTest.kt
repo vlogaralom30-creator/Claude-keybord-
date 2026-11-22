@@ -236,4 +236,34 @@ class ExampleRobolectricTest {
     AssistantPrefs.setAppFlowTimeoutSec(context, 0)
     assertEquals(2, AssistantPrefs.appFlowTimeoutSec(context))
   }
+
+  @Test
+  fun `assistant activity and vector icons render without errors`() {
+    val activity = org.robolectric.Robolectric.buildActivity(com.banglakeys.app.AssistantActivity::class.java)
+      .create()
+      .start()
+      .resume()
+      .get()
+    assertNotNull(activity)
+
+    val kv = com.banglakeys.app.KeyboardView(activity)
+    kv.setLayout(Layouts.phonetic(numberRow = false, bnDigits = true), "বাংলা", 1f)
+    kv.measure(
+      android.view.View.MeasureSpec.makeMeasureSpec(1080, android.view.View.MeasureSpec.EXACTLY),
+      android.view.View.MeasureSpec.makeMeasureSpec(800, android.view.View.MeasureSpec.AT_MOST)
+    )
+    kv.layout(0, 0, kv.measuredWidth, kv.measuredHeight)
+    val bmp = android.graphics.Bitmap.createBitmap(
+      kv.measuredWidth.coerceAtLeast(1),
+      kv.measuredHeight.coerceAtLeast(1),
+      android.graphics.Bitmap.Config.ARGB_8888
+    )
+    kv.draw(android.graphics.Canvas(bmp))
+
+    for (kind in com.banglakeys.app.AssistantIcons.Kind.values()) {
+      val d = com.banglakeys.app.AssistantIcons.drawable(activity, kind, 0xFF00796B.toInt(), 24)
+      d.setBounds(0, 0, d.intrinsicWidth, d.intrinsicHeight)
+      d.draw(android.graphics.Canvas(bmp))
+    }
+  }
 }

@@ -27,7 +27,26 @@ jobs:
           gradle-version: '9.3.1'
 
       - name: Build release APK
-        run: gradle :app:assembleRelease --no-daemon --stacktrace
+        env:
+          KEYSTORE_PATH: ${{ github.workspace }}/my-upload-key.jks
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -z "$STORE_PASSWORD" ]; then
+            export STORE_PASSWORD="android"
+          fi
+          if [ -z "$KEY_PASSWORD" ]; then
+            export KEY_PASSWORD="android"
+          fi
+          if [ ! -f "$KEYSTORE_PATH" ]; then
+            keytool -genkeypair -noprompt \
+              -keystore "$KEYSTORE_PATH" \
+              -alias upload \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass "$STORE_PASSWORD" -keypass "$KEY_PASSWORD" \
+              -dname "CN=BanglaKeys, OU=Mobile, O=BanglaKeys, L=Dhaka, S=Dhaka, C=BD"
+          fi
+          gradle :app:assembleRelease --no-daemon --stacktrace
 
       - name: Rename APK
         run: |

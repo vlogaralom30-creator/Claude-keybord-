@@ -351,7 +351,7 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
                   onVoice = {
                     Toast.makeText(
                       context,
-                      "সিস্টেম কিবোর্ড হিসেবে সক্রিয় করে যেকোনো অ্যাপে 🎤 ভয়েস টাইপিং ব্যবহার করুন",
+                      "সিস্টেম কিবোর্ড হিসেবে সক্রিয় করে যেকোনো অ্যাপে ভয়েস টাইপিং ব্যবহার করুন",
                       Toast.LENGTH_SHORT
                     ).show()
                   },

@@ -151,7 +151,7 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
         if ((info.imeOptions and EditorInfo.IME_FLAG_NO_ENTER_ACTION) != 0) return null
         return when (info.imeOptions and EditorInfo.IME_MASK_ACTION) {
             EditorInfo.IME_ACTION_GO -> "Go"
-            EditorInfo.IME_ACTION_SEARCH -> "🔍"
+            EditorInfo.IME_ACTION_SEARCH -> "SEARCH"
             EditorInfo.IME_ACTION_SEND -> "Send"
             EditorInfo.IME_ACTION_NEXT -> "Next"
             EditorInfo.IME_ACTION_DONE -> "Done"
@@ -299,7 +299,7 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
     override fun onAssistant() {
         if (AssistantListenerService.running) {
             AssistantListenerService.stop(this)
-            android.widget.Toast.makeText(this, "🤖 Assistant বন্ধ", android.widget.Toast.LENGTH_SHORT).show()
+            android.widget.Toast.makeText(this, "Assistant বন্ধ", android.widget.Toast.LENGTH_SHORT).show()
         } else if (!AssistantSetup.isReady(this)) {
             val i = Intent(this, AssistantActivity::class.java)
             i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -307,7 +307,7 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
         } else {
             AssistantListenerService.start(this)
             android.widget.Toast.makeText(
-                this, "🤖 Assistant চালু — \"Hey Bot\" বলুন", android.widget.Toast.LENGTH_SHORT
+                this, "Assistant চালু — \"Hey Bot\" বলুন", android.widget.Toast.LENGTH_SHORT
             ).show()
         }
     }
@@ -327,14 +327,14 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
             commitComposing()
             AssistantListenerService.setPaused(true)
             kv?.setSuggestions(emptyList())
-            kv?.setComposing("🎤 শুনছি…")
+            kv?.setComposing("শুনছি…")
             voice.start(bangla)
         }
     }
 
     override fun onVoicePartial(text: String) {
         kv?.setSuggestions(emptyList())
-        kv?.setComposing("🎤 $text")
+        kv?.setComposing("শুনছি: $text")
     }
 
     override fun onVoiceResult(text: String) {

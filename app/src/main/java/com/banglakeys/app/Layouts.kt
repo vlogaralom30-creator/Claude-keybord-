@@ -65,15 +65,15 @@ object Layouts {
         rows.add(
             listOf(
                 Key("?123", KeyType.SYMBOLS, 1.5f),
-                Key("🌐", KeyType.LANG, 1f),
+                Key("LANG", KeyType.LANG, 1f),
                 Key(","),
                 Key(" ", KeyType.SPACE, 2f),
                 if (bangla) Key("।", alt = ".") else Key("."),
-                Key("📝", KeyType.NOTEPAD, 1f),
+                Key("NOTE", KeyType.NOTEPAD, 1f),
                 Key("Tr", KeyType.TRANSLATE, 1f),
-                Key("🎤", KeyType.MIC, 1f),
-                Key("🤖", KeyType.ASSISTANT, 1f),
-                Key("⏎", KeyType.ENTER, 1.5f),
+                Key("MIC", KeyType.MIC, 1f),
+                Key("BOT", KeyType.ASSISTANT, 1f),
+                Key("ENTER", KeyType.ENTER, 1.5f),
             )
         )
         return rows

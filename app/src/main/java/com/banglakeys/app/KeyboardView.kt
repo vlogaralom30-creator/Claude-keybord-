@@ -329,8 +329,11 @@ class KeyboardView(context: Context) : View(context) {
             KeyType.DELETE -> drawBackspaceIcon(c, cx, cy, fg)
             KeyType.ENTER -> {
                 val el = enterLabel
-                if (el == null) drawEnterIcon(c, cx, cy, fg)
-                else drawCentered(c, el, cx, cy, rh * 0.32f, fg)
+                when {
+                    el == null -> drawEnterIcon(c, cx, cy, fg)
+                    el == "SEARCH" -> drawSearchIcon(c, cx, cy, fg)
+                    else -> drawCentered(c, el, cx, cy, rh * 0.32f, fg)
+                }
             }
             KeyType.SPACE -> drawCentered(c, spaceLabel, cx, cy, rh * 0.30f, hintC)
             KeyType.CHAR -> {
@@ -343,7 +346,10 @@ class KeyboardView(context: Context) : View(context) {
                     c.drawText(alt, b.rect.right - 5f * d, b.rect.top + rh * 0.24f + 3f * d, textPaint)
                 }
             }
-            KeyType.LANG -> drawCentered(c, k.label, cx, cy, rh * 0.36f, textC)
+            KeyType.LANG -> drawGlobeIcon(c, cx, cy, textC)
+            KeyType.NOTEPAD -> drawNotepadIcon(c, cx, cy, textC)
+            KeyType.MIC -> drawMicIcon(c, cx, cy, textC)
+            KeyType.ASSISTANT -> drawAssistantIcon(c, cx, cy, accentC)
             else -> drawCentered(c, k.label, cx, cy, rh * 0.30f, textC)
         }
     }
@@ -406,6 +412,69 @@ class KeyboardView(context: Context) : View(context) {
         c.drawPath(path, iconPaint)
         c.drawLine(cx - s * 0.9f, cy + s * 0.2f, cx - s * 0.25f, cy - s * 0.4f, iconPaint)
         c.drawLine(cx - s * 0.9f, cy + s * 0.2f, cx - s * 0.25f, cy + s * 0.8f, iconPaint)
+    }
+
+    private fun drawGlobeIcon(c: Canvas, cx: Float, cy: Float, color: Int) {
+        val r = 8.5f * d
+        iconPaint.color = color
+        iconPaint.strokeWidth = 1.6f * d
+        iconPaint.style = Paint.Style.STROKE
+        c.drawCircle(cx, cy, r, iconPaint)
+        c.drawLine(cx - r, cy, cx + r, cy, iconPaint)
+        c.drawOval(cx - r * 0.46f, cy - r, cx + r * 0.46f, cy + r, iconPaint)
+    }
+
+    private fun drawNotepadIcon(c: Canvas, cx: Float, cy: Float, color: Int) {
+        val w = 6.8f * d
+        val h = 8.4f * d
+        iconPaint.color = color
+        iconPaint.strokeWidth = 1.6f * d
+        iconPaint.style = Paint.Style.STROKE
+        c.drawRoundRect(cx - w, cy - h, cx + w, cy + h, 2f * d, 2f * d, iconPaint)
+        c.drawLine(cx - w * 0.55f, cy - h * 0.35f, cx + w * 0.55f, cy - h * 0.35f, iconPaint)
+        c.drawLine(cx - w * 0.55f, cy, cx + w * 0.55f, cy, iconPaint)
+        c.drawLine(cx - w * 0.55f, cy + h * 0.35f, cx + w * 0.2f, cy + h * 0.35f, iconPaint)
+    }
+
+    private fun drawMicIcon(c: Canvas, cx: Float, cy: Float, color: Int) {
+        val s = 8.5f * d
+        iconPaint.color = color
+        iconPaint.strokeWidth = 1.65f * d
+        iconPaint.style = Paint.Style.STROKE
+        // Capsule mic head
+        c.drawRoundRect(cx - s * 0.34f, cy - s * 0.95f, cx + s * 0.34f, cy + s * 0.2f, s * 0.34f, s * 0.34f, iconPaint)
+        // Cradle arc
+        c.drawArc(cx - s * 0.68f, cy - s * 0.45f, cx + s * 0.68f, cy + s * 0.55f, 0f, 180f, false, iconPaint)
+        // Stem & base
+        c.drawLine(cx, cy + s * 0.55f, cx, cy + s * 0.95f, iconPaint)
+        c.drawLine(cx - s * 0.45f, cy + s * 0.95f, cx + s * 0.45f, cy + s * 0.95f, iconPaint)
+    }
+
+    private fun drawAssistantIcon(c: Canvas, cx: Float, cy: Float, color: Int) {
+        val s = 8.5f * d
+        iconPaint.color = color
+        iconPaint.strokeWidth = 1.7f * d
+        iconPaint.style = Paint.Style.STROKE
+        // Antenna
+        c.drawLine(cx, cy - s * 1.0f, cx, cy - s * 0.68f, iconPaint)
+        // Bot head
+        c.drawRoundRect(cx - s * 0.9f, cy - s * 0.68f, cx + s * 0.9f, cy + s * 0.78f, 3.2f * d, 3.2f * d, iconPaint)
+        // Eyes + voice bar
+        iconPaint.style = Paint.Style.FILL
+        c.drawCircle(cx, cy - s * 1.0f, 1.3f * d, iconPaint)
+        c.drawCircle(cx - s * 0.36f, cy - s * 0.08f, 1.35f * d, iconPaint)
+        c.drawCircle(cx + s * 0.36f, cy - s * 0.08f, 1.35f * d, iconPaint)
+        iconPaint.style = Paint.Style.STROKE
+        c.drawLine(cx - s * 0.32f, cy + s * 0.38f, cx + s * 0.32f, cy + s * 0.38f, iconPaint)
+    }
+
+    private fun drawSearchIcon(c: Canvas, cx: Float, cy: Float, color: Int) {
+        val r = 5.8f * d
+        iconPaint.color = color
+        iconPaint.strokeWidth = 2f * d
+        iconPaint.style = Paint.Style.STROKE
+        c.drawCircle(cx - 1.5f * d, cy - 1.5f * d, r, iconPaint)
+        c.drawLine(cx + 2.6f * d, cy + 2.6f * d, cx + 7.2f * d, cy + 7.2f * d, iconPaint)
     }
 
     private fun drawPopups(c: Canvas) {
