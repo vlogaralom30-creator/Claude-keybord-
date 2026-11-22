@@ -12,11 +12,13 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.text.InputType
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.Window
 import android.view.WindowInsets
+import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -28,7 +30,8 @@ import com.example.MainActivity
 
 /**
  * Setup + control screen (XML layout ছাড়া, pure Views + code-built vector icons)।
- * এখান থেকে: Accessibility, Runtime Permissions, Overlay, SAF storage folder, Controls ও Quick Test।
+ * এখান থেকে: Accessibility, Permissions, Overlay HUD, Continuous/Quiet PTT মোড,
+ * SAF storage folder, Confirmation নিয়ন্ত্রণ, Gemini AI Fallback key এবং Quick Test।
  */
 class AssistantActivity : Activity() {
 
@@ -91,11 +94,21 @@ class AssistantActivity : Activity() {
     private lateinit var btnStorageIcon: ImageView
     private lateinit var swOverlayHud: Switch
     private lateinit var swOverlaySub: TextView
+    private lateinit var swAdSkip: Switch
+    private lateinit var swAdSkipSub: TextView
+    private lateinit var swAdSkipGames: Switch
+    private lateinit var adSkipBadge: TextView
     private lateinit var swConfirmAppCall: Switch
     private lateinit var swConfirmHumanSend: Switch
     private lateinit var swConfirmAiChatSend: Switch
     private lateinit var timeoutBadge: TextView
     private lateinit var timeoutSeek: SeekBar
+
+    // Gemini AI fallback controls
+    private lateinit var geminiStatusBadge: TextView
+    private lateinit var geminiSubText: TextView
+    private lateinit var geminiInput: EditText
+    private lateinit var btnClearGemini: LinearLayout
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
@@ -211,7 +224,7 @@ class AssistantActivity : Activity() {
                 setTextColor(Color.WHITE)
             })
             addView(TextView(this@AssistantActivity).apply {
-                text = "ভয়েস কমান্ড ও অ্যাসিস্ট্যান্ট সেটআপ"
+                text = "ভয়েস কমান্ড, লাইভ ওভারলে ও Gemini ফলব্যাক"
                 textSize = 12.5f
                 setTextColor(0xDEFFFFFF.toInt())
             })
@@ -451,7 +464,6 @@ class AssistantActivity : Activity() {
             onAction = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
         )
 
-        // Android 13+ Restricted setting helper link
         val restrictedHelper = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -541,7 +553,6 @@ class AssistantActivity : Activity() {
         })
         controlsCard.addView(controlsHeader)
 
-        // Storage folder selector box
         val folderBox = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(12), dp(12), dp(12), dp(12))
@@ -582,12 +593,11 @@ class AssistantActivity : Activity() {
         folderBox.addView(folderBtnRow)
         controlsCard.addView(folderBox)
 
-        // Switches
         swOverlayHud = addSwitchRow(
             parent = controlsCard,
             iconKind = AssistantIcons.Kind.BOT,
-            title = "Live Command Overlay Pill",
-            subtitle = "স্ক্রিনের উপরে লাইভ শোনা কথা, কমান্ড ও হ্যাঁ/না বাটন দেখাবে",
+            title = "Side-Edge Command Overlay",
+            subtitle = "স্ক্রিনের পাশে ছোট ট্যাব হিসেবে থাকবে — টেনে বাম/ডানে সরানো যাবে",
             initial = AssistantPrefs.overlayHudEnabled(this),
             bindSubtitle = { swOverlaySub = it }
         ) { checked ->
@@ -595,6 +605,34 @@ class AssistantActivity : Activity() {
             AssistantListenerService.notifyConfigChanged(this)
             refresh()
         }
+
+        val resetOverlayBtn = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(10), dp(6), dp(12), dp(6))
+            background = roundBg(pal.cardAlt, 10)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { marginStart = dp(32); topMargin = dp(2); bottomMargin = dp(4) }
+            rippleSelectable(this)
+            setOnClickListener {
+                AssistantPrefs.resetOverlayPosition(this@AssistantActivity)
+                AssistantListenerService.notifyConfigChanged(this@AssistantActivity)
+                Toast.makeText(this@AssistantActivity, "সাইড ট্যাবের পজিশন রিসেট হয়েছে", Toast.LENGTH_SHORT).show()
+            }
+            addView(ImageView(this@AssistantActivity).apply {
+                setImageDrawable(AssistantIcons.drawable(this@AssistantActivity, AssistantIcons.Kind.REFRESH, pal.primary, 14))
+                layoutParams = LinearLayout.LayoutParams(dp(14), dp(14)).apply { marginEnd = dp(6) }
+            })
+            addView(TextView(this@AssistantActivity).apply {
+                text = "সাইড ট্যাব পজিশন রিসেট করুন"
+                textSize = 12f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(pal.primary)
+            })
+        }
+        controlsCard.addView(resetOverlayBtn)
 
         controlsCard.addView(dividerView())
         swConfirmAppCall = addSwitchRow(
@@ -625,7 +663,6 @@ class AssistantActivity : Activity() {
 
         controlsCard.addView(dividerView())
 
-        // Timeout SeekBar section
         val timeoutHeader = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -671,7 +708,211 @@ class AssistantActivity : Activity() {
         controlsCard.addView(timeoutSeek)
         root.addView(controlsCard)
 
-        // ------------------------------------------------------------ 5. Back to Keyboard & Settings Button
+        // ------------------------------------------------------------ 4b. Auto Ad Skipper Card
+        val adCard = createCard().apply {
+            (layoutParams as LinearLayout.LayoutParams).topMargin = dp(14)
+        }
+        val adHeader = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(8) }
+        }
+        adHeader.addView(ImageView(this).apply {
+            setImageDrawable(AssistantIcons.drawable(this@AssistantActivity, AssistantIcons.Kind.SKIP_FORWARD, pal.primary, 20))
+            layoutParams = LinearLayout.LayoutParams(dp(20), dp(20)).apply { marginEnd = dp(8) }
+        })
+        adHeader.addView(TextView(this).apply {
+            text = "Auto Ad Skipper (নিরাপদ)"
+            textSize = 15.5f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(pal.text)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        adSkipBadge = TextView(this).apply {
+            textSize = 11.5f
+            setTypeface(null, Typeface.BOLD)
+            setPadding(dp(10), dp(4), dp(10), dp(4))
+        }
+        adHeader.addView(adSkipBadge)
+        adCard.addView(adHeader)
+
+        swAdSkip = addSwitchRow(
+            parent = adCard,
+            iconKind = AssistantIcons.Kind.SKIP_FORWARD,
+            title = "YouTube ও Ads অটো স্কিপ",
+            subtitle = "YouTube ভিডিও বিজ্ঞাপনের Skip বাটন আসলে স্বয়ংক্রিয়ভাবে ক্লিক করবে",
+            initial = AssistantPrefs.adSkipEnabled(this),
+            bindSubtitle = { swAdSkipSub = it }
+        ) { checked ->
+            AssistantPrefs.setAdSkipEnabled(this, checked)
+            refresh()
+        }
+
+        adCard.addView(dividerView())
+        swAdSkipGames = addSwitchRow(
+            parent = adCard,
+            iconKind = AssistantIcons.Kind.OVERLAY,
+            title = "গেম ও অ্যাপ Ad Overlay (×)",
+            subtitle = "শুধু যাচাইকৃত Ad-SDK বিজ্ঞাপনের × / Skip Ad বাটন বন্ধ করবে",
+            initial = AssistantPrefs.adSkipGamesEnabled(this)
+        ) { checked ->
+            AssistantPrefs.setAdSkipGamesEnabled(this, checked)
+            refresh()
+        }
+
+        val adGuardNote = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+            background = roundBg(pal.cardAlt, 10)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(8) }
+            addView(ImageView(this@AssistantActivity).apply {
+                setImageDrawable(AssistantIcons.drawable(this@AssistantActivity, AssistantIcons.Kind.SHIELD, pal.ok, 16))
+                layoutParams = LinearLayout.LayoutParams(dp(16), dp(16)).apply { marginEnd = dp(8) }
+            })
+            addView(TextView(this@AssistantActivity).apply {
+                text = "রেজিস্ট্রেশন, লগইন, OTP বা ফর্মের ‘Skip’ বাটনে কখনোই ক্লিক করবে না।"
+                textSize = 12f
+                setTextColor(pal.subText)
+            })
+        }
+        adCard.addView(adGuardNote)
+        root.addView(adCard)
+
+        // ------------------------------------------------------------ 5. Gemini AI Fallback Key Card
+        val geminiCard = createCard().apply {
+            (layoutParams as LinearLayout.LayoutParams).topMargin = dp(14)
+        }
+        val geminiHeader = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(8) }
+        }
+        geminiHeader.addView(ImageView(this).apply {
+            setImageDrawable(AssistantIcons.drawable(this@AssistantActivity, AssistantIcons.Kind.SPARKLE, pal.primary, 20))
+            layoutParams = LinearLayout.LayoutParams(dp(20), dp(20)).apply { marginEnd = dp(8) }
+        })
+        geminiHeader.addView(TextView(this).apply {
+            text = "Gemini AI ফলব্যাক (ঐচ্ছিক)"
+            textSize = 15.5f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(pal.text)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        geminiStatusBadge = TextView(this).apply {
+            textSize = 11.5f
+            setTypeface(null, Typeface.BOLD)
+            setPadding(dp(10), dp(4), dp(10), dp(4))
+        }
+        geminiHeader.addView(geminiStatusBadge)
+        geminiCard.addView(geminiHeader)
+
+        geminiSubText = TextView(this).apply {
+            textSize = 12.5f
+            setTextColor(pal.subText)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(10) }
+        }
+        geminiCard.addView(geminiSubText)
+
+        geminiInput = EditText(this).apply {
+            hint = "AIza... (Google AI Studio Gemini API Key)"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            setTextColor(pal.text)
+            setHintTextColor(pal.subText)
+            setText(GeminiConfig.getUserKey(this@AssistantActivity))
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            background = roundBg(pal.cardAlt, 12, pal.border, 1)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(10) }
+        }
+        geminiCard.addView(geminiInput)
+
+        val geminiBtnRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+
+        val btnSaveGemini = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            minimumHeight = dp(48)
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+            background = roundBg(pal.primary, 12)
+            rippleSelectable(this)
+            setOnClickListener {
+                val entered = geminiInput.text.toString().trim()
+                GeminiConfig.setKey(this@AssistantActivity, entered)
+                refresh()
+                val msg = when {
+                    entered.isEmpty() -> "কাস্টম Key মুছে ফেলা হয়েছে"
+                    !GeminiConfig.looksLikeStandardGeminiKey(entered) ->
+                        "সেভ হয়েছে — তবে Google AI Studio Gemini API key সাধারণত 'AIza' দিয়ে শুরু হয়"
+                    else -> "Gemini API key সেভ হয়েছে (শুধু এই ফোনেই থাকবে)"
+                }
+                Toast.makeText(this@AssistantActivity, msg, Toast.LENGTH_LONG).show()
+            }
+            addView(ImageView(this@AssistantActivity).apply {
+                setImageDrawable(AssistantIcons.drawable(this@AssistantActivity, AssistantIcons.Kind.CHECK_CIRCLE, pal.onPrimary, 18))
+                layoutParams = LinearLayout.LayoutParams(dp(18), dp(18)).apply { marginEnd = dp(6) }
+            })
+            addView(TextView(this@AssistantActivity).apply {
+                text = "Gemini Key সেভ করুন"
+                textSize = 13.5f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(pal.onPrimary)
+            })
+        }
+        geminiBtnRow.addView(btnSaveGemini, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+
+        btnClearGemini = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            minimumHeight = dp(48)
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            background = roundBg(pal.dangerSoft, 12, pal.danger, 1)
+            rippleSelectable(this)
+            setOnClickListener {
+                geminiInput.setText("")
+                GeminiConfig.setKey(this@AssistantActivity, "")
+                refresh()
+                Toast.makeText(this@AssistantActivity, "কাস্টম Key মুছে ফেলা হয়েছে", Toast.LENGTH_SHORT).show()
+            }
+            addView(ImageView(this@AssistantActivity).apply {
+                setImageDrawable(AssistantIcons.drawable(this@AssistantActivity, AssistantIcons.Kind.CLOSE, pal.danger, 16))
+                layoutParams = LinearLayout.LayoutParams(dp(16), dp(16)).apply { marginEnd = dp(6) }
+            })
+            addView(TextView(this@AssistantActivity).apply {
+                text = "মুছুন"
+                textSize = 13f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(pal.danger)
+            })
+        }
+        geminiBtnRow.addView(btnClearGemini, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { marginStart = dp(8) })
+        geminiCard.addView(geminiBtnRow)
+        root.addView(geminiCard)
+
+        // ------------------------------------------------------------ 6. Back to Keyboard & Settings Button
         val returnBtn = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
@@ -945,7 +1186,6 @@ class AssistantActivity : Activity() {
         val mode = AssistantPrefs.listeningMode(this)
         val isPtt = mode == ListeningMode.PUSH_TO_TALK
 
-        // Hero status pill
         when {
             listening && isPtt -> {
                 heroStatusIcon.setImageDrawable(AssistantIcons.drawable(this, AssistantIcons.Kind.BOT, 0xFF86EFAC.toInt(), 16))
@@ -965,7 +1205,6 @@ class AssistantActivity : Activity() {
             }
         }
 
-        // Primary start/stop button
         if (listening) {
             btnServiceContainer.background = roundBg(pal.dangerSoft, 14, pal.danger, 1)
             btnServiceIcon.setImageDrawable(AssistantIcons.drawable(this, AssistantIcons.Kind.STOP, pal.danger, 18))
@@ -980,7 +1219,6 @@ class AssistantActivity : Activity() {
 
         btnLangLabel.text = if (AssistantSetup.isBangla(this)) "বাংলা (bn-BD)" else "English (en-US)"
 
-        // Listening Mode pill states
         if (!isPtt) {
             btnModeContinuous.background = roundBg(pal.primarySoft, 14, pal.primary, 1)
             btnModeContinuousIcon.setImageDrawable(AssistantIcons.drawable(this, AssistantIcons.Kind.MIC, pal.primary, 18))
@@ -1000,15 +1238,14 @@ class AssistantActivity : Activity() {
             btnModePttIcon.setImageDrawable(AssistantIcons.drawable(this, AssistantIcons.Kind.BOT, pal.primary, 18))
             btnModePttLabel.setTextColor(pal.primary)
 
-            modeHintText.text = "নিঃশব্দ মোড — কোনো বিরক্তিকর বিপ নেই; উপরের ভাসমান পিল বা BOT কী ট্যাপ করে বলুন"
+            modeHintText.text = "নিঃশব্দ মোড — কোনো বিরক্তিকর বিপ নেই; পাশের ভাসমান ট্যাব বা BOT কী ট্যাপ করে বলুন"
         }
 
-        // Checklist rows
         applyStatusIcon(rowA11y.iconView, a11yOn)
         rowA11y.subtitleView.text = when {
             a11yOn && a11yConnected -> "চালু ও সংযুক্ত (কাজের জন্য প্রস্তুত)"
             a11yOn -> "চালু আছে (সংযুক্ত নয় — পুনরায় টগল করতে পারেন)"
-            else -> "ভয়েস দিয়ে scroll, click ও টাইপ করতে চালু করুন"
+            else -> "ভয়েস কন্ট্রোল ও Auto Ad Skipper-এর জন্য চালু করুন"
         }
 
         val permsOk = micOk && contactsOk && callOk
@@ -1019,8 +1256,8 @@ class AssistantActivity : Activity() {
 
         applyStatusIcon(rowOverlay.iconView, overlayOk)
         rowOverlay.subtitleView.text =
-            if (overlayOk) "অনুমোদিত (ব্যাকগ্রাউন্ড থেকে অ্যাপ খুলতে পারবে)"
-            else "ব্যাকগ্রাউন্ড থেকে অ্যাপ খোলার জন্য প্রয়োজন"
+            if (overlayOk) "অনুমোদিত (সাইড ট্যাব ও ব্যাকগ্রাউন্ড অ্যাপ কাজ করবে)"
+            else "সাইড-এজ ওভারলে ও ব্যাকগ্রাউন্ড অ্যাপ খোলার জন্য প্রয়োজন"
 
         applyStatusIcon(rowAlarm.iconView, alarmOk)
         rowAlarm.subtitleView.text =
@@ -1042,7 +1279,6 @@ class AssistantActivity : Activity() {
             checklistSummaryBadge.background = roundBg(pal.warnSoft, 8)
         }
 
-        // Storage button inside Controls
         if (storageOk) {
             btnStorageIcon.setImageDrawable(AssistantIcons.drawable(this, AssistantIcons.Kind.CHECK_CIRCLE, pal.ok, 18))
             btnStorageLabel.text = "Storage folder পরিবর্তন করুন (নির্বাচিত)"
@@ -1053,10 +1289,31 @@ class AssistantActivity : Activity() {
 
         swOverlayHud.isChecked = AssistantPrefs.overlayHudEnabled(this)
         swOverlaySub.text = if (overlayOk) {
-            "স্ক্রিনের উপরে লাইভ শোনা কথা, কমান্ড ও হ্যাঁ/না বাটন দেখাবে"
+            "স্ক্রিনের পাশে ছোট ট্যাব হিসেবে থাকবে — টেনে বাম/ডানে সরানো যাবে"
         } else {
-            "ভাসমান কমান্ড পিল দেখতে উপরের 'Display over other apps' অনুমতি দিন"
+            "সাইড-এজ ট্যাব দেখতে উপরের 'Display over other apps' অনুমতি দিন"
         }
+
+        val adSkipOn = AssistantPrefs.adSkipEnabled(this)
+        val skipped = AssistantPrefs.adSkipCount(this)
+        val lastSrc = AssistantPrefs.lastAdSkipInfo(this)
+        swAdSkip.isChecked = adSkipOn
+        swAdSkipGames.isChecked = AssistantPrefs.adSkipGamesEnabled(this)
+        swAdSkipGames.isEnabled = adSkipOn
+        adSkipBadge.text = if (lastSrc != null && skipped > 0) "$skipped স্কিপড ($lastSrc)" else "$skipped স্কিপড"
+        if (adSkipOn && a11yOn) {
+            adSkipBadge.setTextColor(pal.ok)
+            adSkipBadge.background = roundBg(pal.okSoft, 8)
+        } else {
+            adSkipBadge.setTextColor(pal.warn)
+            adSkipBadge.background = roundBg(pal.warnSoft, 8)
+        }
+        swAdSkipSub.text = if (a11yOn) {
+            "YouTube ও যাচাইকৃত বিজ্ঞাপনের Skip বাটন স্বয়ংক্রিয়ভাবে চাপবে"
+        } else {
+            "কাজ করার জন্য উপরের ‘Accessibility সার্ভিস’ চালু করুন"
+        }
+
         swConfirmAppCall.isChecked = AssistantPrefs.confirmBeforeAppCall(this)
         swConfirmHumanSend.isChecked = AssistantPrefs.confirmBeforeHumanSend(this)
         swConfirmAiChatSend.isChecked = AssistantPrefs.confirmBeforeAiChatSend(this)
@@ -1065,5 +1322,37 @@ class AssistantActivity : Activity() {
         timeoutBadge.text = "$sec সেকেন্ড"
         val expectedProg = sec - AssistantPrefs.MIN_FLOW_TIMEOUT_SEC
         if (timeoutSeek.progress != expectedProg) timeoutSeek.progress = expectedProg
+
+        // Gemini fallback status refresh
+        val keySrc = GeminiConfig.keySource(this)
+        val activeKey = GeminiConfig.getKey(this)
+        when (keySrc) {
+            GeminiConfig.KeySource.USER_SETTINGS -> {
+                val validFmt = GeminiConfig.looksLikeStandardGeminiKey(activeKey)
+                geminiStatusBadge.text = if (validFmt) "সক্রিয় (নিজস্ব Key)" else "অস্বাভাবিক ফরম্যাট"
+                geminiStatusBadge.setTextColor(if (validFmt) pal.ok else pal.warn)
+                geminiStatusBadge.background = roundBg(if (validFmt) pal.okSoft else pal.warnSoft, 8)
+                geminiSubText.text = if (validFmt) {
+                    "লোকাল ও ফাজি পার্সার না বুঝলে Gemini স্বয়ংক্রিয়ভাবে কমান্ড বুঝে নেবে।"
+                } else {
+                    "Key সেভ করা আছে, তবে Google AI Studio Gemini API key সাধারণত 'AIza...' দিয়ে শুরু হয়।"
+                }
+                btnClearGemini.visibility = View.VISIBLE
+            }
+            GeminiConfig.KeySource.BUILD_CONFIG -> {
+                geminiStatusBadge.text = "সক্রিয় (Secrets)"
+                geminiStatusBadge.setTextColor(pal.ok)
+                geminiStatusBadge.background = roundBg(pal.okSoft, 8)
+                geminiSubText.text = "AI Studio Secrets (GEMINI_API_KEY) থেকে সক্রিয় আছে। চাইলে নিচে নিজস্ব Key-ও দিতে পারেন।"
+                btnClearGemini.visibility = View.GONE
+            }
+            GeminiConfig.KeySource.NONE -> {
+                geminiStatusBadge.text = "সেট করা নেই"
+                geminiStatusBadge.setTextColor(pal.subText)
+                geminiStatusBadge.background = roundBg(pal.cardAlt, 8)
+                geminiSubText.text = "স্থানীয় কমান্ডের বাইরে জটিল কথাও বুঝতে Gemini API Key (AIza...) নিচে পেস্ট করুন অথবা AI Studio Secrets-এ GEMINI_API_KEY দিন।"
+                btnClearGemini.visibility = View.GONE
+            }
+        }
     }
 }

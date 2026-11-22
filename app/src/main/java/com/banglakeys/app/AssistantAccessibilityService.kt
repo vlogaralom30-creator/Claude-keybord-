@@ -9,6 +9,7 @@ import android.graphics.Path
 import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import kotlinx.coroutines.delay
@@ -30,6 +31,9 @@ class AssistantAccessibilityService : AccessibilityService() {
         )
     }
 
+    private var lastAdScanMs = 0L
+    private var lastAdClickMs = 0L
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
@@ -48,9 +52,84 @@ class AssistantAccessibilityService : AccessibilityService() {
         super.onDestroy()
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) { /* দরকার নেই */ }
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        val ev = event ?: return
+        val type = ev.eventType
+        if (type != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+            type != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+        ) return
+
+        if (!AssistantPrefs.adSkipEnabled(this)) return
+
+        val pkg = ev.packageName?.toString()?.takeIf { it.isNotBlank() } ?: foregroundPackage()
+        if (AdSkipper.isBlockedPackage(pkg)) return
+
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastAdClickMs < 1500L) return
+        if (now - lastAdScanMs < 350L) return
+        lastAdScanMs = now
+
+        scanAndSkipAds(pkg)
+    }
 
     override fun onInterrupt() {}
+
+    private fun scanAndSkipAds(pkg: String) {
+        val root = rootInActiveWindow ?: return
+        val adNodes = ArrayList<AdSkipper.AdNode>(96)
+        val nodeMap = HashMap<Int, AccessibilityNodeInfo>(96)
+        var nextId = 1
+        val rect = Rect()
+
+        fun collect(node: AccessibilityNodeInfo?, parentId: Int, depth: Int) {
+            if (node == null || depth > 28 || adNodes.size >= 240) return
+            val id = nextId++
+            node.getBoundsInScreen(rect)
+            val hint = if (Build.VERSION.SDK_INT >= 26) node.hintText?.toString().orEmpty() else ""
+            adNodes.add(
+                AdSkipper.AdNode(
+                    id = id,
+                    viewId = node.viewIdResourceName.orEmpty(),
+                    className = node.className?.toString().orEmpty(),
+                    text = node.text?.toString().orEmpty(),
+                    contentDescription = node.contentDescription?.toString().orEmpty(),
+                    hintText = hint,
+                    isClickable = node.isClickable,
+                    isEnabled = node.isEnabled,
+                    isVisible = node.isVisibleToUser,
+                    isEditable = node.isEditable,
+                    isFocused = node.isFocused,
+                    isPassword = node.isPassword,
+                    left = rect.left,
+                    top = rect.top,
+                    right = rect.right,
+                    bottom = rect.bottom,
+                    parentId = parentId
+                )
+            )
+            nodeMap[id] = node
+            for (i in 0 until node.childCount) {
+                if (adNodes.size >= 240) break
+                collect(node.getChild(i), id, depth + 1)
+            }
+        }
+
+        collect(root, 0, 0)
+        val match = AdSkipper.findSkipTarget(
+            packageName = pkg,
+            screenW = screenW(),
+            screenH = screenH(),
+            nodes = adNodes,
+            allowGameAds = AssistantPrefs.adSkipGamesEnabled(this)
+        ) ?: return
+
+        val target = nodeMap[match.nodeId] ?: return
+        if (clickNode(target)) {
+            lastAdClickMs = SystemClock.elapsedRealtime()
+            AssistantPrefs.recordAdSkip(this, match.sourceLabel)
+            AssistantLog.d("AdSkipper skipped [${match.reason}] in $pkg")
+        }
+    }
 
     // ---------------------------------------------------------------- info
 

@@ -26,12 +26,8 @@ import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.launch
 
 /**
- * আপগ্রেডেড 2-mode (Continuous + Quiet Push-to-Talk) Voice Assistant Foreground Service।
- *
- * - লাইভ স্ক্রিন ওভারলে পিল (CommandOverlayManager) দিয়ে ইউজারের বলা কথা সাথে সাথে দেখায়।
- * - SmartCommandResolver দিয়ে সব N-best candidate + Banglish/Bangla fuzzy মিলিয়ে
- *   word-perfect কমান্ড নির্ণয় করে।
- * - Call ও Message সেন্ডের আগে ওভারলে পিলে inline হ্যাঁ/না বাটন ও ভয়েস confirm দেয়।
+ * আপগ্রেডেড 2-mode (Continuous + Quiet Push-to-Talk) Voice Assistant Foreground Service
+ * + Live Floating Command Overlay Pill + N-best/Fuzzy SmartCommandResolver + Gemini Fallback।
  */
 class AssistantListenerService : Service() {
 
@@ -88,6 +84,7 @@ class AssistantListenerService : Service() {
     private var awakeUntil = 0L
     private var paused = false
     private var pttSessionActive = false
+    private var geminiBusy = false
     private val restart = Runnable { listenOnce() }
 
     private var pending: Command? = null
@@ -156,6 +153,7 @@ class AssistantListenerService : Service() {
     override fun onDestroy() {
         running = false
         instance = null
+        geminiBusy = false
         clearPending()
         serviceScope.cancel()
         handler.removeCallbacksAndMessages(null)
@@ -175,6 +173,8 @@ class AssistantListenerService : Service() {
         handler.removeCallbacks(restart)
         if (!AssistantPrefs.overlayHudEnabled(this) || !AssistantSetup.canOverlay(this)) {
             overlay?.hide()
+        } else {
+            overlay?.refreshPosition()
         }
         if (isPttMode()) {
             pttSessionActive = false
@@ -209,7 +209,7 @@ class AssistantListenerService : Service() {
     }
 
     private fun triggerPttInternal() {
-        if (!running || paused) return
+        if (!running || paused || geminiBusy) return
         pttSessionActive = true
         awakeUntil = SystemClock.elapsedRealtime() + AssistantConfig.AWAKE_WINDOW_MS
         overlay?.render(
@@ -225,6 +225,7 @@ class AssistantListenerService : Service() {
 
     private fun sleepOrDormantInternal() {
         clearPending()
+        geminiBusy = false
         awakeUntil = 0L
         if (isPttMode()) {
             pttSessionActive = false
@@ -263,7 +264,7 @@ class AssistantListenerService : Service() {
     }
 
     private fun listenOnce() {
-        if (!running || paused) return
+        if (!running || paused || geminiBusy) return
         if (isPttMode() && !pttSessionActive && pending == null) {
             renderIdleOverlay()
             return
@@ -278,7 +279,7 @@ class AssistantListenerService : Service() {
         recognizer = r
         r.setRecognitionListener(object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) {
-                if (pending == null) {
+                if (pending == null && !geminiBusy) {
                     overlay?.render(
                         CommandOverlayManager.OverlayState.Listening(
                             partialText = "",
@@ -308,7 +309,7 @@ class AssistantListenerService : Service() {
                 if (now < awakeUntil || smartWoke) {
                     awakeUntil = now + AssistantConfig.AWAKE_WINDOW_MS
                 }
-                if (shouldShow && pending == null) {
+                if (shouldShow && pending == null && !geminiBusy) {
                     overlay?.render(
                         CommandOverlayManager.OverlayState.Listening(
                             partialText = text,
@@ -328,10 +329,7 @@ class AssistantListenerService : Service() {
                 if (isPttMode()) {
                     val wasPtt = pttSessionActive
                     pttSessionActive = false
-                    if (pending != null) {
-                        // Awaiting confirmation: keep UI buttons active, don't loop mic aggressively
-                        return
-                    }
+                    if (pending != null || geminiBusy) return
                     if (wasPtt && error == SpeechRecognizer.ERROR_NO_MATCH) {
                         showResult(
                             heard = null,
@@ -361,10 +359,9 @@ class AssistantListenerService : Service() {
                 if (isPttMode()) {
                     pttSessionActive = false
                     if (pending != null) {
-                        // One clean listen turn for voice Yes/No alongside overlay Confirm/Cancel buttons
                         scheduleNext(350)
                     }
-                } else {
+                } else if (!geminiBusy) {
                     scheduleNext(250)
                 }
             }
@@ -513,7 +510,7 @@ class AssistantListenerService : Service() {
             }
         }
 
-        // 2. Smart multi-candidate + fuzzy command resolution
+        // 2. Smart multi-candidate + fuzzy local command resolution (0ms, free)
         val alreadyAwake = (now < awakeUntil) || pttSessionActive
         val res = SmartCommandResolver.resolve(candidates, alreadyAwake)
 
@@ -528,37 +525,67 @@ class AssistantListenerService : Service() {
                 )
             )
             if (overlay?.isOverlayPermittedAndEnabled() != true) {
-                toast("🎤 বলুন…")
+                toast("বলুন…")
             }
             return
         }
 
         val cmd = res.command
-        if (cmd == null) {
-            if (alreadyAwake && res.heardText.isNotBlank()) {
-                AssistantLog.d("Unrecognized while awake: '${res.heardText}'")
+        if (cmd != null) {
+            AssistantLog.d("Resolved locally (fuzzy=${res.fuzzyCorrected}): '${res.heardText}' -> $cmd")
+            acceptAndRunCommand(cmd, res.heardText, res.summary ?: SmartCommandResolver.describe(cmd))
+            return
+        }
+
+        // 3. Gemini AI fallback (যখন local + fuzzy দুটোই না বুঝে এবং API key সেট করা থাকে)
+        val spoken = res.heardText
+        if (alreadyAwake && spoken.isNotBlank()) {
+            if (GeminiConfig.hasKey(this)) {
+                geminiBusy = true
+                overlay?.render(
+                    CommandOverlayManager.OverlayState.RunningFlow(
+                        appLabel = "Gemini AI",
+                        stepStatus = "“$spoken” বিশ্লেষণ করা হচ্ছে…"
+                    )
+                )
+                GeminiCommandInterpreter.interpret(this, spoken) { geminiCmd ->
+                    geminiBusy = false
+                    if (!running || paused) return@interpret
+                    if (geminiCmd != null) {
+                        AssistantLog.d("Resolved by Gemini: '$spoken' -> $geminiCmd")
+                        acceptAndRunCommand(geminiCmd, spoken, SmartCommandResolver.describe(geminiCmd))
+                    } else {
+                        showResult(
+                            heard = spoken,
+                            summary = null,
+                            msg = "কমান্ড বুঝিনি — আবার বলুন",
+                            ok = false,
+                            canRetry = isPttMode()
+                        )
+                    }
+                    if (!isPttMode()) scheduleNext(250)
+                }
+            } else {
+                AssistantLog.d("Unrecognized while awake (no Gemini key): '$spoken'")
                 showResult(
-                    heard = res.heardText,
+                    heard = spoken,
                     summary = null,
                     msg = "কমান্ড বুঝিনি — আবার বলুন",
                     ok = false,
                     canRetry = isPttMode()
                 )
             }
-            return
         }
+    }
 
-        AssistantLog.d("Resolved (fuzzy=${res.fuzzyCorrected}): '${res.heardText}' -> $cmd")
-        awakeUntil = now + AssistantConfig.AWAKE_WINDOW_MS
-
-        val summary = res.summary ?: SmartCommandResolver.describe(cmd)
+    private fun acceptAndRunCommand(cmd: Command, heardText: String, summary: String) {
+        awakeUntil = SystemClock.elapsedRealtime() + AssistantConfig.AWAKE_WINDOW_MS
         val question = confirmationQuestion(cmd)
         if (question != null) {
-            setPending(cmd, res.heardText, summary, question)
+            setPending(cmd, heardText, summary, question)
             return
         }
-
-        dispatchCommand(cmd, res.heardText, summary)
+        dispatchCommand(cmd, heardText, summary)
     }
 
     private fun dispatchCommand(cmd: Command, heardText: String, summary: String) {
@@ -580,6 +607,7 @@ class AssistantListenerService : Service() {
             }
             Command.PanicStop -> {
                 clearPending()
+                geminiBusy = false
                 serviceScope.coroutineContext.cancelChildren()
                 awakeUntil = 0L
                 pttSessionActive = false
@@ -689,7 +717,7 @@ class AssistantListenerService : Service() {
         val n = b.setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentTitle("BanglaKeys Assistant চালু")
             .setContentText(
-                if (isPttMode()) "উপরের পিল বা কীবোর্ড ট্যাপ করে কথা বলুন"
+                if (isPttMode()) "পাশের ভাসমান ট্যাব বা কীবোর্ড ট্যাপ করে কথা বলুন"
                 else "\"Hey Bot\" বলে কমান্ড দিন"
             )
             .setContentIntent(openPi)

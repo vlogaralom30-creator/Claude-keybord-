@@ -144,6 +144,7 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
   var previewBanglaMode by rememberSaveable { mutableStateOf(true) }
   var previewSymbolsMode by rememberSaveable { mutableIntStateOf(0) }
   var previewInPanel by rememberSaveable { mutableStateOf(false) }
+  var suggestVersion by remember { mutableIntStateOf(0) }
 
   val suggestionsRepo = remember { Suggestions(context) }
 
@@ -152,6 +153,10 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
       if (composingRoman.isEmpty()) ""
       else if (previewBanglaMode) Phonetic.convert(composingRoman)
       else composingRoman
+    }
+  val suggestionsList =
+    remember(composingRoman, previewBanglaMode, suggestVersion) {
+      suggestionsRepo.suggestionsFor(composingRoman, previewBanglaMode)
     }
   val combinedTestText = committedText + composingDisplay
 
@@ -238,55 +243,76 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
                   bnDigitsPref = bnDigits,
                   heightPct = heightPct,
                   composingText = composingDisplay,
-                  suggestionsList =
-                    if (composingRoman.isEmpty()) suggestionsRepo.suggestionsFor("", previewBanglaMode)
-                    else suggestionsRepo.suggestionsFor(composingRoman, previewBanglaMode),
+                  suggestionsList = suggestionsList,
                   onText = { ch ->
                     val single = ch.singleOrNull()
-                    if (
+                    val isBnWordChar =
                       previewBanglaMode &&
-                      previewSymbolsMode == 0 &&
-                      single != null &&
-                      (single in 'a'..'z' ||
-                        single in 'A'..'Z' ||
-                        ((single == '^' || single == '`') && composingRoman.isNotEmpty()))
-                    ) {
+                        previewSymbolsMode == 0 &&
+                        single != null &&
+                        (single in 'a'..'z' ||
+                          single in 'A'..'Z' ||
+                          ((single == '^' || single == '`') && composingRoman.isNotEmpty()))
+                    val isEnWordChar =
+                      !previewBanglaMode &&
+                        previewSymbolsMode == 0 &&
+                        single != null &&
+                        (single in 'a'..'z' ||
+                          single in 'A'..'Z' ||
+                          (single == '\'' && composingRoman.isNotEmpty()))
+
+                    if (isBnWordChar || isEnWordChar) {
                       composingRoman += single
                     } else {
                       if (composingDisplay.isNotEmpty()) {
-                        suggestionsRepo.learn(composingRoman, composingDisplay)
+                        suggestionsRepo.learn(composingRoman, composingDisplay, previewBanglaMode)
                         committedText += composingDisplay
                         composingRoman = ""
                       }
                       committedText += ch
+                      if (ch in setOf(".", "।", "!", "?")) {
+                        suggestionsRepo.resetSentenceContext()
+                      }
+                      suggestVersion++
                     }
                   },
                   onDelete = {
                     if (composingRoman.isNotEmpty()) {
                       composingRoman = composingRoman.dropLast(1)
                     } else if (committedText.isNotEmpty()) {
-                      committedText = committedText.dropLast(1)
+                      val after = committedText.dropLast(1)
+                      if (!previewBanglaMode && previewSymbolsMode == 0) {
+                        val trailing =
+                          after.takeLastWhile { it in 'a'..'z' || it in 'A'..'Z' || it == '\'' }
+                        committedText = after.dropLast(trailing.length)
+                        composingRoman = trailing
+                      } else {
+                        committedText = after
+                      }
                     }
                   },
                   onSpace = {
                     if (composingDisplay.isNotEmpty()) {
-                      suggestionsRepo.learn(composingRoman, composingDisplay)
+                      suggestionsRepo.learn(composingRoman, composingDisplay, previewBanglaMode)
                       committedText += composingDisplay
                       composingRoman = ""
+                      suggestVersion++
                     }
                     committedText += " "
                   },
                   onEnter = {
                     if (composingDisplay.isNotEmpty()) {
-                      suggestionsRepo.learn(composingRoman, composingDisplay)
+                      suggestionsRepo.learn(composingRoman, composingDisplay, previewBanglaMode)
                       committedText += composingDisplay
                       composingRoman = ""
                     }
                     suggestionsRepo.resetSentenceContext()
+                    suggestVersion++
                     committedText += "\n"
                   },
                   onSwitchLang = {
                     if (composingDisplay.isNotEmpty()) {
+                      suggestionsRepo.learn(composingRoman, composingDisplay, previewBanglaMode)
                       committedText += composingDisplay
                       composingRoman = ""
                     }
@@ -294,31 +320,48 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
                     previewSymbolsMode = 0
                     previewBanglaMode = !previewBanglaMode
                     prefs.edit().putBoolean("bn", previewBanglaMode).apply()
+                    suggestVersion++
                   },
                   onSymbols = { mode ->
                     if (composingDisplay.isNotEmpty()) {
+                      suggestionsRepo.learn(composingRoman, composingDisplay, previewBanglaMode)
                       committedText += composingDisplay
                       composingRoman = ""
+                      suggestVersion++
                     }
                     previewInPanel = false
                     previewSymbolsMode = mode
                   },
                   onComposingTap = {
                     if (composingDisplay.isNotEmpty()) {
-                      suggestionsRepo.learn(composingRoman, composingDisplay)
+                      suggestionsRepo.learn(composingRoman, composingDisplay, previewBanglaMode)
                       committedText += composingDisplay
                       composingRoman = ""
+                      suggestVersion++
                     }
                   },
                   onSuggestionTap = { word ->
-                    if (composingRoman.isNotEmpty()) {
-                      suggestionsRepo.learn(composingRoman, word)
-                      composingRoman = ""
-                    }
+                    suggestionsRepo.learn(composingRoman, word, previewBanglaMode)
+                    composingRoman = ""
                     committedText += "$word "
+                    suggestVersion++
+                  },
+                  onSuggestionLongPress = { word ->
+                    val removed = suggestionsRepo.forget(word, previewBanglaMode)
+                    if (removed) {
+                      suggestVersion++
+                      Toast.makeText(context, "“$word” suggestion তালিকা থেকে সরানো হয়েছে", Toast.LENGTH_SHORT).show()
+                    } else {
+                      Toast.makeText(context, "ডিফল্ট শব্দ মুছে ফেলা যায় না", Toast.LENGTH_SHORT).show()
+                    }
                   },
                   onSnippet = { snippet ->
+                    if (composingDisplay.isNotEmpty()) {
+                      committedText += composingDisplay
+                      composingRoman = ""
+                    }
                     committedText += snippet
+                    suggestVersion++
                   },
                   onNotepad = {
                     if (composingDisplay.isNotEmpty()) {
@@ -646,6 +689,7 @@ private fun EmbeddedKeyboardPreview(
   onSymbols: (Int) -> Unit,
   onComposingTap: () -> Unit,
   onSuggestionTap: (String) -> Unit,
+  onSuggestionLongPress: (String) -> Unit,
   onSnippet: (String) -> Unit,
   onNotepad: () -> Unit,
   onTranslate: () -> Unit,
@@ -688,6 +732,7 @@ private fun EmbeddedKeyboardPreview(
           override fun onComposingTap() = onComposingTap()
           override fun onFeedback() {}
           override fun onSuggestionTap(word: String) = onSuggestionTap(word)
+          override fun onSuggestionLongPress(word: String) = onSuggestionLongPress(word)
           override fun onSnippet(text: String) = onSnippet(text)
           override fun onNotepad() = onNotepad()
           override fun onTranslate() = onTranslate()

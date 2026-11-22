@@ -37,7 +37,9 @@ object AssistantIcons {
         BACK,
         MIC,
         CLOSE,
-        REFRESH
+        REFRESH,
+        MINIMIZE,
+        SKIP_FORWARD
     }
 
     fun drawable(ctx: Context, kind: Kind, color: Int, sizeDp: Int = 20): Drawable {
@@ -288,6 +290,21 @@ object AssistantIcons {
                     path.lineTo(cx + 6.6f * u, cy - 5.2f * u)
                     path.lineTo(cx + 3.2f * u, cy - 2.0f * u)
                     canvas.drawPath(path, strokePaint)
+                }
+
+                Kind.MINIMIZE -> {
+                    canvas.drawLine(cx - 6f * u, cy, cx + 6f * u, cy, strokePaint)
+                }
+
+                Kind.SKIP_FORWARD -> {
+                    // Play triangle + vertical skip bar
+                    path.reset()
+                    path.moveTo(cx - 6.5f * u, cy - 6.5f * u)
+                    path.lineTo(cx + 3.5f * u, cy)
+                    path.lineTo(cx - 6.5f * u, cy + 6.5f * u)
+                    path.close()
+                    canvas.drawPath(path, fillPaint)
+                    canvas.drawLine(cx + 6.2f * u, cy - 6.5f * u, cx + 6.2f * u, cy + 6.5f * u, strokePaint)
                 }
             }
         }

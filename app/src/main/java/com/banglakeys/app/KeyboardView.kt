@@ -6,9 +6,12 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
+import android.graphics.Typeface
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.text.TextPaint
+import android.text.TextUtils
 import android.util.SparseArray
 import android.view.MotionEvent
 import android.view.View
@@ -19,8 +22,19 @@ import kotlin.math.min
 /**
  * Canvas-এ সরাসরি আঁকা keyboard: কোনো child view নেই, তাই দ্রুত ও smooth।
  * Multi-touch আছে (দ্রুত টাইপ করলে আগের key ছাড়ার আগেই পরের key চাপা যায়)।
+ *
+ * উপরের strip-এ দুই মোডে কাজ করে:
+ *  ১) টাইপিং মোড: বামে live composing badge + ডানে সর্বোচ্চ ৩টি গোলাকার suggestion pill
+ *  ২) Idle মোড: বামে ৪টি vector quick-action shortcut + ডানে next-word / starter pill
  */
 class KeyboardView(context: Context) : View(context) {
+
+    enum class QuickAction {
+        NOTEPAD,
+        TRANSLATE,
+        VOICE,
+        ASSISTANT,
+    }
 
     interface Listener {
         fun onText(text: String)
@@ -33,6 +47,7 @@ class KeyboardView(context: Context) : View(context) {
         fun onComposingTap()
         fun onFeedback()
         fun onSuggestionTap(word: String)
+        fun onSuggestionLongPress(word: String) {}
         fun onSnippet(text: String)
         fun onNotepad()
         fun onTranslate()
@@ -45,7 +60,17 @@ class KeyboardView(context: Context) : View(context) {
     // ---- state ----
     private class Box(val key: Key, val rect: RectF)
 
-    private class Ptr(var box: Box?, val inStrip: Boolean) {
+    private sealed class StripHit {
+        object Composing : StripHit()
+        data class Word(val index: Int) : StripHit()
+        data class Action(val action: QuickAction) : StripHit()
+    }
+
+    private class Ptr(
+        var box: Box?,
+        val inStrip: Boolean,
+        var stripHit: StripHit? = null
+    ) {
         var consumed = false
         var runnable: Runnable? = null
     }
@@ -54,7 +79,11 @@ class KeyboardView(context: Context) : View(context) {
     private var boxRows: List<List<Box>> = emptyList()
     private var composing = ""
     private var suggestions: List<String> = emptyList()
+    private var composingRect = RectF()
     private var suggestionRects: List<RectF> = emptyList()
+    private var quickActionRects: LinkedHashMap<QuickAction, RectF> = LinkedHashMap()
+    private var stripDirty = true
+
     private var spaceLabel = ""
     private var enterLabel: String? = null
     private var rowScale = 1f
@@ -69,7 +98,11 @@ class KeyboardView(context: Context) : View(context) {
     private val d = resources.displayMetrics.density
     private val fontD = d * resources.configuration.fontScale
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+    }
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val stripTextPaint = TextPaint(Paint.ANTI_ALIAS_FLAG)
     private val iconPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
@@ -87,11 +120,20 @@ class KeyboardView(context: Context) : View(context) {
     private var accentC = 0
     private var popupC = 0
 
-    private val stripH: Float get() = 46f * d
+    // Strip pill colors
+    private var pillC = 0
+    private var pillStrokeC = 0
+    private var badgeBgC = 0
+    private var badgeStrokeC = 0
+    private var badgeTextC = 0
+    private var actionBgC = 0
+
+    private val stripH: Float get() = 48f * d
     private val vPad: Float get() = 4f * d
     private val hPad: Float get() = 3f * d
     private val gap: Float get() = 3.2f * d
     private val radius: Float get() = 6f * d
+    private val pillRadius: Float get() = 12f * d
 
     init {
         applyTheme()
@@ -107,12 +149,15 @@ class KeyboardView(context: Context) : View(context) {
         cancelAll()
         requestLayout()
         layoutKeys()
+        updateStripRects()
         invalidate()
     }
 
     fun setComposing(text: String) {
         if (composing != text) {
             composing = text
+            stripDirty = true
+            updateStripRects()
             invalidate()
         }
     }
@@ -120,7 +165,8 @@ class KeyboardView(context: Context) : View(context) {
     fun setSuggestions(list: List<String>) {
         if (suggestions != list) {
             suggestions = list
-            if (list.isEmpty()) suggestionRects = emptyList()
+            stripDirty = true
+            updateStripRects()
             invalidate()
         }
     }
@@ -141,6 +187,13 @@ class KeyboardView(context: Context) : View(context) {
         }
     }
 
+    fun stripComposingRect(): RectF = RectF(composingRect)
+
+    fun stripSuggestionRects(): List<RectF> = suggestionRects.map { RectF(it) }
+
+    fun stripQuickActionRects(): Map<QuickAction, RectF> =
+        quickActionRects.mapValues { RectF(it.value) }
+
     // ---------------- theme ----------------
 
     private fun applyTheme() {
@@ -156,6 +209,13 @@ class KeyboardView(context: Context) : View(context) {
             pressC = 0xFF636366.toInt()
             accentC = 0xFF26A69A.toInt()
             popupC = 0xFF4A4A4D.toInt()
+
+            pillC = 0xFF3A3A3C.toInt()
+            pillStrokeC = 0xFF525256.toInt()
+            badgeBgC = 0xFF163C38.toInt()
+            badgeStrokeC = 0xFF26A69A.toInt()
+            badgeTextC = 0xFF80CBC4.toInt()
+            actionBgC = 0xFF2C2C2E.toInt()
         } else {
             bgC = 0xFFE6E9EC.toInt()
             keyC = 0xFFFFFFFF.toInt()
@@ -166,6 +226,13 @@ class KeyboardView(context: Context) : View(context) {
             pressC = 0xFFB4BDC5.toInt()
             accentC = 0xFF00897B.toInt()
             popupC = 0xFFFFFFFF.toInt()
+
+            pillC = 0xFFFFFFFF.toInt()
+            pillStrokeC = 0xFFD0D7DE.toInt()
+            badgeBgC = 0xFFE0F2F1.toInt()
+            badgeStrokeC = 0xFF4DB6AC.toInt()
+            badgeTextC = 0xFF00695C.toInt()
+            actionBgC = 0xFFD8DFE6.toInt()
         }
         invalidate()
     }
@@ -192,6 +259,8 @@ class KeyboardView(context: Context) : View(context) {
         super.onSizeChanged(w, h, oldw, oldh)
         cancelAll()
         layoutKeys()
+        stripDirty = true
+        updateStripRects()
     }
 
     private fun layoutKeys() {
@@ -224,6 +293,86 @@ class KeyboardView(context: Context) : View(context) {
         boxRows = out
     }
 
+    private fun updateStripRects() {
+        val totalW = width.toFloat()
+        if (totalW <= 0f) {
+            composingRect.setEmpty()
+            suggestionRects = emptyList()
+            quickActionRects.clear()
+            return
+        }
+        stripDirty = false
+
+        val outerPad = 8f * d
+        val pillGap = 6f * d
+        val vInset = 6f * d
+        val top = vInset
+        val bottom = stripH - vInset
+
+        quickActionRects.clear()
+
+        if (composing.isNotEmpty()) {
+            // টাইপিং মোড: বামে Live Composing Badge + ডানে সর্বোচ্চ ৩টি Word Pill
+            val visCount = min(suggestions.size, 3)
+            stripTextPaint.textSize = 15f * fontD
+            stripTextPaint.typeface = Typeface.DEFAULT_BOLD
+            val rawTextW = stripTextPaint.measureText(composing)
+            val badgePadding = 20f * d
+
+            if (visCount == 0) {
+                // কোনো suggestion না থাকলে composing badge-টি সুন্দরভাবে বড় হয়ে দেখাবে
+                val bw = (rawTextW + badgePadding).coerceIn(72f * d, totalW - outerPad * 2)
+                val left = ((totalW - bw) / 2f).coerceAtLeast(outerPad)
+                composingRect.set(left, top, left + bw, bottom)
+                suggestionRects = emptyList()
+                return
+            }
+
+            val maxBadgeW = min(totalW * 0.34f, 148f * d)
+            val badgeW = (rawTextW + badgePadding).coerceIn(52f * d, maxBadgeW)
+            composingRect.set(outerPad, top, outerPad + badgeW, bottom)
+
+            val startX = composingRect.right + pillGap
+            val availW = totalW - outerPad - startX
+            val rects = ArrayList<RectF>(visCount)
+            if (availW > 20f * d) {
+                val itemW = (availW - pillGap * (visCount - 1)) / visCount
+                for (i in 0 until visCount) {
+                    val left = startX + i * (itemW + pillGap)
+                    rects.add(RectF(left, top, left + itemW, bottom))
+                }
+            }
+            suggestionRects = rects
+        } else {
+            // Idle মোড: বামে ৪টি Quick-Action Shortcut + ডানে Next-Word / Starter Pills
+            composingRect.setEmpty()
+            val actions = QuickAction.values()
+            val compact = totalW < 340f * d
+            val actionW = (if (compact) 31f else 36f) * d
+            val actionGap = (if (compact) 3.5f else 4.5f) * d
+
+            var curX = outerPad
+            for (action in actions) {
+                quickActionRects[action] = RectF(curX, top, curX + actionW, bottom)
+                curX += actionW + actionGap
+            }
+
+            val startX = curX + 2f * d
+            val availW = totalW - outerPad - startX
+            val maxIdleWords = if (compact) 2 else 3
+            val visCount = min(suggestions.size, maxIdleWords)
+            val rects = ArrayList<RectF>(visCount)
+            if (visCount > 0 && availW > 40f * d) {
+                val itemW = (availW - pillGap * (visCount - 1)) / visCount
+                for (i in 0 until visCount) {
+                    val left = startX + i * (itemW + pillGap)
+                    rects.add(RectF(left, top, left + itemW, bottom))
+                }
+            }
+            suggestionRects = rects
+        }
+    }
+
     // ---------------- drawing ----------------
 
     override fun onDraw(canvas: Canvas) {
@@ -233,49 +382,122 @@ class KeyboardView(context: Context) : View(context) {
         drawPopups(canvas)
     }
 
-    private fun drawStrip(c: Canvas) {
-        if (suggestions.isNotEmpty()) {
-            drawSuggestions(c)
-            return
+    private fun isStripPressed(hit: StripHit): Boolean {
+        for (i in 0 until ptrs.size()) {
+            val p = ptrs.valueAt(i)
+            if (p.inStrip && p.stripHit == hit) return true
         }
-        if (composing.isEmpty()) return
-        textPaint.textSize = 20f * fontD
-        textPaint.color = textC
-        val maxW = width - 24f * d
-        val tw = textPaint.measureText(composing)
-        val fm = textPaint.fontMetrics
-        val y = stripH / 2f - (fm.ascent + fm.descent) / 2f
-        if (tw > maxW) {
-            textPaint.textAlign = Paint.Align.RIGHT
-            c.drawText(composing, width - 12f * d, y, textPaint)
-        } else {
-            textPaint.textAlign = Paint.Align.CENTER
-            c.drawText(composing, width / 2f, y, textPaint)
+        return false
+    }
+
+    private fun drawStrip(c: Canvas) {
+        if (stripDirty && width > 0) updateStripRects()
+
+        // Strip-এর নিচে সূক্ষ্ম separator
+        paint.style = Paint.Style.FILL
+        paint.color = shadowC
+        paint.alpha = 55
+        c.drawRect(0f, stripH - 1f * d, width.toFloat(), stripH, paint)
+        paint.alpha = 255
+
+        // ১) Composing Badge (থাকলে)
+        if (!composingRect.isEmpty && composing.isNotEmpty()) {
+            val pressed = isStripPressed(StripHit.Composing)
+            paint.style = Paint.Style.FILL
+            paint.color = if (pressed) pressC else badgeBgC
+            c.drawRoundRect(composingRect, pillRadius, pillRadius, paint)
+
+            strokePaint.color = badgeStrokeC
+            strokePaint.strokeWidth = 1.1f * d
+            c.drawRoundRect(composingRect, pillRadius, pillRadius, strokePaint)
+
+            drawFittedPillText(
+                c = c,
+                text = composing,
+                rect = composingRect,
+                color = if (pressed) textC else badgeTextC,
+                bold = true,
+                preferredSp = 15.5f
+            )
+        }
+
+        // ২) Quick Action Shortcut Pills (Idle মোডে)
+        for ((action, rect) in quickActionRects) {
+            val pressed = isStripPressed(StripHit.Action(action))
+            paint.style = Paint.Style.FILL
+            paint.color = if (pressed) pressC else actionBgC
+            c.drawRoundRect(rect, 11f * d, 11f * d, paint)
+
+            val cx = rect.centerX()
+            val cy = rect.centerY()
+            val fg = if (action == QuickAction.ASSISTANT) accentC else textC
+            when (action) {
+                QuickAction.NOTEPAD -> drawNotepadIcon(c, cx, cy, fg, 0.88f)
+                QuickAction.TRANSLATE -> drawTranslateIcon(c, cx, cy, fg)
+                QuickAction.VOICE -> drawMicIcon(c, cx, cy, fg, 0.88f)
+                QuickAction.ASSISTANT -> drawAssistantIcon(c, cx, cy, fg, 0.88f)
+            }
+        }
+
+        // ৩) Suggestion Word Pills
+        for (i in suggestionRects.indices) {
+            if (i >= suggestions.size) break
+            val rect = suggestionRects[i]
+            val pressed = isStripPressed(StripHit.Word(i))
+
+            paint.style = Paint.Style.FILL
+            if (!pressed) {
+                paint.color = shadowC
+                paint.alpha = 70
+                c.drawRoundRect(
+                    rect.left, rect.top + 1.1f * d, rect.right, rect.bottom + 1.1f * d,
+                    pillRadius, pillRadius, paint
+                )
+                paint.alpha = 255
+            }
+            paint.color = if (pressed) pressC else pillC
+            c.drawRoundRect(rect, pillRadius, pillRadius, paint)
+
+            strokePaint.color = pillStrokeC
+            strokePaint.strokeWidth = 0.8f * d
+            c.drawRoundRect(rect, pillRadius, pillRadius, strokePaint)
+
+            drawFittedPillText(
+                c = c,
+                text = suggestions[i],
+                rect = rect,
+                color = textC,
+                bold = false,
+                preferredSp = 15f
+            )
         }
     }
 
-    private fun drawSuggestions(c: Canvas) {
-        val n = suggestions.size
-        if (n == 0) return
-        val w = width / n.toFloat()
-        val rects = ArrayList<RectF>(n)
-        textPaint.textAlign = Paint.Align.CENTER
-        textPaint.textSize = 18f * fontD
-        val fm = textPaint.fontMetrics
-        val y = stripH / 2f - (fm.ascent + fm.descent) / 2f
-        for (i in 0 until n) {
-            val left = i * w
-            val rect = RectF(left, 0f, left + w, stripH)
-            rects.add(rect)
-            textPaint.color = textC
-            c.drawText(suggestions[i], rect.centerX(), y, textPaint)
-            if (i > 0) {
-                paint.color = shadowC
-                paint.strokeWidth = 1f * d
-                c.drawLine(left, stripH * 0.25f, left, stripH * 0.75f, paint)
-            }
+    private fun drawFittedPillText(
+        c: Canvas,
+        text: String,
+        rect: RectF,
+        color: Int,
+        bold: Boolean,
+        preferredSp: Float
+    ) {
+        val availW = (rect.width() - 12f * d).coerceAtLeast(8f * d)
+        stripTextPaint.color = color
+        stripTextPaint.typeface = if (bold) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+        stripTextPaint.textAlign = Paint.Align.CENTER
+
+        var size = preferredSp * fontD
+        val minSize = 11.5f * fontD
+        stripTextPaint.textSize = size
+        while (size > minSize && stripTextPaint.measureText(text) > availW) {
+            size -= 1f * d
+            stripTextPaint.textSize = size
         }
-        suggestionRects = rects
+
+        val label = TextUtils.ellipsize(text, stripTextPaint, availW, TextUtils.TruncateAt.END).toString()
+        val fm = stripTextPaint.fontMetrics
+        val y = rect.centerY() - (fm.ascent + fm.descent) / 2f
+        c.drawText(label, rect.centerX(), y, stripTextPaint)
     }
 
     private fun isPressed(b: Box): Boolean {
@@ -424,9 +646,9 @@ class KeyboardView(context: Context) : View(context) {
         c.drawOval(cx - r * 0.46f, cy - r, cx + r * 0.46f, cy + r, iconPaint)
     }
 
-    private fun drawNotepadIcon(c: Canvas, cx: Float, cy: Float, color: Int) {
-        val w = 6.8f * d
-        val h = 8.4f * d
+    private fun drawNotepadIcon(c: Canvas, cx: Float, cy: Float, color: Int, scale: Float = 1f) {
+        val w = 6.8f * d * scale
+        val h = 8.4f * d * scale
         iconPaint.color = color
         iconPaint.strokeWidth = 1.6f * d
         iconPaint.style = Paint.Style.STROKE
@@ -436,30 +658,39 @@ class KeyboardView(context: Context) : View(context) {
         c.drawLine(cx - w * 0.55f, cy + h * 0.35f, cx + w * 0.2f, cy + h * 0.35f, iconPaint)
     }
 
-    private fun drawMicIcon(c: Canvas, cx: Float, cy: Float, color: Int) {
-        val s = 8.5f * d
+    private fun drawTranslateIcon(c: Canvas, cx: Float, cy: Float, color: Int) {
+        val s = 7.4f * d
+        iconPaint.color = color
+        iconPaint.strokeWidth = 1.6f * d
+        iconPaint.style = Paint.Style.STROKE
+        // ডানমুখী উপরের তীর
+        c.drawLine(cx - s * 0.9f, cy - s * 0.38f, cx + s * 0.85f, cy - s * 0.38f, iconPaint)
+        c.drawLine(cx + s * 0.35f, cy - s * 0.82f, cx + s * 0.85f, cy - s * 0.38f, iconPaint)
+        c.drawLine(cx + s * 0.35f, cy + s * 0.06f, cx + s * 0.85f, cy - s * 0.38f, iconPaint)
+        // বামমুখী নিচের তীর
+        c.drawLine(cx + s * 0.9f, cy + s * 0.42f, cx - s * 0.85f, cy + s * 0.42f, iconPaint)
+        c.drawLine(cx - s * 0.35f, cy - s * 0.02f, cx - s * 0.85f, cy + s * 0.42f, iconPaint)
+        c.drawLine(cx - s * 0.35f, cy + s * 0.86f, cx - s * 0.85f, cy + s * 0.42f, iconPaint)
+    }
+
+    private fun drawMicIcon(c: Canvas, cx: Float, cy: Float, color: Int, scale: Float = 1f) {
+        val s = 8.5f * d * scale
         iconPaint.color = color
         iconPaint.strokeWidth = 1.65f * d
         iconPaint.style = Paint.Style.STROKE
-        // Capsule mic head
         c.drawRoundRect(cx - s * 0.34f, cy - s * 0.95f, cx + s * 0.34f, cy + s * 0.2f, s * 0.34f, s * 0.34f, iconPaint)
-        // Cradle arc
         c.drawArc(cx - s * 0.68f, cy - s * 0.45f, cx + s * 0.68f, cy + s * 0.55f, 0f, 180f, false, iconPaint)
-        // Stem & base
         c.drawLine(cx, cy + s * 0.55f, cx, cy + s * 0.95f, iconPaint)
         c.drawLine(cx - s * 0.45f, cy + s * 0.95f, cx + s * 0.45f, cy + s * 0.95f, iconPaint)
     }
 
-    private fun drawAssistantIcon(c: Canvas, cx: Float, cy: Float, color: Int) {
-        val s = 8.5f * d
+    private fun drawAssistantIcon(c: Canvas, cx: Float, cy: Float, color: Int, scale: Float = 1f) {
+        val s = 8.5f * d * scale
         iconPaint.color = color
         iconPaint.strokeWidth = 1.7f * d
         iconPaint.style = Paint.Style.STROKE
-        // Antenna
         c.drawLine(cx, cy - s * 1.0f, cx, cy - s * 0.68f, iconPaint)
-        // Bot head
         c.drawRoundRect(cx - s * 0.9f, cy - s * 0.68f, cx + s * 0.9f, cy + s * 0.78f, 3.2f * d, 3.2f * d, iconPaint)
-        // Eyes + voice bar
         iconPaint.style = Paint.Style.FILL
         c.drawCircle(cx, cy - s * 1.0f, 1.3f * d, iconPaint)
         c.drawCircle(cx - s * 0.36f, cy - s * 0.08f, 1.35f * d, iconPaint)
@@ -521,6 +752,24 @@ class KeyboardView(context: Context) : View(context) {
         return true
     }
 
+    private fun hitTestStrip(x: Float, y: Float): StripHit? {
+        if (y < 0f || y >= stripH) return null
+        if (stripDirty && width > 0) updateStripRects()
+
+        // পূর্ণ 48dp touch height নিশ্চিত করতে horizontal range দিয়েও match করা হয়
+        if (!composingRect.isEmpty && x in composingRect.left..composingRect.right) {
+            return StripHit.Composing
+        }
+        for ((action, rect) in quickActionRects) {
+            if (x in rect.left..rect.right) return StripHit.Action(action)
+        }
+        for (i in suggestionRects.indices) {
+            val r = suggestionRects[i]
+            if (x in r.left..r.right) return StripHit.Word(i)
+        }
+        return null
+    }
+
     private fun findKey(x: Float, y: Float): Box? {
         if (boxRows.isEmpty()) return null
         val rh = rowH()
@@ -540,11 +789,17 @@ class KeyboardView(context: Context) : View(context) {
 
     private fun onDown(id: Int, x: Float, y: Float) {
         if (y < stripH) {
-            ptrs.put(id, Ptr(null, true))
+            val hit = hitTestStrip(x, y)
+            val p = Ptr(null, inStrip = true, stripHit = hit)
+            ptrs.put(id, p)
+            if (hit is StripHit.Word) {
+                scheduleStripLong(p, hit.index)
+            }
+            invalidate()
             return
         }
         val b = findKey(x, y)
-        val p = Ptr(b, false)
+        val p = Ptr(b, inStrip = false)
         ptrs.put(id, p)
         if (b != null) {
             listener?.onFeedback()
@@ -564,7 +819,16 @@ class KeyboardView(context: Context) : View(context) {
 
     private fun onMove(id: Int, x: Float, y: Float) {
         val p = ptrs.get(id) ?: return
-        if (p.inStrip || p.consumed) return
+        if (p.consumed) return
+        if (p.inStrip) {
+            val newHit = hitTestStrip(x, y)
+            if (newHit != p.stripHit) {
+                clearRunnable(p)
+                p.stripHit = null
+                invalidate()
+            }
+            return
+        }
         val cur = p.box ?: return
         if (cur.key.type != KeyType.CHAR) return
         val nb = findKey(x, y) ?: return
@@ -581,13 +845,29 @@ class KeyboardView(context: Context) : View(context) {
         clearRunnable(p)
         ptrs.remove(id)
         if (p.inStrip) {
-            if (y < stripH) {
-                val idx = suggestionRects.indexOfFirst { it.contains(x, y) }
-                if (suggestions.isNotEmpty() && idx >= 0) {
-                    listener?.onFeedback()
-                    listener?.onSuggestionTap(suggestions[idx])
-                } else if (suggestions.isEmpty()) {
-                    listener?.onComposingTap()
+            val hit = hitTestStrip(x, y)
+            if (!p.consumed && hit != null && hit == p.stripHit) {
+                when (hit) {
+                    StripHit.Composing -> {
+                        listener?.onFeedback()
+                        listener?.onComposingTap()
+                    }
+                    is StripHit.Word -> {
+                        val word = suggestions.getOrNull(hit.index)
+                        if (word != null) {
+                            listener?.onFeedback()
+                            listener?.onSuggestionTap(word)
+                        }
+                    }
+                    is StripHit.Action -> {
+                        listener?.onFeedback()
+                        when (hit.action) {
+                            QuickAction.NOTEPAD -> listener?.onNotepad()
+                            QuickAction.TRANSLATE -> listener?.onTranslate()
+                            QuickAction.VOICE -> listener?.onVoice()
+                            QuickAction.ASSISTANT -> listener?.onAssistant()
+                        }
+                    }
                 }
             }
         } else {
@@ -595,6 +875,21 @@ class KeyboardView(context: Context) : View(context) {
             if (b != null && !p.consumed) fire(b.key)
         }
         invalidate()
+    }
+
+    private fun scheduleStripLong(p: Ptr, wordIndex: Int) {
+        val r = Runnable {
+            val word = suggestions.getOrNull(wordIndex)
+            if (word != null) {
+                p.consumed = true
+                p.stripHit = null
+                listener?.onFeedback()
+                listener?.onSuggestionLongPress(word)
+                invalidate()
+            }
+        }
+        p.runnable = r
+        handler.postDelayed(r, 420L)
     }
 
     private fun scheduleRepeat(p: Ptr) {

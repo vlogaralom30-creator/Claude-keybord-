@@ -8,6 +8,11 @@ enum class ListeningMode {
     PUSH_TO_TALK
 }
 
+enum class OverlayEdge {
+    LEFT,
+    RIGHT
+}
+
 /**
  * Assistant runtime preferences (backed by AssistantConfig.PREFS).
  */
@@ -21,10 +26,19 @@ object AssistantPrefs {
     private const val KEY_BLOCKED_PACKAGES = "blocked_packages"
     private const val KEY_LISTENING_MODE = "listening_mode"
     private const val KEY_OVERLAY_HUD_ENABLED = "overlay_hud_enabled"
+    private const val KEY_OVERLAY_EDGE = "overlay_edge"
+    private const val KEY_OVERLAY_Y_RATIO = "overlay_y_ratio"
+    private const val KEY_AD_SKIP_ENABLED = "ad_skip_enabled"
+    private const val KEY_AD_SKIP_GAMES_ENABLED = "ad_skip_games_enabled"
+    private const val KEY_AD_SKIP_COUNT = "ad_skip_count"
+    private const val KEY_AD_SKIP_LAST = "ad_skip_last"
 
     const val MIN_FLOW_TIMEOUT_SEC = 2
     const val MAX_FLOW_TIMEOUT_SEC = 15
     const val DEFAULT_FLOW_TIMEOUT_SEC = 6
+    const val DEFAULT_OVERLAY_Y_RATIO = 0.34f
+    const val MIN_OVERLAY_Y_RATIO = 0.12f
+    const val MAX_OVERLAY_Y_RATIO = 0.78f
 
     private fun prefs(ctx: Context): SharedPreferences =
         ctx.getSharedPreferences(AssistantConfig.PREFS, Context.MODE_PRIVATE)
@@ -93,5 +107,59 @@ object AssistantPrefs {
 
     fun setOverlayHudEnabled(ctx: Context, enabled: Boolean) {
         prefs(ctx).edit().putBoolean(KEY_OVERLAY_HUD_ENABLED, enabled).apply()
+    }
+
+    fun overlayEdge(ctx: Context): OverlayEdge {
+        val raw = prefs(ctx).getString(KEY_OVERLAY_EDGE, OverlayEdge.RIGHT.name)
+        return OverlayEdge.values().firstOrNull { it.name == raw } ?: OverlayEdge.RIGHT
+    }
+
+    fun setOverlayEdge(ctx: Context, edge: OverlayEdge) {
+        prefs(ctx).edit().putString(KEY_OVERLAY_EDGE, edge.name).apply()
+    }
+
+    fun overlayYRatio(ctx: Context): Float =
+        prefs(ctx).getFloat(KEY_OVERLAY_Y_RATIO, DEFAULT_OVERLAY_Y_RATIO)
+            .coerceIn(MIN_OVERLAY_Y_RATIO, MAX_OVERLAY_Y_RATIO)
+
+    fun setOverlayYRatio(ctx: Context, ratio: Float) {
+        prefs(ctx).edit()
+            .putFloat(KEY_OVERLAY_Y_RATIO, ratio.coerceIn(MIN_OVERLAY_Y_RATIO, MAX_OVERLAY_Y_RATIO))
+            .apply()
+    }
+
+    fun resetOverlayPosition(ctx: Context) {
+        prefs(ctx).edit()
+            .putString(KEY_OVERLAY_EDGE, OverlayEdge.RIGHT.name)
+            .putFloat(KEY_OVERLAY_Y_RATIO, DEFAULT_OVERLAY_Y_RATIO)
+            .apply()
+    }
+
+    fun adSkipEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean(KEY_AD_SKIP_ENABLED, true)
+
+    fun setAdSkipEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean(KEY_AD_SKIP_ENABLED, enabled).apply()
+    }
+
+    fun adSkipGamesEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean(KEY_AD_SKIP_GAMES_ENABLED, true)
+
+    fun setAdSkipGamesEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean(KEY_AD_SKIP_GAMES_ENABLED, enabled).apply()
+    }
+
+    fun adSkipCount(ctx: Context): Int =
+        prefs(ctx).getInt(KEY_AD_SKIP_COUNT, 0).coerceAtLeast(0)
+
+    fun lastAdSkipInfo(ctx: Context): String? =
+        prefs(ctx).getString(KEY_AD_SKIP_LAST, null)?.takeIf { it.isNotBlank() }
+
+    fun recordAdSkip(ctx: Context, label: String) {
+        val next = adSkipCount(ctx) + 1
+        prefs(ctx).edit()
+            .putInt(KEY_AD_SKIP_COUNT, next)
+            .putString(KEY_AD_SKIP_LAST, label.take(64))
+            .apply()
     }
 }

@@ -10,6 +10,8 @@ import com.banglakeys.app.Command
 import com.banglakeys.app.CommandOverlayManager
 import com.banglakeys.app.CommandParser
 import com.banglakeys.app.Dir
+import com.banglakeys.app.GeminiCommandInterpreter
+import com.banglakeys.app.GeminiConfig
 import com.banglakeys.app.KeyType
 import com.banglakeys.app.Layouts
 import com.banglakeys.app.ListeningMode
@@ -387,5 +389,332 @@ class ExampleRobolectricTest {
       v.draw(android.graphics.Canvas(bmp))
     }
     assertEquals(0, confirmClicks + cancelClicks + stopClicks + pttClicks + dismissClicks)
+  }
+
+  @Test
+  fun `gemini config stores user key and ignores placeholder`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    GeminiConfig.setKey(context, "")
+    assertEquals("", GeminiConfig.getUserKey(context))
+    assertEquals("", GeminiConfig.getEnvKey())
+
+    GeminiConfig.setKey(context, "AIzaSyTestExampleKey1234567890")
+    assertTrue(GeminiConfig.hasKey(context))
+    assertEquals(GeminiConfig.KeySource.USER_SETTINGS, GeminiConfig.keySource(context))
+    assertTrue(GeminiConfig.looksLikeStandardGeminiKey(GeminiConfig.getKey(context)))
+    assertFalse(GeminiConfig.looksLikeStandardGeminiKey("AQ.short_non_aiza"))
+
+    GeminiConfig.setKey(context, "")
+    assertFalse(GeminiConfig.hasKey(context))
+  }
+
+  @Test
+  fun `gemini command interpreter maps structured json across all packs`() {
+    assertEquals(
+      Command.OpenApp("tiktok"),
+      GeminiCommandInterpreter.parseJsonResponse("""{"type":"open_app","name":"tiktok"}""")
+    )
+    assertEquals(
+      Command.Swipe(Dir.UP),
+      GeminiCommandInterpreter.parseJsonResponse("""{"type":"swipe","direction":"up"}""")
+    )
+    assertEquals(
+      Command.AppCall("imo", "fatema", video = true),
+      GeminiCommandInterpreter.parseJsonResponse(
+        """{"type":"app_call","app_name":"imo","contact":"fatema","video":true}"""
+      )
+    )
+    assertEquals(
+      Command.AppMessage("whatsapp", "ammi", "ami ashchi", send = true),
+      GeminiCommandInterpreter.parseJsonResponse(
+        """{"type":"app_message","app_name":"whatsapp","contact":"ammi","text":"ami ashchi","send":true}"""
+      )
+    )
+    assertEquals(
+      Command.CreateFolder("tour", "photos"),
+      GeminiCommandInterpreter.parseJsonResponse(
+        """{"type":"create_folder","name":"tour","parent_folder":"photos"}"""
+      )
+    )
+    assertEquals(
+      Command.SetTimer(300),
+      GeminiCommandInterpreter.parseJsonResponse("""{"type":"set_timer","seconds":300}""")
+    )
+    assertEquals(
+      Command.OpenSystemSettings(SettingsTarget.WIFI),
+      GeminiCommandInterpreter.parseJsonResponse(
+        """{"type":"open_system_settings","settings_target":"wifi"}"""
+      )
+    )
+    assertEquals(
+      Command.PanicStop,
+      GeminiCommandInterpreter.parseJsonResponse("""{"type":"panic_stop"}""")
+    )
+    assertEquals(
+      null,
+      GeminiCommandInterpreter.parseJsonResponse("""{"type":"unknown"}""")
+    )
+  }
+
+  @Test
+  fun `suggestions engine supports english, case preservation, language isolation, and forget`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    context.getSharedPreferences("bk_suggest", Context.MODE_PRIVATE).edit().clear().commit()
+    val suggestions = Suggestions(context)
+
+    // Cold-start idle suggestions should never be empty
+    assertTrue(suggestions.suggestionsFor("", bangla = true).isNotEmpty())
+    assertTrue(suggestions.suggestionsFor("", bangla = false).isNotEmpty())
+
+    // English prefix completions and case preservation
+    val lowerEn = suggestions.suggestionsFor("th", bangla = false)
+    assertTrue(lowerEn.contains("the"))
+    val titleEn = suggestions.suggestionsFor("Th", bangla = false)
+    assertTrue(titleEn.any { it.startsWith("Th") })
+    val capsEn = suggestions.suggestionsFor("TH", bangla = false)
+    assertTrue(capsEn.contains("THE"))
+
+    // Language isolation: learned Bangla must not pollute English, and vice versa
+    suggestions.learn("khl", "খুলনা", bangla = true)
+    assertTrue(suggestions.suggestionsFor("khl", bangla = true).contains("খুলনা"))
+    assertFalse(suggestions.suggestionsFor("khl", bangla = false).contains("খুলনা"))
+
+    suggestions.learn("ktl", "kotlin", bangla = false)
+    assertTrue(suggestions.suggestionsFor("ktl", bangla = false).contains("kotlin"))
+    assertFalse(suggestions.suggestionsFor("ktl", bangla = true).contains("kotlin"))
+
+    // Forget removes learned word
+    assertTrue(suggestions.isLearned("kotlin", bangla = false))
+    assertTrue(suggestions.forget("kotlin", bangla = false))
+    assertFalse(suggestions.isLearned("kotlin", bangla = false))
+    assertFalse(suggestions.suggestionsFor("ktl", bangla = false).contains("kotlin"))
+
+    // Bangla phonetic live fallback for novel words not in starter seed
+    val customBn = suggestions.suggestionsFor("pkh", bangla = true)
+    assertTrue(customBn.contains(Phonetic.convert("pkh")))
+  }
+
+  @Test
+  fun `keyboardView renders typing composing badge plus pills and dispatches idle quick actions`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val kv = com.banglakeys.app.KeyboardView(context)
+    kv.setLayout(Layouts.phonetic(numberRow = false, bnDigits = true), "বাংলা", 1f)
+    kv.measure(
+      android.view.View.MeasureSpec.makeMeasureSpec(1080, android.view.View.MeasureSpec.EXACTLY),
+      android.view.View.MeasureSpec.makeMeasureSpec(900, android.view.View.MeasureSpec.AT_MOST)
+    )
+    kv.layout(0, 0, kv.measuredWidth, kv.measuredHeight)
+
+    var composingTapped = 0
+    val tappedWords = ArrayList<String>()
+    var notepadTapped = 0
+    var translateTapped = 0
+    var voiceTapped = 0
+    var assistantTapped = 0
+
+    kv.listener = object : com.banglakeys.app.KeyboardView.Listener {
+      override fun onText(text: String) {}
+      override fun onDelete() {}
+      override fun onEnter() {}
+      override fun onSpace() {}
+      override fun onSpaceLongPress() {}
+      override fun onSwitchLang() {}
+      override fun onSymbols(mode: Int) {}
+      override fun onComposingTap() { composingTapped++ }
+      override fun onFeedback() {}
+      override fun onSuggestionTap(word: String) { tappedWords.add(word) }
+      override fun onSnippet(text: String) {}
+      override fun onNotepad() { notepadTapped++ }
+      override fun onTranslate() { translateTapped++ }
+      override fun onVoice() { voiceTapped++ }
+      override fun onAssistant() { assistantTapped++ }
+    }
+
+    // 1) Typing state: Composing badge + 3 suggestion pills
+    kv.setComposing("আমি")
+    kv.setSuggestions(listOf("আমি", "আমাদের", "আমরা"))
+    val composingRect = kv.stripComposingRect()
+    val wordRects = kv.stripSuggestionRects()
+    assertFalse(composingRect.isEmpty)
+    assertEquals(3, wordRects.size)
+    assertTrue(kv.stripQuickActionRects().isEmpty())
+
+    // Draw once to verify zero exceptions
+    val bmp = android.graphics.Bitmap.createBitmap(
+      kv.measuredWidth,
+      kv.measuredHeight,
+      android.graphics.Bitmap.Config.ARGB_8888
+    )
+    kv.draw(android.graphics.Canvas(bmp))
+
+    fun tap(x: Float, y: Float) {
+      val now = android.os.SystemClock.uptimeMillis()
+      val down = android.view.MotionEvent.obtain(now, now, android.view.MotionEvent.ACTION_DOWN, x, y, 0)
+      val up = android.view.MotionEvent.obtain(now, now + 30, android.view.MotionEvent.ACTION_UP, x, y, 0)
+      kv.onTouchEvent(down)
+      kv.onTouchEvent(up)
+      down.recycle()
+      up.recycle()
+    }
+
+    tap(composingRect.centerX(), composingRect.centerY())
+    assertEquals(1, composingTapped)
+
+    tap(wordRects[1].centerX(), wordRects[1].centerY())
+    assertEquals(listOf("আমাদের"), tappedWords)
+
+    // 2) Idle state: 4 vector quick actions + starter/next-word pills
+    kv.setComposing("")
+    kv.setSuggestions(listOf("আমি", "কেমন", "আজ"))
+    kv.draw(android.graphics.Canvas(bmp))
+
+    assertTrue(kv.stripComposingRect().isEmpty)
+    val actions = kv.stripQuickActionRects()
+    assertEquals(4, actions.size)
+    assertTrue(kv.stripSuggestionRects().isNotEmpty())
+
+    tap(actions[com.banglakeys.app.KeyboardView.QuickAction.NOTEPAD]!!.centerX(),
+      actions[com.banglakeys.app.KeyboardView.QuickAction.NOTEPAD]!!.centerY())
+    tap(actions[com.banglakeys.app.KeyboardView.QuickAction.TRANSLATE]!!.centerX(),
+      actions[com.banglakeys.app.KeyboardView.QuickAction.TRANSLATE]!!.centerY())
+    tap(actions[com.banglakeys.app.KeyboardView.QuickAction.VOICE]!!.centerX(),
+      actions[com.banglakeys.app.KeyboardView.QuickAction.VOICE]!!.centerY())
+    tap(actions[com.banglakeys.app.KeyboardView.QuickAction.ASSISTANT]!!.centerX(),
+      actions[com.banglakeys.app.KeyboardView.QuickAction.ASSISTANT]!!.centerY())
+
+    assertEquals(1, notepadTapped)
+    assertEquals(1, translateTapped)
+    assertEquals(1, voiceTapped)
+    assertEquals(1, assistantTapped)
+  }
+
+  @Test
+  fun `side-edge overlay prefs persist edge, clamped height, and compact vs expanded widths`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    AssistantPrefs.resetOverlayPosition(context)
+    assertEquals(com.banglakeys.app.OverlayEdge.RIGHT, AssistantPrefs.overlayEdge(context))
+    assertEquals(AssistantPrefs.DEFAULT_OVERLAY_Y_RATIO, AssistantPrefs.overlayYRatio(context), 0.001f)
+
+    AssistantPrefs.setOverlayEdge(context, com.banglakeys.app.OverlayEdge.LEFT)
+    AssistantPrefs.setOverlayYRatio(context, 0.99f)
+    assertEquals(com.banglakeys.app.OverlayEdge.LEFT, AssistantPrefs.overlayEdge(context))
+    assertEquals(AssistantPrefs.MAX_OVERLAY_Y_RATIO, AssistantPrefs.overlayYRatio(context), 0.001f)
+
+    val overlay = CommandOverlayManager(
+      ctx = context,
+      onConfirmClick = {},
+      onCancelClick = {},
+      onStopFlowClick = {},
+      onPttTriggerClick = {},
+      onDismissOrSleepClick = {}
+    )
+
+    val dormantState = CommandOverlayManager.OverlayState.Dormant(isBangla = true)
+    val passiveListen = CommandOverlayManager.OverlayState.Listening(partialText = "", awakeSec = null, isPtt = false)
+    val activeListen = CommandOverlayManager.OverlayState.Listening(partialText = "open youtube", awakeSec = 10, isPtt = true)
+
+    assertTrue(overlay.isCompactTab(dormantState))
+    assertTrue(overlay.isCompactTab(passiveListen))
+    assertFalse(overlay.isCompactTab(activeListen))
+
+    val tabView = overlay.buildViewForState(dormantState)
+    tabView.measure(
+      android.view.View.MeasureSpec.makeMeasureSpec(1080, android.view.View.MeasureSpec.AT_MOST),
+      android.view.View.MeasureSpec.makeMeasureSpec(1920, android.view.View.MeasureSpec.AT_MOST)
+    )
+    val cardView = overlay.buildViewForState(activeListen)
+    cardView.measure(
+      android.view.View.MeasureSpec.makeMeasureSpec(1080, android.view.View.MeasureSpec.AT_MOST),
+      android.view.View.MeasureSpec.makeMeasureSpec(1920, android.view.View.MeasureSpec.AT_MOST)
+    )
+    assertTrue(tabView.measuredWidth < cardView.measuredWidth)
+  }
+
+  @Test
+  fun `adSkipper skips youtube and verified sdk ads while blocking registration, forms, and countdowns`() {
+    fun node(
+      id: Int,
+      viewId: String = "",
+      cls: String = "android.widget.TextView",
+      text: String = "",
+      desc: String = "",
+      hint: String = "",
+      clickable: Boolean = true,
+      enabled: Boolean = true,
+      visible: Boolean = true,
+      editable: Boolean = false,
+      focused: Boolean = false,
+      password: Boolean = false,
+      l: Int = 880,
+      t: Int = 60,
+      r: Int = 1040,
+      b: Int = 140,
+      parentId: Int = 0
+    ) = com.banglakeys.app.AdSkipper.AdNode(
+      id = id,
+      viewId = viewId,
+      className = cls,
+      text = text,
+      contentDescription = desc,
+      hintText = hint,
+      isClickable = clickable,
+      isEnabled = enabled,
+      isVisible = visible,
+      isEditable = editable,
+      isFocused = focused,
+      isPassword = password,
+      left = l,
+      top = t,
+      right = r,
+      bottom = b,
+      parentId = parentId
+    )
+
+    // 1. Positive: YouTube ready skip_ad_button
+    val ytReady = listOf(
+      node(1, viewId = "com.google.android.youtube:id/ad_badge", text = "Sponsored", clickable = false),
+      node(2, viewId = "com.google.android.youtube:id/skip_ad_button", text = "Skip", l = 800, t = 900, r = 1040, b = 980)
+    )
+    val ytMatch = com.banglakeys.app.AdSkipper.findSkipTarget("com.google.android.youtube", 1080, 1920, ytReady, allowGameAds = false)
+    assertNotNull(ytMatch)
+    assertEquals(2, ytMatch?.nodeId)
+
+    // 2. Negative: YouTube countdown still active ("Skip in 4")
+    val ytCountdown = listOf(
+      node(1, viewId = "com.google.android.youtube:id/skip_ad_button", text = "Skip in 4", l = 800, t = 900, r = 1040, b = 980)
+    )
+    assertEquals(null, com.banglakeys.app.AdSkipper.findSkipTarget("com.google.android.youtube", 1080, 1920, ytCountdown, allowGameAds = true))
+
+    // 3. Positive: Game interstitial with verified AdMob/AppLovin proof + corner X close (ignores Install CTA)
+    val gameAd = listOf(
+      node(1, viewId = "com.applovin.sdk:id/al_ad_view", text = "Test Ad", clickable = false, l = 20, t = 40, r = 240, b = 90),
+      node(2, text = "Install Now", l = 100, t = 1500, r = 980, b = 1650),
+      node(3, viewId = "com.applovin.sdk:id/al_close_button", desc = "×", l = 960, t = 50, r = 1040, b = 130)
+    )
+    val gameMatch = com.banglakeys.app.AdSkipper.findSkipTarget("com.example.puzzle.game", 1080, 1920, gameAd, allowGameAds = true)
+    assertNotNull(gameMatch)
+    assertEquals(3, gameMatch?.nodeId)
+    assertEquals(null, com.banglakeys.app.AdSkipper.findSkipTarget("com.example.puzzle.game", 1080, 1920, gameAd, allowGameAds = false))
+
+    // 4. Negative: Registration / Sign-Up form with "Skip" button MUST NEVER be clicked
+    val signUpForm = listOf(
+      node(1, text = "Create Account", clickable = false, l = 40, t = 120, r = 600, b = 200),
+      node(2, cls = "android.widget.EditText", hint = "Phone number", editable = true, clickable = true, l = 40, t = 300, r = 900, b = 420),
+      node(3, text = "Skip", l = 860, t = 80, r = 1020, b = 150)
+    )
+    assertEquals(null, com.banglakeys.app.AdSkipper.findSkipTarget("com.some.social.app", 1080, 1920, signUpForm, allowGameAds = true))
+
+    // 5. Negative: Onboarding "Skip for now" or generic Close dialog with no Ad-SDK proof MUST NOT be clicked
+    val onboarding = listOf(
+      node(1, text = "Welcome! Choose your interests", clickable = false, l = 40, t = 120, r = 800, b = 220),
+      node(2, text = "Skip for now", l = 820, t = 80, r = 1040, b = 140)
+    )
+    assertEquals(null, com.banglakeys.app.AdSkipper.findSkipTarget("com.some.news.app", 1080, 1920, onboarding, allowGameAds = true))
+
+    val regularDialog = listOf(
+      node(1, text = "Save changes before closing?", clickable = false, l = 100, t = 700, r = 900, b = 850),
+      node(2, desc = "×", l = 920, t = 80, r = 1000, b = 150)
+    )
+    assertEquals(null, com.banglakeys.app.AdSkipper.findSkipTarget("com.some.editor.app", 1080, 1920, regularDialog, allowGameAds = true))
   }
 }
