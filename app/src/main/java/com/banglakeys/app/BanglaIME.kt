@@ -9,18 +9,31 @@ import android.text.InputType
 import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
 import android.view.View
+import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
+import android.widget.FrameLayout
 import android.widget.Toast
 
 class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listener {
 
+    private sealed class NoteEditTarget {
+        object NewNote : NoteEditTarget()
+        data class EditPinned(val index: Int, val oldText: String) : NoteEditTarget()
+        data class EditRecent(val oldText: String) : NoteEditTarget()
+    }
+
+    private var hostLayout: KeyboardHostLayout? = null
     private var kv: KeyboardView? = null
+    private var panelView: NotepadClipboardPanelView? = null
     private lateinit var prefs: SharedPreferences
 
     private val buf = StringBuilder()      // active roman/word prefix buffer
     private var secretMode = false
     private val secretText = StringBuilder()
+    private var noteEditTarget: NoteEditTarget? = null
+    private val noteCommittedBuf = StringBuilder()
+    private val noteRomanBuf = StringBuilder()
 
     private var userBangla = true          // user-এর পছন্দ করা ভাষা
     private var bangla = true              // এই field-এ কার্যকর ভাষা
@@ -64,13 +77,92 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
     }
 
     override fun onCreateInputView(): View {
-        val v = KeyboardView(this)
+        val host = KeyboardHostLayout(this).apply {
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        }
+        hostLayout = host
+
+        val v = host.keyboardView
         v.listener = this
         kv = v
+
+        val panel = host.panelView.apply {
+            listener = object : NotepadClipboardPanelView.Listener {
+                override fun onBackToKeyboard() {
+                    onFeedback()
+                    closePanel()
+                }
+
+                override fun onPasteItem(text: String) {
+                    onFeedback()
+                    pasteFromPanel(text)
+                }
+
+                override fun onAddNewNote() {
+                    onFeedback()
+                    startNoteEdit(NoteEditTarget.NewNote, "")
+                }
+
+                override fun onPinRecent(text: String) {
+                    onFeedback()
+                    notes = Notes(this@BanglaIME)
+                    clipboardMemory.reload()
+                    notes.add(text)
+                    clipboardMemory.remove(text)
+                    refreshPanelData()
+                    Toast.makeText(this@BanglaIME, "📌 Pinned হয়েছে", Toast.LENGTH_SHORT).show()
+                }
+
+                override fun onUnpinNote(index: Int, text: String) {
+                    onFeedback()
+                    notes = Notes(this@BanglaIME)
+                    clipboardMemory.reload()
+                    notes.remove(index)
+                    clipboardMemory.add(text)
+                    refreshPanelData()
+                    Toast.makeText(this@BanglaIME, "Recent-এ সরানো হয়েছে", Toast.LENGTH_SHORT).show()
+                }
+
+                override fun onEditPinned(index: Int, text: String) {
+                    onFeedback()
+                    startNoteEdit(NoteEditTarget.EditPinned(index, text), text)
+                }
+
+                override fun onEditRecent(text: String) {
+                    onFeedback()
+                    startNoteEdit(NoteEditTarget.EditRecent(text), text)
+                }
+
+                override fun onRemovePinned(index: Int, text: String) {
+                    onFeedback()
+                    notes = Notes(this@BanglaIME)
+                    notes.remove(index)
+                    refreshPanelData()
+                }
+
+                override fun onRemoveRecent(text: String) {
+                    onFeedback()
+                    clipboardMemory.reload()
+                    clipboardMemory.remove(text)
+                    refreshPanelData()
+                }
+
+                override fun onClearRecent() {
+                    onFeedback()
+                    clipboardMemory.clear()
+                    refreshPanelData()
+                }
+            }
+        }
+        panelView = panel
+
         loadPrefs()
         refreshLayout()
         refreshStrip()
-        return v
+        return host
     }
 
     override fun onEvaluateFullscreenMode(): Boolean = false
@@ -79,13 +171,14 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
         super.onStartInputView(info, restarting)
         loadPrefs()
         buf.setLength(0)
-        // অন্য field-এ গেলে secret mode ছেড়ে দিই, নইলে সেখানে টাইপ করা লেখা হারিয়ে যেত
+        // অন্য field-এ গেলে secret/note-edit mode ছেড়ে দিই, নইলে সেখানে টাইপ করা লেখা হারিয়ে যেত
         if (!restarting) {
             secretMode = false
             secretText.setLength(0)
             kv?.setSecretMode(false)
         }
-        inPanel = false
+        clearNoteEditState()
+        closePanel()
 
         val type = info?.inputType ?: 0
         inputClass = type and InputType.TYPE_MASK_CLASS
@@ -134,6 +227,8 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
             secretText.setLength(0)
             kv?.setSecretMode(false)
         }
+        clearNoteEditState()
+        closePanel()
         commitComposing()
         super.onFinishInputView(finishingInput)
     }
@@ -173,6 +268,8 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
         numRow = prefs.getBoolean("numrow", false)
         bnDigitsPref = prefs.getBoolean("bndigits", true)
         heightPct = prefs.getInt("height", 100)
+        kv?.reloadTheme()
+        panelView?.reloadTheme()
     }
 
     private fun spaceLabelFor(): String = if (bangla) "বাংলা" else "English"
@@ -214,6 +311,10 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
     // ---------------- composing & strip sync ----------------
 
     private fun refreshStrip() {
+        if (noteEditTarget != null) {
+            updateNoteEditStrip()
+            return
+        }
         if (secretMode) {
             updateSecretStrip()
             return
@@ -264,6 +365,19 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
     // ---------------- KeyboardView.Listener ----------------
 
     override fun onText(text: String) {
+        if (noteEditTarget != null) {
+            val ch = text.singleOrNull()
+            val isBnWordChar = bangla && symbols == 0 && ch != null &&
+                (ch in 'a'..'z' || ch in 'A'..'Z' || ((ch == '^' || ch == '`') && noteRomanBuf.isNotEmpty()))
+            if (isBnWordChar) {
+                noteRomanBuf.append(ch)
+            } else {
+                flushTrailingPhoneticInNoteEdit()
+                noteCommittedBuf.append(text)
+            }
+            updateNoteEditStrip()
+            return
+        }
         if (secretMode) {
             val ch = text.singleOrNull()
             val isWordChar = ch != null &&
@@ -308,6 +422,14 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
     }
 
     override fun onDelete() {
+        if (noteEditTarget != null) {
+            when {
+                noteRomanBuf.isNotEmpty() -> noteRomanBuf.deleteCharAt(noteRomanBuf.length - 1)
+                noteCommittedBuf.isNotEmpty() -> noteCommittedBuf.deleteCharAt(noteCommittedBuf.length - 1)
+            }
+            updateNoteEditStrip()
+            return
+        }
         if (secretMode) {
             if (secretText.isNotEmpty()) {
                 secretText.deleteCharAt(secretText.length - 1)
@@ -347,6 +469,12 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
     }
 
     override fun onSpace() {
+        if (noteEditTarget != null) {
+            flushTrailingPhoneticInNoteEdit()
+            noteCommittedBuf.append(" ")
+            updateNoteEditStrip()
+            return
+        }
         if (secretMode) {
             flushTrailingPhoneticInSecret()
             secretText.append(" ")
@@ -366,6 +494,10 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
     }
 
     override fun onEnter() {
+        if (noteEditTarget != null) {
+            onNoteEditSave()
+            return
+        }
         if (secretMode) {
             sendSecretMessage()
             return
@@ -387,12 +519,23 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
     }
 
     override fun onSwitchLang() {
+        if (noteEditTarget != null) {
+            flushTrailingPhoneticInNoteEdit()
+            userBangla = !userBangla
+            prefs.edit().putBoolean("bn", userBangla).apply()
+            bangla = userBangla
+            closePanel()
+            symbols = 0
+            refreshLayout()
+            updateNoteEditStrip()
+            return
+        }
         if (secretMode) {
             flushTrailingPhoneticInSecret()
             userBangla = !userBangla
             prefs.edit().putBoolean("bn", userBangla).apply()
             bangla = userBangla
-            inPanel = false
+            closePanel()
             symbols = 0
             refreshLayout()
             updateSecretStrip()
@@ -402,7 +545,7 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
         userBangla = !userBangla
         prefs.edit().putBoolean("bn", userBangla).apply()
         bangla = userBangla
-        inPanel = false
+        closePanel()
         symbols = 0
         refreshLayout()
         refreshStrip()
@@ -410,16 +553,24 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
     }
 
     override fun onSymbols(mode: Int) {
+        if (noteEditTarget != null) {
+            flushTrailingPhoneticInNoteEdit()
+            closePanel()
+            symbols = mode
+            refreshLayout()
+            updateNoteEditStrip()
+            return
+        }
         if (secretMode) {
             flushTrailingPhoneticInSecret()
-            inPanel = false
+            closePanel()
             symbols = mode
             refreshLayout()
             updateSecretStrip()
             return
         }
         commitComposing()
-        inPanel = false
+        closePanel()
         symbols = mode
         refreshLayout()
         refreshStrip()
@@ -477,11 +628,14 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
     }
 
     override fun onSnippet(text: String) {
+        pasteFromPanel(text)
+    }
+
+    private fun pasteFromPanel(text: String) {
         if (secretMode) {
             flushTrailingPhoneticInSecret()
             secretText.append(text)
-            inPanel = false
-            refreshLayout()
+            closePanel()
             updateSecretStrip()
             return
         }
@@ -490,16 +644,100 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
         refreshStrip()
     }
 
-    override fun onNotepad() {
-        commitComposing()
-        inPanel = !inPanel
-        if (inPanel) {
-            notes = Notes(this)
-            val items = notes.all() + clipboardMemory.clips()
-            kv?.setLayout(Layouts.panel(items), spaceLabelFor(), heightPct / 100f)
-        } else {
+    private fun refreshPanelData() {
+        notes = Notes(this)
+        clipboardMemory.reload()
+        panelView?.setData(notes.all(), clipboardMemory.clips())
+    }
+
+    private fun openPanel() {
+        inPanel = true
+        refreshPanelData()
+        hostLayout?.showPanel(true)
+    }
+
+    private fun closePanel() {
+        inPanel = false
+        hostLayout?.showPanel(false)
+    }
+
+    private fun startNoteEdit(target: NoteEditTarget, initialText: String) {
+        noteEditTarget = target
+        noteCommittedBuf.setLength(0)
+        noteCommittedBuf.append(initialText)
+        noteRomanBuf.setLength(0)
+        closePanel()
+        if (symbols != 0) {
+            symbols = 0
             refreshLayout()
         }
+        updateNoteEditStrip()
+    }
+
+    private fun clearNoteEditState() {
+        noteEditTarget = null
+        noteCommittedBuf.setLength(0)
+        noteRomanBuf.setLength(0)
+        kv?.setNoteEditMode(false)
+    }
+
+    private fun noteEditPlain(): String {
+        val active = if (noteRomanBuf.isEmpty()) "" else {
+            if (bangla && symbols == 0) Phonetic.convert(noteRomanBuf.toString()) else noteRomanBuf.toString()
+        }
+        return noteCommittedBuf.toString() + active
+    }
+
+    private fun flushTrailingPhoneticInNoteEdit() {
+        if (noteRomanBuf.isEmpty()) return
+        val converted = if (bangla && symbols == 0) Phonetic.convert(noteRomanBuf.toString()) else noteRomanBuf.toString()
+        noteCommittedBuf.append(converted)
+        noteRomanBuf.setLength(0)
+    }
+
+    private fun updateNoteEditStrip() {
+        kv?.setNoteEditMode(true)
+        val plain = noteEditPlain()
+        kv?.setComposing(if (plain.isEmpty()) "" else "✏️ $plain")
+        kv?.setSuggestions(emptyList())
+    }
+
+    override fun onNoteEditSave() {
+        val target = noteEditTarget ?: return
+        val finalStr = noteEditPlain().trim()
+        notes = Notes(this)
+        when (target) {
+            NoteEditTarget.NewNote -> {
+                if (finalStr.isNotEmpty()) notes.add(finalStr)
+            }
+            is NoteEditTarget.EditPinned -> {
+                if (finalStr.isNotEmpty()) notes.update(target.index, finalStr)
+                else notes.remove(target.index)
+            }
+            is NoteEditTarget.EditRecent -> {
+                clipboardMemory.reload()
+                if (finalStr.isNotEmpty()) clipboardMemory.update(target.oldText, finalStr)
+                else clipboardMemory.remove(target.oldText)
+            }
+        }
+        clearNoteEditState()
+        openPanel()
+    }
+
+    override fun onNoteEditCancel() {
+        if (noteEditTarget == null) return
+        clearNoteEditState()
+        openPanel()
+    }
+
+    override fun onNotepad() {
+        commitComposing()
+        if (noteEditTarget != null) {
+            clearNoteEditState()
+            openPanel()
+            return
+        }
+        if (inPanel) closePanel() else openPanel()
     }
 
     /** Secret mode-এ টাইপ করা Roman অক্ষর বাংলা মোডে phonetic করে। */
@@ -600,6 +838,7 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
 
     override fun onSecretToggle() {
         commitComposing()
+        clearNoteEditState()
         val contacts = SecretConfig.getContacts(this)
 
         // Secret mode চালু + কিছু লেখা নেই + একাধিক contact => পরের contact-এ যাই
@@ -626,9 +865,9 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
             if (savedDraft.isNotBlank()) {
                 secretText.append(savedDraft)
             }
+            closePanel()
             if (symbols != 0) {
                 symbols = 0
-                inPanel = false
                 refreshLayout()
             }
             updateSecretStrip()

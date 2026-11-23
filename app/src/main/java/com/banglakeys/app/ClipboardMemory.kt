@@ -24,6 +24,11 @@ class ClipboardMemory(private val context: Context) {
         load()
     }
 
+    fun reload() {
+        items.clear()
+        load()
+    }
+
     /** IME-র onCreate() থেকে call করুন, clipboard listen শুরু করতে। */
     fun start() {
         if (manager != null) return
@@ -57,6 +62,18 @@ class ClipboardMemory(private val context: Context) {
         items.add(0, t)
         while (items.size > MAX_ITEMS) items.removeAt(items.size - 1)
         save()
+    }
+
+    fun update(oldText: String, newText: String): Boolean {
+        val idx = items.indexOf(oldText)
+        val t = newText.trim()
+        if (idx < 0 || t.isEmpty()) return false
+        items.removeAt(idx)
+        val existing = items.indexOf(t)
+        if (existing >= 0) items.removeAt(existing)
+        items.add(idx.coerceAtMost(items.size), t)
+        save()
+        return true
     }
 
     fun remove(text: String) {

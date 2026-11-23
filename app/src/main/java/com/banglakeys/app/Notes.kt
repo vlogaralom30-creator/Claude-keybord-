@@ -29,16 +29,36 @@ class Notes(context: Context) {
         save()
     }
 
+    fun contains(text: String): Boolean = items.contains(text.trim())
+
     fun update(index: Int, text: String) {
         if (index !in items.indices) return
-        items[index] = text.trim()
+        val t = text.trim()
+        if (t.isEmpty()) return
+        items[index] = t
         save()
+    }
+
+    fun updateByText(oldText: String, newText: String): Boolean {
+        val idx = items.indexOf(oldText)
+        if (idx < 0) return false
+        val t = newText.trim()
+        if (t.isEmpty()) return false
+        items[idx] = t
+        save()
+        return true
     }
 
     fun remove(index: Int) {
         if (index !in items.indices) return
         items.removeAt(index)
         save()
+    }
+
+    fun removeByText(text: String): Boolean {
+        val removed = items.remove(text)
+        if (removed) save()
+        return removed
     }
 
     private fun save() {

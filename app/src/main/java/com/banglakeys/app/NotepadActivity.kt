@@ -30,6 +30,9 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.EditNote
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.PushPin
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
@@ -65,6 +68,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import com.example.R
 import com.example.ui.theme.BanglaKeysTheme
+import com.example.ui.theme.ProvideSafeTextToolbar
 import kotlinx.coroutines.launch
 
 class NotepadActivity : ComponentActivity() {
@@ -91,6 +95,10 @@ fun NotepadScreen(onNavigateBack: () -> Unit) {
   var savedNotes by remember { mutableStateOf(notesRepo.all()) }
   var recentClips by remember { mutableStateOf(clipboardRepo.clips()) }
   var newNoteText by rememberSaveable { mutableStateOf("") }
+  var editingKind by rememberSaveable { mutableStateOf<String?>(null) }
+  var editingIndex by rememberSaveable { mutableStateOf(-1) }
+  var editingOldText by rememberSaveable { mutableStateOf("") }
+  var editingDraft by rememberSaveable { mutableStateOf("") }
 
   val copiedMsg = stringResource(R.string.copied_snackbar)
 
@@ -219,6 +227,12 @@ fun NotepadScreen(onNavigateBack: () -> Unit) {
                   SnippetRow(
                     text = note,
                     testTagPrefix = "note_$index",
+                    onEdit = {
+                      editingKind = "note"
+                      editingIndex = index
+                      editingOldText = note
+                      editingDraft = note
+                    },
                     onCopy = { copyText(note) },
                     onDelete = {
                       notesRepo.remove(index)
@@ -292,6 +306,19 @@ fun NotepadScreen(onNavigateBack: () -> Unit) {
                   SnippetRow(
                     text = clip,
                     testTagPrefix = "clip_$index",
+                    onPin = {
+                      notesRepo.add(clip)
+                      clipboardRepo.remove(clip)
+                      savedNotes = notesRepo.all()
+                      recentClips = clipboardRepo.clips()
+                      scope.launch { snackbarHostState.showSnackbar("📌 Pinned হয়েছে") }
+                    },
+                    onEdit = {
+                      editingKind = "clip"
+                      editingIndex = -1
+                      editingOldText = clip
+                      editingDraft = clip
+                    },
                     onCopy = { copyText(clip) },
                     onDelete = {
                       clipboardRepo.remove(clip)
@@ -307,6 +334,56 @@ fun NotepadScreen(onNavigateBack: () -> Unit) {
         Spacer(modifier = Modifier.height(8.dp))
       }
     }
+
+    if (editingKind != null) {
+      AlertDialog(
+        onDismissRequest = { editingKind = null },
+        title = { Text(stringResource(R.string.notepad_edit_title)) },
+        text = {
+          ProvideSafeTextToolbar {
+            OutlinedTextField(
+              value = editingDraft,
+              onValueChange = { editingDraft = it },
+              minLines = 3,
+              maxLines = 6,
+              modifier = Modifier.fillMaxWidth().testTag("notepad_edit_input"),
+              shape = RoundedCornerShape(14.dp),
+            )
+          }
+        },
+        confirmButton = {
+          Button(
+            onClick = {
+              val trimmed = editingDraft.trim()
+              when (editingKind) {
+                "note" -> {
+                  if (trimmed.isNotEmpty()) notesRepo.update(editingIndex, trimmed)
+                  else notesRepo.remove(editingIndex)
+                  savedNotes = notesRepo.all()
+                }
+                "clip" -> {
+                  if (trimmed.isNotEmpty()) clipboardRepo.update(editingOldText, trimmed)
+                  else clipboardRepo.remove(editingOldText)
+                  recentClips = clipboardRepo.clips()
+                }
+              }
+              editingKind = null
+            },
+            modifier = Modifier.testTag("notepad_edit_save"),
+          ) {
+            Text(stringResource(R.string.btn_save))
+          }
+        },
+        dismissButton = {
+          TextButton(
+            onClick = { editingKind = null },
+            modifier = Modifier.testTag("notepad_edit_cancel"),
+          ) {
+            Text(stringResource(R.string.btn_cancel))
+          }
+        },
+      )
+    }
   }
 }
 
@@ -314,6 +391,8 @@ fun NotepadScreen(onNavigateBack: () -> Unit) {
 private fun SnippetRow(
   text: String,
   testTagPrefix: String,
+  onPin: (() -> Unit)? = null,
+  onEdit: () -> Unit,
   onCopy: () -> Unit,
   onDelete: () -> Unit,
 ) {
@@ -322,36 +401,64 @@ private fun SnippetRow(
     shape = RoundedCornerShape(14.dp),
     modifier = Modifier.fillMaxWidth(),
   ) {
-    Row(
-      modifier = Modifier.padding(start = 14.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
-      verticalAlignment = Alignment.CenterVertically,
+    Column(
+      modifier = Modifier.padding(start = 14.dp, end = 6.dp, top = 10.dp, bottom = 4.dp),
+      verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
       Text(
         text = text,
         style = MaterialTheme.typography.bodyMedium,
-        maxLines = 2,
+        maxLines = 4,
         overflow = TextOverflow.Ellipsis,
-        modifier = Modifier.weight(1f).padding(end = 8.dp),
+        modifier = Modifier.fillMaxWidth().padding(end = 8.dp),
       )
-      IconButton(
-        onClick = onCopy,
-        modifier = Modifier.minimumInteractiveComponentSize().testTag("${testTagPrefix}_copy"),
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.End,
+        verticalAlignment = Alignment.CenterVertically,
       ) {
-        Icon(
-          imageVector = Icons.Filled.ContentCopy,
-          contentDescription = stringResource(R.string.cd_copy_icon),
-          tint = MaterialTheme.colorScheme.primary,
-        )
-      }
-      IconButton(
-        onClick = onDelete,
-        modifier = Modifier.minimumInteractiveComponentSize().testTag("${testTagPrefix}_delete"),
-      ) {
-        Icon(
-          imageVector = Icons.Filled.DeleteOutline,
-          contentDescription = stringResource(R.string.cd_delete_icon),
-          tint = MaterialTheme.colorScheme.error,
-        )
+        if (onPin != null) {
+          IconButton(
+            onClick = onPin,
+            modifier = Modifier.minimumInteractiveComponentSize().testTag("${testTagPrefix}_pin"),
+          ) {
+            Icon(
+              imageVector = Icons.Outlined.PushPin,
+              contentDescription = stringResource(R.string.cd_pin_icon),
+              tint = MaterialTheme.colorScheme.primary,
+            )
+          }
+        }
+        IconButton(
+          onClick = onEdit,
+          modifier = Modifier.minimumInteractiveComponentSize().testTag("${testTagPrefix}_edit"),
+        ) {
+          Icon(
+            imageVector = Icons.Outlined.Edit,
+            contentDescription = stringResource(R.string.cd_edit_icon),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
+        }
+        IconButton(
+          onClick = onCopy,
+          modifier = Modifier.minimumInteractiveComponentSize().testTag("${testTagPrefix}_copy"),
+        ) {
+          Icon(
+            imageVector = Icons.Filled.ContentCopy,
+            contentDescription = stringResource(R.string.cd_copy_icon),
+            tint = MaterialTheme.colorScheme.primary,
+          )
+        }
+        IconButton(
+          onClick = onDelete,
+          modifier = Modifier.minimumInteractiveComponentSize().testTag("${testTagPrefix}_delete"),
+        ) {
+          Icon(
+            imageVector = Icons.Filled.DeleteOutline,
+            contentDescription = stringResource(R.string.cd_delete_icon),
+            tint = MaterialTheme.colorScheme.error,
+          )
+        }
       }
     }
   }

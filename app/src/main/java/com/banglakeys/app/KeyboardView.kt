@@ -2,10 +2,14 @@ package com.banglakeys.app
 
 import android.content.Context
 import android.content.res.Configuration
+import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.Rect
 import android.graphics.RectF
+import android.graphics.Shader
 import android.graphics.Typeface
 import android.os.Handler
 import android.os.Looper
@@ -54,6 +58,8 @@ class KeyboardView(context: Context) : View(context) {
         fun onVoice()
         fun onAssistant()
         fun onSecretToggle() {}
+        fun onNoteEditSave() {}
+        fun onNoteEditCancel() {}
     }
 
     var listener: Listener? = null
@@ -65,6 +71,8 @@ class KeyboardView(context: Context) : View(context) {
         object Composing : StripHit()
         data class Word(val index: Int) : StripHit()
         data class Action(val action: QuickAction) : StripHit()
+        object CancelNoteEdit : StripHit()
+        object SaveNoteEdit : StripHit()
     }
 
     private class Ptr(
@@ -81,6 +89,8 @@ class KeyboardView(context: Context) : View(context) {
     private var composing = ""
     private var suggestions: List<String> = emptyList()
     private var composingRect = RectF()
+    private var cancelEditRect = RectF()
+    private var saveEditRect = RectF()
     private var suggestionRects: List<RectF> = emptyList()
     private var quickActionRects: LinkedHashMap<QuickAction, RectF> = LinkedHashMap()
     private var stripDirty = true
@@ -90,6 +100,7 @@ class KeyboardView(context: Context) : View(context) {
     private var rowScale = 1f
     private var secretModeActive = false
     private var secretRecipient: String? = null
+    private var noteEditModeActive = false
 
     private var shift = SHIFT_OFF
     private var lastShiftTap = 0L
@@ -134,11 +145,23 @@ class KeyboardView(context: Context) : View(context) {
     private var secretBadgeStrokeC = 0
     private var secretBadgeTextC = 0
 
+    // ---- theme state ----
+    private var theme: KeyboardTheme = Themes.lightDefault
+    private var bgBitmap: Bitmap? = null
+    private var bgBitmapStamp = -1L
+    private var bgShader: LinearGradient? = null
+    private var bgShaderH = 0
+    private var dimPct = 0
+    private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+    private val srcRect = Rect()
+    private val dstRect = Rect()
+    private val innerRect = RectF()
+
     private val stripH: Float get() = 48f * d
     private val vPad: Float get() = 4f * d
     private val hPad: Float get() = 3f * d
     private val gap: Float get() = 3.2f * d
-    private val radius: Float get() = 6f * d
+    private val radius: Float get() = theme.radiusDp * d
     private val pillRadius: Float get() = 12f * d
 
     init {
@@ -194,6 +217,17 @@ class KeyboardView(context: Context) : View(context) {
 
     fun isSecretMode(): Boolean = secretModeActive
 
+    fun setNoteEditMode(active: Boolean) {
+        if (noteEditModeActive != active) {
+            noteEditModeActive = active
+            stripDirty = true
+            updateStripRects()
+            invalidate()
+        }
+    }
+
+    fun isNoteEditMode(): Boolean = noteEditModeActive
+
     /** English-এ বাক্যের শুরুতে auto capital */
     fun setAutoShift(on: Boolean) {
         if (shift != SHIFT_CAPS) {
@@ -207,6 +241,10 @@ class KeyboardView(context: Context) : View(context) {
 
     fun stripComposingRect(): RectF = RectF(composingRect)
 
+    fun stripNoteCancelRect(): RectF = RectF(cancelEditRect)
+
+    fun stripNoteSaveRect(): RectF = RectF(saveEditRect)
+
     fun stripSuggestionRects(): List<RectF> = suggestionRects.map { RectF(it) }
 
     fun stripQuickActionRects(): Map<QuickAction, RectF> =
@@ -214,49 +252,65 @@ class KeyboardView(context: Context) : View(context) {
 
     // ---------------- theme ----------------
 
-    private fun applyTheme() {
-        val night = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
-            Configuration.UI_MODE_NIGHT_YES
-        if (night) {
-            bgC = 0xFF1C1C1E.toInt()
-            keyC = 0xFF3A3A3C.toInt()
-            fnC = 0xFF2C2C2E.toInt()
-            shadowC = 0xFF0E0E0F.toInt()
-            textC = 0xFFF2F2F7.toInt()
-            hintC = 0xFF9A9AA0.toInt()
-            pressC = 0xFF636366.toInt()
-            accentC = 0xFF26A69A.toInt()
-            popupC = 0xFF4A4A4D.toInt()
+    /** Settings বা IME থেকে theme বদলালে এটা ডাকলে নতুন theme আঁকা হয়। */
+    fun reloadTheme() {
+        applyTheme()
+    }
 
-            pillC = 0xFF3A3A3C.toInt()
-            pillStrokeC = 0xFF525256.toInt()
-            badgeBgC = 0xFF163C38.toInt()
-            badgeStrokeC = 0xFF26A69A.toInt()
-            badgeTextC = 0xFF80CBC4.toInt()
-            actionBgC = 0xFF2C2C2E.toInt()
+    private fun applyTheme() {
+        val t = ThemeStore.resolve(context)
+        theme = t
+
+        bgC = t.bg
+        keyC = t.key
+        fnC = t.fn
+        shadowC = t.shadow
+        textC = t.text
+        hintC = t.hint
+        pressC = t.press
+        accentC = t.accent
+        popupC = t.popup
+
+        pillC = t.pill
+        pillStrokeC = t.pillStroke
+        badgeBgC = t.badgeBg
+        badgeStrokeC = t.badgeStroke
+        badgeTextC = t.badgeText
+        actionBgC = t.actionBg
+
+        if (t.dark) {
             secretBadgeBgC = 0xFF1B3B2B.toInt()
             secretBadgeStrokeC = 0xFF34D399.toInt()
             secretBadgeTextC = 0xFFA7F3D0.toInt()
         } else {
-            bgC = 0xFFE6E9EC.toInt()
-            keyC = 0xFFFFFFFF.toInt()
-            fnC = 0xFFC9D0D6.toInt()
-            shadowC = 0xFFA9B1B8.toInt()
-            textC = 0xFF1F2328.toInt()
-            hintC = 0xFF7A838B.toInt()
-            pressC = 0xFFB4BDC5.toInt()
-            accentC = 0xFF00897B.toInt()
-            popupC = 0xFFFFFFFF.toInt()
-
-            pillC = 0xFFFFFFFF.toInt()
-            pillStrokeC = 0xFFD0D7DE.toInt()
-            badgeBgC = 0xFFE0F2F1.toInt()
-            badgeStrokeC = 0xFF4DB6AC.toInt()
-            badgeTextC = 0xFF00695C.toInt()
-            actionBgC = 0xFFD8DFE6.toInt()
             secretBadgeBgC = 0xFFD1FAE5.toInt()
             secretBadgeStrokeC = 0xFF059669.toInt()
             secretBadgeTextC = 0xFF065F46.toInt()
+        }
+
+        textPaint.typeface =
+            if (t.monoFont) Typeface.create(Typeface.MONOSPACE, Typeface.BOLD) else Typeface.DEFAULT
+
+        bgShader = null
+        bgShaderH = 0
+
+        if (t.usesImage) {
+            // key-র opacity user slider থেকে
+            val a = (ThemeStore.imageAlpha(context) / 100f * 255f).toInt().coerceIn(30, 240)
+            keyC = withAlpha(0x101018, a)
+            fnC = withAlpha(0x000000, (a + 35).coerceAtMost(250))
+            pillC = keyC
+            actionBgC = fnC
+            dimPct = ThemeStore.imageDim(context)
+
+            val stamp = ThemeStore.customImageStamp(context)
+            if (bgBitmap == null || stamp != bgBitmapStamp) {
+                bgBitmap = ThemeStore.loadCustomImage(context)
+                bgBitmapStamp = stamp
+            }
+        } else {
+            bgBitmap = null
+            bgBitmapStamp = -1L
         }
         invalidate()
     }
@@ -321,6 +375,8 @@ class KeyboardView(context: Context) : View(context) {
         val totalW = width.toFloat()
         if (totalW <= 0f) {
             composingRect.setEmpty()
+            cancelEditRect.setEmpty()
+            saveEditRect.setEmpty()
             suggestionRects = emptyList()
             quickActionRects.clear()
             return
@@ -334,6 +390,21 @@ class KeyboardView(context: Context) : View(context) {
         val bottom = stripH - vInset
 
         quickActionRects.clear()
+        cancelEditRect.setEmpty()
+        saveEditRect.setEmpty()
+
+        if (noteEditModeActive) {
+            suggestionRects = emptyList()
+            val saveW = min(84f * d, totalW * 0.25f)
+            val cancelW = 38f * d
+            val saveLeft = totalW - outerPad - saveW
+            val cancelLeft = saveLeft - pillGap - cancelW
+            saveEditRect.set(saveLeft, top, saveLeft + saveW, bottom)
+            cancelEditRect.set(cancelLeft, top, cancelLeft + cancelW, bottom)
+            val editRight = (cancelLeft - pillGap).coerceAtLeast(outerPad + 40f * d)
+            composingRect.set(outerPad, top, editRight, bottom)
+            return
+        }
 
         if (composing.isNotEmpty()) {
             // টাইপিং মোড: বামে Live Composing Badge + ডানে সর্বোচ্চ ৩টি Word Pill
@@ -400,10 +471,46 @@ class KeyboardView(context: Context) : View(context) {
     // ---------------- drawing ----------------
 
     override fun onDraw(canvas: Canvas) {
-        canvas.drawColor(bgC)
+        drawBackground(canvas)
         drawStrip(canvas)
         for (row in boxRows) for (b in row) drawKey(canvas, b)
         drawPopups(canvas)
+    }
+
+    private fun drawBackground(c: Canvas) {
+        c.drawColor(bgC)
+        val w = width
+        val h = height
+        if (w <= 0 || h <= 0) return
+
+        val bmp = bgBitmap
+        if (theme.usesImage && bmp != null && !bmp.isRecycled) {
+            val scale = max(w.toFloat() / bmp.width, h.toFloat() / bmp.height)
+            val sw = w / scale
+            val sh = h / scale
+            val sx = (bmp.width - sw) / 2f
+            val sy = (bmp.height - sh) / 2f
+            srcRect.set(sx.toInt(), sy.toInt(), (sx + sw).toInt().coerceAtMost(bmp.width), (sy + sh).toInt().coerceAtMost(bmp.height))
+            dstRect.set(0, 0, w, h)
+            c.drawBitmap(bmp, srcRect, dstRect, bgPaint)
+            if (dimPct > 0) {
+                paint.style = Paint.Style.FILL
+                paint.color = withAlpha(0x000000, (dimPct / 100f * 255f).toInt())
+                c.drawRect(0f, 0f, w.toFloat(), h.toFloat(), paint)
+                paint.alpha = 255
+            }
+            return
+        }
+
+        if (theme.bgTop != 0 && theme.bgBottom != 0) {
+            if (bgShader == null || bgShaderH != h) {
+                bgShader = LinearGradient(0f, 0f, 0f, h.toFloat(), theme.bgTop, theme.bgBottom, Shader.TileMode.CLAMP)
+                bgShaderH = h
+            }
+            bgPaint.shader = bgShader
+            c.drawRect(0f, 0f, w.toFloat(), h.toFloat(), bgPaint)
+            bgPaint.shader = null
+        }
     }
 
     private fun isStripPressed(hit: StripHit): Boolean {
@@ -423,6 +530,54 @@ class KeyboardView(context: Context) : View(context) {
         paint.alpha = 55
         c.drawRect(0f, stripH - 1f * d, width.toFloat(), stripH, paint)
         paint.alpha = 255
+
+        // ০) Note Edit মোডে: বামে Live Note Preview + ডানে Cancel ও Save
+        if (noteEditModeActive) {
+            if (!composingRect.isEmpty) {
+                paint.style = Paint.Style.FILL
+                paint.color = badgeBgC
+                c.drawRoundRect(composingRect, pillRadius, pillRadius, paint)
+                strokePaint.color = badgeStrokeC
+                strokePaint.strokeWidth = 1.25f * d
+                c.drawRoundRect(composingRect, pillRadius, pillRadius, strokePaint)
+
+                val display = if (composing.isEmpty()) "✏️ Note লিখুন…" else composing
+                drawFittedPillText(
+                    c = c,
+                    text = display,
+                    rect = composingRect,
+                    color = if (composing.isEmpty()) hintC else badgeTextC,
+                    bold = composing.isNotEmpty(),
+                    preferredSp = 14.5f,
+                    truncateAt = if (composing.length > 18) TextUtils.TruncateAt.START else TextUtils.TruncateAt.END
+                )
+            }
+            if (!cancelEditRect.isEmpty) {
+                val pressed = isStripPressed(StripHit.CancelNoteEdit)
+                paint.style = Paint.Style.FILL
+                paint.color = if (pressed) pressC else actionBgC
+                c.drawRoundRect(cancelEditRect, pillRadius, pillRadius, paint)
+                strokePaint.color = pillStrokeC
+                strokePaint.strokeWidth = 0.9f * d
+                c.drawRoundRect(cancelEditRect, pillRadius, pillRadius, strokePaint)
+                drawFittedPillText(c, "✕", cancelEditRect, textC, bold = true, preferredSp = 15f)
+            }
+            if (!saveEditRect.isEmpty) {
+                val pressed = isStripPressed(StripHit.SaveNoteEdit)
+                paint.style = Paint.Style.FILL
+                paint.color = if (pressed) pressC else accentC
+                c.drawRoundRect(saveEditRect, pillRadius, pillRadius, paint)
+                drawFittedPillText(
+                    c,
+                    "✓ Save",
+                    saveEditRect,
+                    if (pressed) textC else theme.onAccent,
+                    bold = true,
+                    preferredSp = 14f
+                )
+            }
+            return
+        }
 
         // ১) Composing Badge (থাকলে)
         if (!composingRect.isEmpty && composing.isNotEmpty()) {
@@ -569,35 +724,28 @@ class KeyboardView(context: Context) : View(context) {
             else -> keyC
         }
 
-        paint.style = Paint.Style.FILL
-        if (!pressed) {
-            paint.color = shadowC
-            c.drawRoundRect(
-                b.rect.left, b.rect.top + 1.3f * d, b.rect.right, b.rect.bottom + 1.3f * d,
-                radius, radius, paint
-            )
-        }
-        paint.color = fill
-        c.drawRoundRect(b.rect, radius, radius, paint)
+        drawKeyBody(c, b, fill, pressed, functional, isEnter || shiftActive || secretActiveKey)
 
         val cx = b.rect.centerX()
         val cy = b.rect.centerY()
         val rh = b.rect.height()
         val onAccent = isEnter || shiftActive || secretActiveKey
-        val fg = if (onAccent) 0xFFFFFFFF.toInt() else textC
+        val fg = if (onAccent) theme.onAccent else textC
 
         when (k.type) {
             KeyType.SHIFT -> drawShiftIcon(c, cx, cy, fg, shift != SHIFT_OFF, shift == SHIFT_CAPS)
             KeyType.DELETE -> drawBackspaceIcon(c, cx, cy, fg)
             KeyType.ENTER -> {
-                if (secretModeActive) {
-                    drawCentered(c, "🔒 Send", cx, cy, rh * 0.28f, fg)
-                } else {
-                    val el = enterLabel
-                    when {
-                        el == null -> drawEnterIcon(c, cx, cy, fg)
-                        el == "SEARCH" -> drawSearchIcon(c, cx, cy, fg)
-                        else -> drawCentered(c, el, cx, cy, rh * 0.32f, fg)
+                when {
+                    secretModeActive -> drawCentered(c, "🔒 Send", cx, cy, rh * 0.28f, fg)
+                    noteEditModeActive -> drawCentered(c, "✓ Save", cx, cy, rh * 0.28f, fg)
+                    else -> {
+                        val el = enterLabel
+                        when {
+                            el == null -> drawEnterIcon(c, cx, cy, fg)
+                            el == "SEARCH" -> drawSearchIcon(c, cx, cy, fg)
+                            else -> drawCentered(c, el, cx, cy, rh * 0.32f, fg)
+                        }
                     }
                 }
             }
@@ -619,6 +767,146 @@ class KeyboardView(context: Context) : View(context) {
             KeyType.SECRET -> drawLockIcon(c, cx, cy, if (secretActiveKey) fg else accentC, secretModeActive)
             else -> drawCentered(c, k.label, cx, cy, rh * 0.30f, textC)
         }
+    }
+
+    // ---------------- theme-aware key body ----------------
+
+    private fun drawKeyBody(c: Canvas, b: Box, fill: Int, pressed: Boolean, functional: Boolean, onAccent: Boolean) {
+        val t = theme
+        val rect = b.rect
+        val r = radius
+        paint.style = Paint.Style.FILL
+
+        when (t.style) {
+            KeyStyle.PIXEL -> drawPixelKey(c, rect, fill, pressed)
+            KeyStyle.BLOCK -> drawBlockKey(c, b, fill, pressed, functional, onAccent)
+            KeyStyle.NEON -> {
+                paint.color = fill
+                c.drawRoundRect(rect, r, r, paint)
+                val glowA = if (pressed) 150 else 70
+                val col = if (onAccent) accentC else t.border
+                strokePaint.color = withAlpha(col, glowA)
+                strokePaint.strokeWidth = (t.borderDp + 3.2f) * d
+                c.drawRoundRect(rect, r, r, strokePaint)
+                strokePaint.color = col
+                strokePaint.strokeWidth = t.borderDp * d
+                c.drawRoundRect(rect, r, r, strokePaint)
+            }
+            else -> {
+                // FLAT / GLASS / GRADIENT
+                if (!pressed && t.shadowDp > 0f && t.style != KeyStyle.GLASS) {
+                    paint.color = shadowC
+                    c.drawRoundRect(
+                        rect.left, rect.top + t.shadowDp * d, rect.right, rect.bottom + t.shadowDp * d,
+                        r, r, paint
+                    )
+                }
+                if (t.style == KeyStyle.GRADIENT && t.keyTop != 0 && !pressed && !functional && !onAccent) {
+                    paint.shader = LinearGradient(
+                        rect.left, rect.top, rect.left, rect.bottom,
+                        t.keyTop, t.keyBottom, Shader.TileMode.CLAMP
+                    )
+                    paint.color = 0xFFFFFFFF.toInt()
+                    c.drawRoundRect(rect, r, r, paint)
+                    paint.shader = null
+                } else {
+                    paint.color = fill
+                    c.drawRoundRect(rect, r, r, paint)
+                }
+                if (t.borderDp > 0f && t.border != 0) {
+                    val half = t.borderDp * d / 2f
+                    innerRect.set(rect.left + half, rect.top + half, rect.right - half, rect.bottom - half)
+                    strokePaint.color = t.border
+                    strokePaint.strokeWidth = t.borderDp * d
+                    c.drawRoundRect(innerRect, r, r, strokePaint)
+                }
+            }
+        }
+    }
+
+    /** Retro pixel key: মোটা outline + উপর/বামে highlight + নিচ/ডানে shade */
+    private fun drawPixelKey(c: Canvas, rect: RectF, fill: Int, pressed: Boolean) {
+        val t = theme
+        val o = max(1.5f, t.borderDp) * d
+        val r = radius
+        if (!pressed) {
+            paint.color = shadowC
+            c.drawRoundRect(rect.left, rect.top + 2.2f * d, rect.right, rect.bottom + 2.2f * d, r, r, paint)
+        }
+        paint.color = t.border
+        c.drawRoundRect(rect, r, r, paint)
+
+        innerRect.set(rect.left + o, rect.top + o, rect.right - o, rect.bottom - o)
+        paint.color = fill
+        c.drawRoundRect(innerRect, r * 0.6f, r * 0.6f, paint)
+
+        val bw = 2f * d
+        val light = if (pressed) mixColor(fill, 0xFF000000.toInt(), 0.15f) else mixColor(fill, 0xFFFFFFFF.toInt(), 0.40f)
+        val dark = if (pressed) mixColor(fill, 0xFF000000.toInt(), 0.10f) else mixColor(fill, 0xFF000000.toInt(), 0.28f)
+        paint.color = light
+        c.drawRect(innerRect.left + bw, innerRect.top, innerRect.right - bw, innerRect.top + bw, paint)
+        c.drawRect(innerRect.left, innerRect.top + bw, innerRect.left + bw, innerRect.bottom - bw, paint)
+        paint.color = dark
+        c.drawRect(innerRect.left + bw, innerRect.bottom - bw, innerRect.right - bw, innerRect.bottom, paint)
+        c.drawRect(innerRect.right - bw, innerRect.top + bw, innerRect.right, innerRect.bottom - bw, paint)
+    }
+
+    /** Block key: উপরে ঘাসের স্তর (এবড়োখেবড়ো ধার), নিচে মাটি ও ছোট ছোট দাগ — সব code দিয়ে আঁকা */
+    private fun drawBlockKey(c: Canvas, b: Box, fill: Int, pressed: Boolean, functional: Boolean, onAccent: Boolean) {
+        val t = theme
+        val rect = b.rect
+        val r = radius
+
+        if (!pressed) {
+            paint.color = shadowC
+            c.drawRoundRect(rect.left, rect.top + t.shadowDp * d, rect.right, rect.bottom + t.shadowDp * d, r, r, paint)
+        }
+        paint.color = t.border
+        c.drawRoundRect(rect, r, r, paint)
+        val o = t.borderDp * d
+        innerRect.set(rect.left + o, rect.top + o, rect.right - o, rect.bottom - o)
+        paint.color = fill
+        c.drawRoundRect(innerRect, r * 0.7f, r * 0.7f, paint)
+
+        if (functional || onAccent) return
+
+        val seed = (b.key.label.hashCode() and 0x7fffffff) % 97
+        val grass = if (pressed) mixColor(t.keyTop, 0xFF000000.toInt(), 0.25f) else t.keyTop
+        val dirtDark = mixColor(fill, 0xFF000000.toInt(), 0.20f)
+
+        c.save()
+        path.reset()
+        path.addRoundRect(innerRect, r * 0.7f, r * 0.7f, Path.Direction.CW)
+        c.clipPath(path)
+
+        val gh = innerRect.height() * 0.28f
+        paint.color = grass
+        c.drawRect(innerRect.left, innerRect.top, innerRect.right, innerRect.top + gh, paint)
+        val cols = 7
+        val step = innerRect.width() / cols
+        for (i in 0 until cols) {
+            val extra = ((i * 37 + seed) % 3) * gh * 0.32f
+            if (extra > 0f) {
+                c.drawRect(
+                    innerRect.left + i * step, innerRect.top + gh,
+                    innerRect.left + (i + 1) * step + 0.5f, innerRect.top + gh + extra, paint
+                )
+            }
+        }
+
+        paint.color = dirtDark
+        val px = max(2f * d, innerRect.width() / 9f)
+        val dirtTop = innerRect.top + gh + gh * 0.7f
+        val dirtH = (innerRect.bottom - dirtTop - px).coerceAtLeast(1f)
+        val dirtW = (innerRect.width() - px).coerceAtLeast(1f)
+        for (i in 0 until 5) {
+            val fx = ((i * 53 + seed * 7) % 100) / 100f
+            val fy = ((i * 29 + seed * 3) % 100) / 100f
+            val sx = innerRect.left + fx * dirtW
+            val sy = dirtTop + fy * dirtH
+            c.drawRect(sx, sy, sx + px, sy + px, paint)
+        }
+        c.restore()
     }
 
     private fun drawCentered(c: Canvas, text: String, cx: Float, cy: Float, size: Float, color: Int) {
@@ -831,6 +1119,16 @@ class KeyboardView(context: Context) : View(context) {
         if (y < 0f || y >= stripH) return null
         if (stripDirty && width > 0) updateStripRects()
 
+        if (noteEditModeActive) {
+            if (!cancelEditRect.isEmpty && x in cancelEditRect.left..cancelEditRect.right) {
+                return StripHit.CancelNoteEdit
+            }
+            if (!saveEditRect.isEmpty && x in saveEditRect.left..saveEditRect.right) {
+                return StripHit.SaveNoteEdit
+            }
+            return null
+        }
+
         // পূর্ণ 48dp touch height নিশ্চিত করতে horizontal range দিয়েও match করা হয়
         if (!composingRect.isEmpty && x in composingRect.left..composingRect.right) {
             return StripHit.Composing
@@ -926,6 +1224,14 @@ class KeyboardView(context: Context) : View(context) {
                     StripHit.Composing -> {
                         listener?.onFeedback()
                         listener?.onComposingTap()
+                    }
+                    StripHit.CancelNoteEdit -> {
+                        listener?.onFeedback()
+                        listener?.onNoteEditCancel()
+                    }
+                    StripHit.SaveNoteEdit -> {
+                        listener?.onFeedback()
+                        listener?.onNoteEditSave()
                     }
                     is StripHit.Word -> {
                         val word = suggestions.getOrNull(hit.index)

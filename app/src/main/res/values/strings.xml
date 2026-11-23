@@ -55,4 +55,9 @@
     <string name="cd_copy_icon">Copy text</string>
     <string name="cd_delete_icon">Delete item</string>
     <string name="cd_back_icon">Back</string>
+    <string name="cd_edit_icon">Edit item</string>
+    <string name="cd_pin_icon">Pin to saved notes</string>
+    <string name="notepad_edit_title">লেখা সম্পাদনা</string>
+    <string name="btn_save">সেভ করুন</string>
+    <string name="btn_cancel">বাতিল</string>
 </resources>

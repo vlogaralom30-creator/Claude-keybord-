@@ -65,7 +65,9 @@ fun BanglaKeysTheme(
       else -> LightColorScheme
     }
 
-  MaterialTheme(colorScheme = colorScheme, typography = Typography, content = content)
+  ProvideSafeTextToolbar {
+    MaterialTheme(colorScheme = colorScheme, typography = Typography, content = content)
+  }
 }
 
 @Composable
