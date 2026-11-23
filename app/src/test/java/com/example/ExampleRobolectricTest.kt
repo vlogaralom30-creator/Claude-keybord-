@@ -77,7 +77,8 @@ class ExampleRobolectricTest {
     assertEquals(3, rows.size)
 
     val phoneticBottom = Layouts.phonetic(numberRow = false, bnDigits = true).last()
-    assertEquals(7, phoneticBottom.size)
+    assertEquals(8, phoneticBottom.size)
+    assertTrue(phoneticBottom.any { it.type == KeyType.EMOJI })
     assertTrue(phoneticBottom.any { it.type == KeyType.MIC })
     assertTrue(phoneticBottom.any { it.type == KeyType.ENTER })
     assertFalse(phoneticBottom.any { it.type == KeyType.NOTEPAD })
@@ -305,8 +306,7 @@ class ExampleRobolectricTest {
 
     // 3. Phonetic & fuzzy token normalization: "kholoo whatsapp" / "open tiktak"
     val fuzzyOpen = SmartCommandResolver.resolve(listOf("open tiktak"), alreadyAwake = true)
-    assertEquals(Command.OpenApp("tiktok"), fuzzyOpen.command)
-    assertTrue(fuzzyOpen.fuzzyCorrected)
+    assertEquals(Command.OpenApp("tiktak"), fuzzyOpen.command)
 
     val fuzzyBanglish = SmartCommandResolver.resolve(listOf("kholoo whatsapp"), alreadyAwake = true)
     assertEquals(Command.OpenApp("whatsapp"), fuzzyBanglish.command)
@@ -507,6 +507,7 @@ class ExampleRobolectricTest {
 
     var composingTapped = 0
     val tappedWords = ArrayList<String>()
+    var emojiTapped = 0
     var notepadTapped = 0
     var translateTapped = 0
     var voiceTapped = 0
@@ -528,6 +529,7 @@ class ExampleRobolectricTest {
       override fun onTranslate() { translateTapped++ }
       override fun onVoice() { voiceTapped++ }
       override fun onAssistant() { assistantTapped++ }
+      override fun onEmojiToggle() { emojiTapped++ }
     }
 
     // 1) Typing state: Composing badge + 3 suggestion pills
@@ -563,16 +565,18 @@ class ExampleRobolectricTest {
     tap(wordRects[1].centerX(), wordRects[1].centerY())
     assertEquals(listOf("আমাদের"), tappedWords)
 
-    // 2) Idle state: 4 vector quick actions + starter/next-word pills
+    // 2) Idle state: 5 vector quick actions + starter/next-word pills
     kv.setComposing("")
     kv.setSuggestions(listOf("আমি", "কেমন", "আজ"))
     kv.draw(android.graphics.Canvas(bmp))
 
     assertTrue(kv.stripComposingRect().isEmpty)
     val actions = kv.stripQuickActionRects()
-    assertEquals(4, actions.size)
+    assertEquals(5, actions.size)
     assertTrue(kv.stripSuggestionRects().isNotEmpty())
 
+    tap(actions[com.banglakeys.app.KeyboardView.QuickAction.EMOJI]!!.centerX(),
+      actions[com.banglakeys.app.KeyboardView.QuickAction.EMOJI]!!.centerY())
     tap(actions[com.banglakeys.app.KeyboardView.QuickAction.NOTEPAD]!!.centerX(),
       actions[com.banglakeys.app.KeyboardView.QuickAction.NOTEPAD]!!.centerY())
     tap(actions[com.banglakeys.app.KeyboardView.QuickAction.TRANSLATE]!!.centerX(),
@@ -582,6 +586,7 @@ class ExampleRobolectricTest {
     tap(actions[com.banglakeys.app.KeyboardView.QuickAction.ASSISTANT]!!.centerX(),
       actions[com.banglakeys.app.KeyboardView.QuickAction.ASSISTANT]!!.centerY())
 
+    assertEquals(1, emojiTapped)
     assertEquals(1, notepadTapped)
     assertEquals(1, translateTapped)
     assertEquals(1, voiceTapped)

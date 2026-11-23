@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.RecordVoiceOver
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.outlined.Info
@@ -148,7 +149,7 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
   var composingRoman by rememberSaveable { mutableStateOf("") }
   var previewBanglaMode by rememberSaveable { mutableStateOf(true) }
   var previewSymbolsMode by rememberSaveable { mutableIntStateOf(0) }
-  var previewInPanel by rememberSaveable { mutableStateOf(false) }
+  var previewPanelMode by rememberSaveable { mutableStateOf("none") }
   var previewSecretMode by rememberSaveable { mutableStateOf(false) }
   var previewSecretText by rememberSaveable { mutableStateOf("") }
   var previewSecretTarget by remember { mutableStateOf<String?>(null) }
@@ -159,10 +160,12 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
   var previewNoteEditCommitted by rememberSaveable { mutableStateOf("") }
   var previewNoteEditRoman by rememberSaveable { mutableStateOf("") }
   var previewPanelVersion by remember { mutableIntStateOf(0) }
+  var previewEmojiVersion by remember { mutableIntStateOf(0) }
   var suggestVersion by remember { mutableIntStateOf(0) }
 
   LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
     previewPanelVersion++
+    previewEmojiVersion++
   }
 
   val suggestionsRepo = remember { Suggestions(context) }
@@ -244,7 +247,7 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
     previewNoteEditCommitted = ""
     previewNoteEditRoman = ""
     previewPanelVersion++
-    previewInPanel = true
+    previewPanelMode = "clipboard"
   }
 
   var phoneticSampleInput by rememberSaveable { mutableStateOf("ami tOmake bhalobashi") }
@@ -325,7 +328,7 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
                 EmbeddedKeyboardPreview(
                   banglaMode = previewBanglaMode,
                   symbolsMode = previewSymbolsMode,
-                  inPanel = previewInPanel,
+                  panelMode = previewPanelMode,
                   secretMode = previewSecretMode,
                   secretTarget = previewSecretTarget,
                   noteEditMode = previewNoteEditMode,
@@ -334,6 +337,7 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
                   heightPct = heightPct,
                   themeVersion = themeVersion,
                   panelVersion = previewPanelVersion,
+                  emojiVersion = previewEmojiVersion,
                   composingText = composingDisplay,
                   suggestionsList = suggestionsList,
                   onText = { ch ->
@@ -397,20 +401,20 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
                       if (previewNoteEditRoman.isNotEmpty()) {
                         previewNoteEditRoman = previewNoteEditRoman.dropLast(1)
                       } else if (previewNoteEditCommitted.isNotEmpty()) {
-                        previewNoteEditCommitted = previewNoteEditCommitted.dropLast(1)
+                        previewNoteEditCommitted = EmojiRepository.deleteLastGrapheme(previewNoteEditCommitted)
                       }
                       return@EmbeddedKeyboardPreview
                     }
                     if (previewSecretMode) {
                       if (previewSecretText.isNotEmpty()) {
-                        previewSecretText = previewSecretText.dropLast(1)
+                        previewSecretText = EmojiRepository.deleteLastGrapheme(previewSecretText)
                       }
                       return@EmbeddedKeyboardPreview
                     }
                     if (composingRoman.isNotEmpty()) {
                       composingRoman = composingRoman.dropLast(1)
                     } else if (committedText.isNotEmpty()) {
-                      val after = committedText.dropLast(1)
+                      val after = EmojiRepository.deleteLastGrapheme(committedText)
                       if (!previewBanglaMode && previewSymbolsMode == 0) {
                         val trailing =
                           after.takeLastWhile { it in 'a'..'z' || it in 'A'..'Z' || it == '\'' }
@@ -489,7 +493,7 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
                       committedText += composingDisplay
                       composingRoman = ""
                     }
-                    previewInPanel = false
+                    previewPanelMode = "none"
                     previewSymbolsMode = 0
                     previewBanglaMode = !previewBanglaMode
                     prefs.edit().putBoolean("bn", previewBanglaMode).apply()
@@ -511,7 +515,7 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
                       composingRoman = ""
                       suggestVersion++
                     }
-                    previewInPanel = false
+                    previewPanelMode = "none"
                     previewSymbolsMode = mode
                   },
                   onComposingTap = {
@@ -555,7 +559,7 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
                   onSnippet = { snippet ->
                     if (previewSecretMode) {
                       previewSecretText += snippet
-                      previewInPanel = false
+                      previewPanelMode = "none"
                     } else {
                       if (composingDisplay.isNotEmpty()) {
                         committedText += composingDisplay
@@ -571,7 +575,7 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
                       previewNoteEditCommitted = ""
                       previewNoteEditRoman = ""
                       previewPanelVersion++
-                      previewInPanel = true
+                      previewPanelMode = "clipboard"
                       return@EmbeddedKeyboardPreview
                     }
                     if (composingDisplay.isNotEmpty() && !previewSecretMode) {
@@ -579,7 +583,42 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
                       composingRoman = ""
                     }
                     previewPanelVersion++
-                    previewInPanel = !previewInPanel
+                    previewPanelMode = if (previewPanelMode == "clipboard") "none" else "clipboard"
+                  },
+                  onEmojiToggle = {
+                    if (composingDisplay.isNotEmpty() && !previewSecretMode && !previewNoteEditMode) {
+                      suggestionsRepo.learn(composingRoman, composingDisplay, previewBanglaMode)
+                      committedText += composingDisplay
+                      composingRoman = ""
+                      suggestVersion++
+                    }
+                    if (previewPanelMode == "emoji") {
+                      previewPanelMode = "none"
+                    } else {
+                      previewEmojiVersion++
+                      previewPanelMode = "emoji"
+                    }
+                  },
+                  onEmojiSelected = { emoji ->
+                    if (previewNoteEditMode) {
+                      if (previewNoteEditRoman.isNotEmpty()) {
+                        previewNoteEditCommitted +=
+                          if (previewBanglaMode && previewSymbolsMode == 0) Phonetic.convert(previewNoteEditRoman)
+                          else previewNoteEditRoman
+                        previewNoteEditRoman = ""
+                      }
+                      previewNoteEditCommitted += emoji
+                    } else if (previewSecretMode) {
+                      previewSecretText = activeSecretPlain + emoji
+                    } else {
+                      if (composingDisplay.isNotEmpty()) {
+                        suggestionsRepo.learn(composingRoman, composingDisplay, previewBanglaMode)
+                        committedText += composingDisplay
+                        composingRoman = ""
+                        suggestVersion++
+                      }
+                      committedText += emoji
+                    }
                   },
                   onAddNewNote = {
                     previewNoteEditKind = "new"
@@ -589,7 +628,7 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
                     previewNoteEditRoman = ""
                     previewNoteEditMode = true
                     previewSymbolsMode = 0
-                    previewInPanel = false
+                    previewPanelMode = "none"
                   },
                   onPinRecent = { text ->
                     Notes(context).add(text)
@@ -609,7 +648,7 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
                     previewNoteEditRoman = ""
                     previewNoteEditMode = true
                     previewSymbolsMode = 0
-                    previewInPanel = false
+                    previewPanelMode = "none"
                   },
                   onEditRecent = { text ->
                     previewNoteEditKind = "recent"
@@ -619,7 +658,7 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
                     previewNoteEditRoman = ""
                     previewNoteEditMode = true
                     previewSymbolsMode = 0
-                    previewInPanel = false
+                    previewPanelMode = "none"
                   },
                   onRemovePinned = { index, _ ->
                     Notes(context).remove(index)
@@ -639,7 +678,7 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
                     previewNoteEditCommitted = ""
                     previewNoteEditRoman = ""
                     previewPanelVersion++
-                    previewInPanel = true
+                    previewPanelMode = "clipboard"
                   },
                   onTranslate = {
                     val target =
@@ -691,7 +730,7 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
                       previewSecretTarget = if (active != null && contacts.containsKey(active)) active else contacts.keys.first()
                       previewSecretText = ""
                       previewSecretMode = true
-                      previewInPanel = false
+                      previewPanelMode = "none"
                       previewSymbolsMode = 0
                     } else {
                       previewSecretMode = false
@@ -806,6 +845,19 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
               )
               Spacer(modifier = Modifier.width(8.dp))
               Text(stringResource(R.string.btn_open_assistant))
+            }
+            OutlinedButton(
+              onClick = { context.startActivity(Intent(context, CommandGuideActivity::class.java)) },
+              modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize().testTag("open_command_guide_button"),
+              shape = RoundedCornerShape(14.dp),
+            ) {
+              Icon(
+                imageVector = Icons.Filled.Search,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+              )
+              Spacer(modifier = Modifier.width(8.dp))
+              Text(stringResource(R.string.btn_open_command_guide))
             }
             OutlinedButton(
               onClick = { context.startActivity(Intent(context, NotepadActivity::class.java)) },
@@ -987,7 +1039,7 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
 private fun EmbeddedKeyboardPreview(
   banglaMode: Boolean,
   symbolsMode: Int,
-  inPanel: Boolean,
+  panelMode: String,
   secretMode: Boolean,
   secretTarget: String?,
   noteEditMode: Boolean,
@@ -996,6 +1048,7 @@ private fun EmbeddedKeyboardPreview(
   heightPct: Int,
   themeVersion: Int,
   panelVersion: Int,
+  emojiVersion: Int,
   composingText: String,
   suggestionsList: List<String>,
   onText: (String) -> Unit,
@@ -1009,6 +1062,8 @@ private fun EmbeddedKeyboardPreview(
   onSuggestionLongPress: (String) -> Unit,
   onSnippet: (String) -> Unit,
   onNotepad: () -> Unit,
+  onEmojiToggle: () -> Unit,
+  onEmojiSelected: (String) -> Unit,
   onAddNewNote: () -> Unit,
   onPinRecent: (String) -> Unit,
   onUnpinNote: (Int, String) -> Unit,
@@ -1049,6 +1104,7 @@ private fun EmbeddedKeyboardPreview(
     update = { host ->
       val kv = host.keyboardView
       val panel = host.panelView
+      val emojiPanel = host.emojiPanelView
 
       kv.listener =
         object : KeyboardView.Listener {
@@ -1072,6 +1128,7 @@ private fun EmbeddedKeyboardPreview(
           override fun onVoice() = onVoice()
           override fun onAssistant() = onAssistant()
           override fun onSecretToggle() = onSecretToggle()
+          override fun onEmojiToggle() = onEmojiToggle()
           override fun onNoteEditSave() = onNoteEditSave()
           override fun onNoteEditCancel() = onNoteEditCancel()
         }
@@ -1090,23 +1147,44 @@ private fun EmbeddedKeyboardPreview(
           override fun onClearRecent() = onClearRecent()
         }
 
+      emojiPanel.listener =
+        object : EmojiPanelView.Listener {
+          override fun onBackToKeyboard() = onEmojiToggle()
+          override fun onEmojiSelected(emoji: String) = onEmojiSelected(emoji)
+          override fun onBackspace() = onDelete()
+        }
+
       val layoutState = listOf(rows, spaceLabel, heightPct, themeVersion)
       if (kv.tag != layoutState) {
         kv.tag = layoutState
         kv.reloadTheme()
         panel.reloadTheme()
+        emojiPanel.reloadTheme()
         kv.setLayout(rows, spaceLabel, heightPct / 100f)
       }
 
-      val panelState = listOf(inPanel, panelVersion, themeVersion)
+      val panelState = listOf(panelMode, panelVersion, themeVersion)
       if (panel.tag != panelState) {
         panel.tag = panelState
-        if (inPanel) {
+        if (panelMode == "clipboard") {
           panel.setData(Notes(context).all(), ClipboardMemory(context).clips())
         }
       }
 
-      host.showPanel(inPanel)
+      val emojiState = listOf(panelMode, emojiVersion, themeVersion)
+      if (emojiPanel.tag != emojiState) {
+        emojiPanel.tag = emojiState
+        if (panelMode == "emoji") {
+          emojiPanel.openPanel()
+        }
+      }
+
+      val targetMode = when (panelMode) {
+        "clipboard" -> KeyboardHostLayout.HostMode.CLIPBOARD
+        "emoji" -> KeyboardHostLayout.HostMode.EMOJI
+        else -> KeyboardHostLayout.HostMode.KEYBOARD
+      }
+      host.setMode(targetMode)
 
       kv.setSecretMode(secretMode, secretTarget)
       kv.setNoteEditMode(noteEditMode)

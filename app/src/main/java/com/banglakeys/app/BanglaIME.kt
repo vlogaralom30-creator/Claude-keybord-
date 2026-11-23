@@ -26,6 +26,7 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
     private var hostLayout: KeyboardHostLayout? = null
     private var kv: KeyboardView? = null
     private var panelView: NotepadClipboardPanelView? = null
+    private var emojiPanelView: EmojiPanelView? = null
     private lateinit var prefs: SharedPreferences
 
     private val buf = StringBuilder()      // active roman/word prefix buffer
@@ -48,7 +49,7 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
     private var numRow = false
     private var bnDigitsPref = true
     private var heightPct = 100
-    private var inPanel = false
+    private var hostMode = KeyboardHostLayout.HostMode.KEYBOARD
 
     private lateinit var suggestions: Suggestions
     private lateinit var notes: Notes
@@ -158,6 +159,25 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
             }
         }
         panelView = panel
+
+        emojiPanelView = host.emojiPanelView.apply {
+            listener = object : EmojiPanelView.Listener {
+                override fun onBackToKeyboard() {
+                    onFeedback()
+                    closePanel()
+                }
+
+                override fun onEmojiSelected(emoji: String) {
+                    onFeedback()
+                    insertEmoji(emoji)
+                }
+
+                override fun onBackspace() {
+                    onFeedback()
+                    onDelete()
+                }
+            }
+        }
 
         loadPrefs()
         refreshLayout()
@@ -270,6 +290,7 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
         heightPct = prefs.getInt("height", 100)
         kv?.reloadTheme()
         panelView?.reloadTheme()
+        emojiPanelView?.reloadTheme()
     }
 
     private fun spaceLabelFor(): String = if (bangla) "বাংলা" else "English"
@@ -425,14 +446,20 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
         if (noteEditTarget != null) {
             when {
                 noteRomanBuf.isNotEmpty() -> noteRomanBuf.deleteCharAt(noteRomanBuf.length - 1)
-                noteCommittedBuf.isNotEmpty() -> noteCommittedBuf.deleteCharAt(noteCommittedBuf.length - 1)
+                noteCommittedBuf.isNotEmpty() -> {
+                    val trimmed = EmojiRepository.deleteLastGrapheme(noteCommittedBuf.toString())
+                    noteCommittedBuf.setLength(0)
+                    noteCommittedBuf.append(trimmed)
+                }
             }
             updateNoteEditStrip()
             return
         }
         if (secretMode) {
             if (secretText.isNotEmpty()) {
-                secretText.deleteCharAt(secretText.length - 1)
+                val trimmed = EmojiRepository.deleteLastGrapheme(secretText.toString())
+                secretText.setLength(0)
+                secretText.append(trimmed)
             }
             updateSecretStrip()
             return
@@ -644,6 +671,25 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
         refreshStrip()
     }
 
+    private fun insertEmoji(emoji: String) {
+        if (noteEditTarget != null) {
+            flushTrailingPhoneticInNoteEdit()
+            noteCommittedBuf.append(emoji)
+            updateNoteEditStrip()
+            return
+        }
+        if (secretMode) {
+            flushTrailingPhoneticInSecret()
+            secretText.append(emoji)
+            updateSecretStrip()
+            return
+        }
+        commitComposing()
+        currentInputConnection?.commitText(emoji, 1)
+        refreshStrip()
+        updateAutoShift()
+    }
+
     private fun refreshPanelData() {
         notes = Notes(this)
         clipboardMemory.reload()
@@ -651,14 +697,20 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
     }
 
     private fun openPanel() {
-        inPanel = true
+        hostMode = KeyboardHostLayout.HostMode.CLIPBOARD
         refreshPanelData()
-        hostLayout?.showPanel(true)
+        hostLayout?.setMode(hostMode)
+    }
+
+    private fun openEmojiPanel() {
+        hostMode = KeyboardHostLayout.HostMode.EMOJI
+        emojiPanelView?.openPanel()
+        hostLayout?.setMode(hostMode)
     }
 
     private fun closePanel() {
-        inPanel = false
-        hostLayout?.showPanel(false)
+        hostMode = KeyboardHostLayout.HostMode.KEYBOARD
+        hostLayout?.setMode(hostMode)
     }
 
     private fun startNoteEdit(target: NoteEditTarget, initialText: String) {
@@ -737,7 +789,12 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
             openPanel()
             return
         }
-        if (inPanel) closePanel() else openPanel()
+        if (hostMode == KeyboardHostLayout.HostMode.CLIPBOARD) closePanel() else openPanel()
+    }
+
+    override fun onEmojiToggle() {
+        commitComposing()
+        if (hostMode == KeyboardHostLayout.HostMode.EMOJI) closePanel() else openEmojiPanel()
     }
 
     /** Secret mode-এ টাইপ করা Roman অক্ষর বাংলা মোডে phonetic করে। */

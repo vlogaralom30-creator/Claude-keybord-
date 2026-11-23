@@ -17,6 +17,7 @@ enum class KeyType {
     MIC,
     ASSISTANT,
     SECRET,
+    EMOJI,
 }
 
 /**
@@ -62,15 +63,16 @@ object Layouts {
                 Key("⌫", KeyType.DELETE, 1.5f)
         )
 
-        // Row 4 (৭টি key — হালকা ও MIC সহজে নাগালে)
+        // Row 4 (৮টি key — Emoji + MIC সহজে নাগালে)
         rows.add(
             listOf(
-                Key("?123", KeyType.SYMBOLS, 1.5f),
-                Key("LANG", KeyType.LANG, 1f),
-                Key(","),
-                Key(" ", KeyType.SPACE, 2.8f),
-                if (bangla) Key("।", alt = ".") else Key("."),
-                Key("MIC", KeyType.MIC, 1.2f),
+                Key("?123", KeyType.SYMBOLS, 1.3f),
+                Key("LANG", KeyType.LANG, 0.95f),
+                Key("🙂", KeyType.EMOJI, 0.95f),
+                Key(",", weight = 0.8f),
+                Key(" ", KeyType.SPACE, 2.5f),
+                if (bangla) Key("।", weight = 0.85f, alt = ".") else Key(".", weight = 0.85f),
+                Key("MIC", KeyType.MIC, 1.15f),
                 Key("ENTER", KeyType.ENTER, 1.5f),
             )
         )

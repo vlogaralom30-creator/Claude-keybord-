@@ -169,13 +169,64 @@ object BanglaVocab {
 
     // ---------------------------------------------------------------- swipe / scroll
     val SWIPE_UP = setOf(
-        "up", "next", "porer", "upore", "upor", "uporer", "uthao", "uthaw", "utha", "scroll up",
-        "ওপরে", "উপরে", "উপর", "আপ", "উঠাও", "ওঠাও", "নেক্সট", "পরের"
+        "up", "next", "porer", "upore", "upor", "uporer", "uthao", "uthaw", "utha",
+        "othao", "othaw", "otha", "scroll up",
+        "ওপরে", "উপরে", "উপর", "আপ", "উঠাও", "ওঠাও", "উঠান", "ওঠান", "নেক্সট", "পরের"
     )
     val SWIPE_DOWN = setOf(
-        "down", "previous", "prev", "ager", "niche", "nichey", "nicher", "namao", "namaw", "nama", "scroll down",
-        "নিচে", "নিচের", "নামাও", "ডাউন", "আগের"
+        "down", "previous", "prev", "ager", "niche", "nichey", "nicher", "namao", "namaw", "nama", "namo",
+        "scroll down",
+        "নিচে", "নিচের", "নামাও", "নামো", "নামান", "ডাউন", "আগের"
     )
     val SWIPE_LEFT = setOf("left", "bame", "bam", "bamer", "বামে", "বাম", "লেফট")
     val SWIPE_RIGHT = setOf("right", "dane", "dan", "daner", "ডানে", "ডান", "রাইট")
+
+    /** Scroll intensity modifiers */
+    val SCROLL_SLIGHT = setOf(
+        "ektu", "ekto", "arekto", "arektu", "olpo", "samanno", "halka", "slight", "little", "bit",
+        "একটু", "আরেকটু", "অল্প", "সামান্য", "হালকা"
+    )
+    val SCROLL_FAR = setOf(
+        "beshi", "onek", "aro", "khub", "jore", "druto", "fast", "far", "more", "lot", "full",
+        "বেশি", "অনেক", "আরো", "আরও", "খুব", "জোরে", "দ্রুত"
+    )
+    val SCROLL_NOUN = setOf("scroll", "scrol", "স্ক্রল", "টানো", "সরাও")
+
+    /** Short-video / player next-previous triggers */
+    val MEDIA_NEXT_PHRASES = setOf(
+        "next video", "next reel", "next short", "next shorts", "porer video", "porer reel",
+        "porer ta", "পরের ভিডিও", "নেক্সট ভিডিও", "পরের রিল"
+    )
+    val MEDIA_PREV_PHRASES = setOf(
+        "previous video", "prev video", "last video", "previous reel", "ager video", "ager reel",
+        "ager ta", "আগের ভিডিও", "আগের রিল"
+    )
+
+    /** App-specific action keywords */
+    val COMMENT_WORDS = setOf("comment", "comments", "reply", "কমেন্ট", "মন্তব্য")
+    val SUBSCRIBE_WORDS = setOf("subscribe", "sub", "সাবস্ক্রাইব")
+    val FOLLOW_WORDS = setOf("follow", "ফলো")
+    val REFRESH_WORDS = setOf("refresh", "reload", "রিফ্রেশ", "রিলোড")
+    val NEW_TAB_WORDS = setOf("new tab", "নতুন ট্যাব", "নিউ ট্যাব")
+    val FULLSCREEN_WORDS = setOf("fullscreen", "full screen", "boro screen", "ফুলস্ক্রিন", "বড় স্ক্রিন", "বড় স্ক্রিন")
+
+    /** Call controls */
+    val END_CALL_PHRASES = setOf(
+        "end call", "cut call", "hang up", "disconnect call", "call kato", "call kata", "call bondho",
+        "phone rakho", "কল কাটো", "কল বন্ধ", "ফোন রাখো"
+    )
+    val SPEAKER_ON_PHRASES = setOf("speaker on", "turn on speaker", "speaker chalu", "স্পিকার চালু", "স্পিকার অন")
+    val SPEAKER_OFF_PHRASES = setOf("speaker off", "turn off speaker", "speaker bondho", "স্পিকার বন্ধ", "স্পিকার অফ")
+
+    /** Follow-up & memory words */
+    val REPEAT_WORDS = setOf("abar", "again", "repeat", "আবার")
+    val SUBMIT_WORDS = setOf("send", "pathao", "pathaw", "pathan", "submit", "post", "পাঠাও", "পাঠান", "পোস্ট")
+
+    val ORDINAL_INDEX: Map<String, Int> = mapOf(
+        "first" to 0, "1st" to 0, "prothom" to 0, "prathom" to 0, "1" to 0, "১" to 0, "প্রথম" to 0, "ei" to 0, "eta" to 0, "eita" to 0, "এই" to 0, "এটা" to 0,
+        "second" to 1, "2nd" to 1, "ditiyo" to 1, "2" to 1, "২" to 1, "দ্বিতীয়" to 1, "দ্বিতীয়" to 1,
+        "third" to 2, "3rd" to 2, "tritiyo" to 2, "3" to 2, "৩" to 2, "তৃতীয়" to 2, "তৃতীয়" to 2,
+        "fourth" to 3, "4th" to 3, "4" to 3, "৪" to 3,
+        "fifth" to 4, "5th" to 4, "5" to 4, "৫" to 4
+    )
 }

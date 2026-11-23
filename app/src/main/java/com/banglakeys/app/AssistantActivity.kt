@@ -71,6 +71,11 @@ class AssistantActivity : Activity() {
     private lateinit var chipContinuousText: TextView
     private lateinit var chipPtt: LinearLayout
     private lateinit var chipPttText: TextView
+    private lateinit var chipContentDir: LinearLayout
+    private lateinit var chipContentDirText: TextView
+    private lateinit var chipFingerDir: LinearLayout
+    private lateinit var chipFingerDirText: TextView
+    private lateinit var scrollDirHintText: TextView
 
     private lateinit var checklistProgress: TextView
     private val checkRows = ArrayList<Triple<ImageView, TextView, TextView>>()
@@ -161,6 +166,9 @@ class AssistantActivity : Activity() {
 
         // ---- 1. Status & Service Card
         root.addView(buildServiceCard())
+
+        // ---- 1b. Command Guide & Tester Card
+        root.addView(buildCommandGuideCard())
 
         // ---- 2. Side-Edge Overlay & Auto Ad Skipper
         root.addView(buildOverlayAndAdSkipCard())
@@ -468,6 +476,82 @@ class AssistantActivity : Activity() {
         })
 
         card.addView(modeRow)
+
+        // Scroll Direction Toggle (Content Direction vs Finger Direction)
+        card.addView(TextView(this).apply {
+            text = "Scroll Direction ('upore' / 'niche')"
+            textSize = 12.5f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(pal.subText)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = dp(12)
+                bottomMargin = dp(6)
+            }
+        })
+
+        val dirRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        val contentChip = buildIconButton(AssistantIcons.Kind.SWIPE_UP, "Content (ডিফল্ট)", pal.primary, pal.primarySoft) {
+            AssistantPrefs.setScrollByContentDirection(this, true)
+            refresh()
+        }
+        chipContentDir = contentChip.first
+        chipContentDirText = contentChip.third
+        dirRow.addView(chipContentDir, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+            marginEnd = dp(6)
+        })
+
+        val fingerChip = buildIconButton(AssistantIcons.Kind.SWIPE_UP, "Finger", pal.text, pal.bg, pal.border) {
+            AssistantPrefs.setScrollByContentDirection(this, false)
+            refresh()
+        }
+        chipFingerDir = fingerChip.first
+        chipFingerDirText = fingerChip.third
+        dirRow.addView(chipFingerDir, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+            marginStart = dp(6)
+        })
+        card.addView(dirRow)
+
+        scrollDirHintText = TextView(this).apply {
+            textSize = 11.5f
+            setTextColor(pal.subText)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(6) }
+        }
+        card.addView(scrollDirHintText)
+        return card
+    }
+
+    private fun buildCommandGuideCard(): View {
+        val card = makeCard()
+        addCardHeader(
+            card,
+            AssistantIcons.Kind.SPARKLE,
+            "কমান্ড গাইড ও 99% সঠিক লিস্ট",
+            "Chrome, YouTube, Facebook, TikTok ও Call কমান্ড দেখুন এবং Try করুন"
+        )
+        val guideBtn = buildIconButton(
+            AssistantIcons.Kind.PLAY,
+            "সব কমান্ড দেখুন ও Try করুন",
+            Color.WHITE,
+            pal.primary
+        ) {
+            startActivity(Intent(this, CommandGuideActivity::class.java))
+        }.first
+        card.addView(guideBtn, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ))
         return card
     }
 
@@ -951,6 +1035,22 @@ class AssistantActivity : Activity() {
             chipContinuousText.setTextColor(pal.subText)
             rippleCard(chipPtt, pal.primarySoft, 12, pal.primary)
             chipPttText.setTextColor(pal.primary)
+        }
+
+        // Scroll direction chips
+        val byContent = AssistantPrefs.scrollByContentDirection(this)
+        if (byContent) {
+            rippleCard(chipContentDir, pal.primarySoft, 12, pal.primary)
+            chipContentDirText.setTextColor(pal.primary)
+            rippleCard(chipFingerDir, pal.bg, 12, pal.border)
+            chipFingerDirText.setTextColor(pal.subText)
+            scrollDirHintText.text = "Content মোড চালু: 'niche' বললে নিচের লেখা দেখাবে, 'upore' বললে উপরে ফিরবে। ('porer video' সবসময় পরের শর্টস চালায়)"
+        } else {
+            rippleCard(chipContentDir, pal.bg, 12, pal.border)
+            chipContentDirText.setTextColor(pal.subText)
+            rippleCard(chipFingerDir, pal.primarySoft, 12, pal.primary)
+            chipFingerDirText.setTextColor(pal.primary)
+            scrollDirHintText.text = "Finger মোড চালু: 'upore' বললে আঙুল উপরে টানবে, 'niche' বললে আঙুল নিচে টানবে।"
         }
 
         // Checklist progress (out of 5 including overlay & SAF)

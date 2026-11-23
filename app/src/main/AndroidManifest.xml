@@ -65,6 +65,13 @@
             android:label="BanglaKeys Assistant"
             android:theme="@android:style/Theme.DeviceDefault.Light" />
 
+        <activity
+            android:name="com.banglakeys.app.CommandGuideActivity"
+            android:exported="false"
+            android:label="@string/command_guide_title"
+            android:theme="@style/Theme.MyApplication"
+            android:windowSoftInputMode="adjustResize" />
+
         <service
             android:name="com.banglakeys.app.AssistantAccessibilityService"
             android:exported="false"

@@ -30,18 +30,21 @@ object SmartCommandResolver {
 
     // Action ও App কীওয়ার্ডগুলোর Canonical ডিকশনারি (যাতে ভুল বানান/উচ্চারণ ঠিক হয়)
     private val FUZZY_KEYWORDS: Set<String> = setOf(
-        // Wake-related excluded from payload rewriting, handled separately
         "open", "khol", "kholo", "khulo", "dhuko", "chalu", "launch", "start",
-        "call", "dial", "ring", "phone", "video", "audio", "voice",
+        "call", "dial", "ring", "phone", "video", "audio", "voice", "speaker", "end",
         "youtube", "search", "khuj", "khoj", "khojo", "khujo", "gaan", "natok", "movie",
         "click", "tap", "press", "double",
         "type", "write", "likho", "lekho", "likhe", "send", "pathao", "pathan", "enter", "submit",
         "like", "love", "heart", "nice", "wow", "sundor", "darun",
+        "comment", "subscribe", "follow", "refresh", "reload", "fullscreen", "tab",
         "pause", "play", "resume", "stop", "chalao", "dekhao", "thamo",
         "volume", "awaj", "shobdo", "barao", "komao", "full", "mute", "unmute", "chup",
         "back", "pechone", "home", "minimize", "ber", "recent", "recents", "notification", "notifications",
         "quick", "settings", "screenshot", "lock",
-        "next", "previous", "prev", "up", "down", "left", "right", "upore", "niche", "uthao", "namao",
+        "next", "previous", "prev", "porer", "ager", "up", "down", "left", "right",
+        "upore", "niche", "uthao", "othao", "namao", "scroll",
+        "ektu", "ekto", "arekto", "beshi", "onek", "olpo", "abar", "repeat",
+        "first", "second", "third", "prothom",
         "sleep", "ghumao", "quit", "exit", "close", "bondho", "clear", "leave", "assistant",
         "create", "make", "folder", "file", "files", "inside", "camera", "gallery", "calculator", "clock",
         "photo", "picture", "selfie",
@@ -61,6 +64,11 @@ object SmartCommandResolver {
         "what's app" to "whatsapp",
         "chat gpt" to "chatgpt",
         "play store" to "playstore",
+        "chorom" to "chrome",
+        "crome" to "chrome",
+        "chrom" to "chrome",
+        "krume" to "chrome",
+        "face book" to "facebook",
         "kholoo" to "kholo",
         "khuloo" to "khulo",
         "khul" to "khulo",
@@ -81,7 +89,12 @@ object SmartCommandResolver {
         "patao" to "pathao",
         "liko" to "likho",
         "leko" to "lekho",
-        "scrol" to "up",
+        "scrol" to "scroll",
+        "ekto" to "ektu",
+        "arektu" to "arekto",
+        "othaw" to "othao",
+        "uthaw" to "uthao",
+        "namaw" to "namao",
         "shob" to "sob",
         "bondho" to "bondho",
         "bondo" to "bondho",
@@ -91,7 +104,14 @@ object SmartCommandResolver {
         "minimaiz" to "minimize",
         "myut" to "mute",
         "dhukoo" to "dhuko",
-        "chalaw" to "chalao"
+        "chalaw" to "chalao",
+        "dekhaw" to "dekhao",
+        "sabscribe" to "subscribe",
+        "subscrib" to "subscribe",
+        "falo" to "follow",
+        "folow" to "follow",
+        "koment" to "comment",
+        "tiktak" to "tiktok"
     )
 
     private val BANGLA_SPELLING_MAP: Map<String, String> = mapOf(
@@ -104,6 +124,9 @@ object SmartCommandResolver {
         "টেলিগ্রাম" to "telegram",
         "টিকটক" to "tiktok",
         "টিক টক" to "tiktok",
+        "ক্রোম" to "chrome",
+        "ফেসবুক" to "facebook",
+        "ইউটিউব" to "youtube",
         "ক্লড" to "claude",
         "ক্লাউড" to "claude",
         "ক্লদ" to "claude",
@@ -241,6 +264,40 @@ object SmartCommandResolver {
     }
 
     /**
+     * সেশন মেমোরি (আগের কমান্ড, স্ক্রল দিক, চলতি অ্যাপ) সহ রিজলভ করে।
+     * "aro beshi", "arekto", "abar koro", "eta send koro"-এর মতো follow-up গুলো ধরে ফেলে।
+     */
+    fun resolveWithMemory(
+        candidates: List<String>,
+        alreadyAwake: Boolean,
+        memory: AssistantMemory,
+        foregroundPackage: String = ""
+    ): Resolution {
+        val direct = resolve(candidates, alreadyAwake)
+        if (direct.command != null || (!direct.woke && !alreadyAwake)) return direct
+
+        for (raw in candidates) {
+            val (woke, rest) = splitWakeSmart(raw)
+            if (!woke && !alreadyAwake) continue
+            if (rest.isBlank()) continue
+
+            val followCmd = memory.resolveFollowUp(rest, foregroundPackage)
+                ?: memory.resolveFollowUp(normalizeFuzzyPhrase(rest), foregroundPackage)
+            if (followCmd != null) {
+                return Resolution(
+                    woke = woke,
+                    heardText = raw.trim(),
+                    normalizedText = rest,
+                    command = followCmd,
+                    summary = describe(followCmd),
+                    fuzzyCorrected = true
+                )
+            }
+        }
+        return direct
+    }
+
+    /**
      * Multi-word ও single-word phonetic/fuzzy normalization।
      * "type <text>"-এর পরের ফ্রি-টেক্সট স্পর্শ করে না, শুধু কমান্ড অংশ ঠিক করে।
      */
@@ -353,9 +410,11 @@ object SmartCommandResolver {
     private fun commandSpecificityBonus(cmd: Command): Int = when (cmd) {
         Command.PanicStop -> 50
         is Command.AppCall, is Command.AppMessage, is Command.AppChat -> 35
+        is Command.ChromeNavigate, is Command.InAppSearch, is Command.AppAction -> 32
         is Command.CreateFolder, is Command.CreateFile -> 30
         is Command.SetAlarm, is Command.SetTimer, is Command.WriteEmail, is Command.WriteSms -> 25
-        is Command.YoutubeSearch, is Command.Navigate, is Command.WebSearch, is Command.PlaySong -> 20
+        is Command.YoutubeSearch, is Command.Navigate, is Command.WebSearch, is Command.PlaySong,
+        is Command.PlayScreenItem, is Command.MediaStep -> 20
         is Command.OpenApp -> if (AppResolver.isKnownAppName(cmd.name)) 350 else 10
         is Command.Call -> 10
         else -> 5
@@ -365,13 +424,40 @@ object SmartCommandResolver {
     fun describe(cmd: Command): String = when (cmd) {
         is Command.OpenApp -> "অ্যাপ খোলা: ${cmd.name}"
         is Command.Call -> "ফোন কল: ${cmd.target}"
-        is Command.YoutubeSearch -> "YouTube সার্চ: ${cmd.query}" + if (cmd.mostViewed) " (Top views)" else ""
-        is Command.Swipe -> when (cmd.dir) {
-            Dir.UP -> "উপরে Swipe"
-            Dir.DOWN -> "নিচে Swipe"
-            Dir.LEFT -> "বামে Swipe"
-            Dir.RIGHT -> "ডানে Swipe"
+        is Command.YoutubeSearch -> "YouTube / ভিডিও: ${cmd.query}" + if (cmd.mostViewed) " (Top views)" else ""
+        is Command.Swipe -> {
+            val scaleTxt = when (cmd.scale) {
+                ScrollScale.SLIGHT -> " (একটু)"
+                ScrollScale.NORMAL -> ""
+                ScrollScale.FAR -> " (বেশি)"
+            }
+            when (cmd.dir) {
+                Dir.UP -> "উপরে স্ক্রল$scaleTxt"
+                Dir.DOWN -> "নিচে স্ক্রল$scaleTxt"
+                Dir.LEFT -> "বামে Swipe"
+                Dir.RIGHT -> "ডানে Swipe"
+            }
         }
+        is Command.MediaStep -> if (cmd.next) "পরের ভিডিও" else "আগের ভিডিও"
+        is Command.ChromeNavigate -> if (cmd.isUrl) "Chrome ওয়েবসাইট: ${cmd.urlOrQuery}" else "Chrome সার্চ: ${cmd.urlOrQuery}"
+        is Command.InAppSearch -> "${cmd.appKey ?: "স্ক্রিন"}-এ সার্চ: ${cmd.query}"
+        is Command.AppAction -> {
+            val app = cmd.appKey?.let { "$it " } ?: ""
+            when (cmd.action) {
+                AppActionType.LIKE -> "${app}Like"
+                AppActionType.COMMENT -> if (cmd.text != null) "${app}কমেন্ট: \"${cmd.text}\"" else "${app}কমেন্ট বক্স খোলা"
+                AppActionType.SUBSCRIBE -> "${app}Subscribe"
+                AppActionType.FOLLOW -> "${app}Follow"
+                AppActionType.REFRESH -> "${app}পেজ রিফ্রেশ"
+                AppActionType.NEW_TAB -> "Chrome নতুন ট্যাব"
+                AppActionType.FULLSCREEN -> "Fullscreen চালু/বন্ধ"
+                AppActionType.END_CALL -> "কল কাটা"
+                AppActionType.SPEAKER_ON -> "Speaker চালু"
+                AppActionType.SPEAKER_OFF -> "Speaker বন্ধ"
+            }
+        }
+        is Command.PlayScreenItem -> "স্ক্রিনের ${cmd.index + 1}নং ভিডিও চালানো"
+        Command.SubmitActiveInput -> "Send / Search চাপুন"
         is Command.ClickText -> "ক্লিক: ${cmd.text}"
         is Command.TypeText -> "টাইপ: \"${cmd.text}\""
         Command.PlayPause -> "Play / Pause"

@@ -34,6 +34,7 @@ import kotlin.math.min
 class KeyboardView(context: Context) : View(context) {
 
     enum class QuickAction {
+        EMOJI,
         NOTEPAD,
         TRANSLATE,
         VOICE,
@@ -58,6 +59,7 @@ class KeyboardView(context: Context) : View(context) {
         fun onVoice()
         fun onAssistant()
         fun onSecretToggle() {}
+        fun onEmojiToggle() {}
         fun onNoteEditSave() {}
         fun onNoteEditCancel() {}
     }
@@ -439,12 +441,12 @@ class KeyboardView(context: Context) : View(context) {
             }
             suggestionRects = rects
         } else {
-            // Idle মোড: বামে ৪টি Quick-Action Shortcut + ডানে Next-Word / Starter Pills
+            // Idle মোড: বামে ৫টি Quick-Action Shortcut + ডানে Next-Word / Starter Pills
             composingRect.setEmpty()
             val actions = QuickAction.values()
-            val compact = totalW < 340f * d
-            val actionW = (if (compact) 31f else 36f) * d
-            val actionGap = (if (compact) 3.5f else 4.5f) * d
+            val compact = totalW < 360f * d
+            val actionW = (if (compact) 28f else 32f) * d
+            val actionGap = (if (compact) 3f else 4f) * d
 
             var curX = outerPad
             for (action in actions) {
@@ -454,7 +456,7 @@ class KeyboardView(context: Context) : View(context) {
 
             val startX = curX + 2f * d
             val availW = totalW - outerPad - startX
-            val maxIdleWords = if (compact) 2 else 3
+            val maxIdleWords = if (totalW < 380f * d) 2 else 3
             val visCount = min(suggestions.size, maxIdleWords)
             val rects = ArrayList<RectF>(visCount)
             if (visCount > 0 && availW > 40f * d) {
@@ -625,6 +627,7 @@ class KeyboardView(context: Context) : View(context) {
             val cy = rect.centerY()
             val fg = if (action == QuickAction.ASSISTANT) accentC else textC
             when (action) {
+                QuickAction.EMOJI -> drawEmojiIcon(c, cx, cy, fg, 0.88f)
                 QuickAction.NOTEPAD -> drawNotepadIcon(c, cx, cy, fg, 0.88f)
                 QuickAction.TRANSLATE -> drawTranslateIcon(c, cx, cy, fg)
                 QuickAction.VOICE -> drawMicIcon(c, cx, cy, fg, 0.88f)
@@ -761,6 +764,7 @@ class KeyboardView(context: Context) : View(context) {
                 }
             }
             KeyType.LANG -> drawGlobeIcon(c, cx, cy, textC)
+            KeyType.EMOJI -> drawEmojiIcon(c, cx, cy, textC)
             KeyType.NOTEPAD -> drawNotepadIcon(c, cx, cy, textC)
             KeyType.MIC -> drawMicIcon(c, cx, cy, textC)
             KeyType.ASSISTANT -> drawAssistantIcon(c, cx, cy, accentC)
@@ -1071,6 +1075,28 @@ class KeyboardView(context: Context) : View(context) {
         )
     }
 
+    private fun drawEmojiIcon(c: Canvas, cx: Float, cy: Float, color: Int, scale: Float = 1f) {
+        val r = 8.4f * d * scale
+        iconPaint.color = color
+        iconPaint.strokeWidth = 1.65f * d
+        iconPaint.style = Paint.Style.STROKE
+        c.drawCircle(cx, cy, r, iconPaint)
+        iconPaint.style = Paint.Style.FILL
+        c.drawCircle(cx - r * 0.34f, cy - r * 0.22f, 1.25f * d * scale, iconPaint)
+        c.drawCircle(cx + r * 0.34f, cy - r * 0.22f, 1.25f * d * scale, iconPaint)
+        iconPaint.style = Paint.Style.STROKE
+        c.drawArc(
+            cx - r * 0.48f,
+            cy - r * 0.2f,
+            cx + r * 0.48f,
+            cy + r * 0.56f,
+            18f,
+            144f,
+            false,
+            iconPaint
+        )
+    }
+
     private fun drawPopups(c: Canvas) {
         for (i in 0 until ptrs.size()) {
             val p = ptrs.valueAt(i)
@@ -1243,6 +1269,7 @@ class KeyboardView(context: Context) : View(context) {
                     is StripHit.Action -> {
                         listener?.onFeedback()
                         when (hit.action) {
+                            QuickAction.EMOJI -> listener?.onEmojiToggle()
                             QuickAction.NOTEPAD -> listener?.onNotepad()
                             QuickAction.TRANSLATE -> listener?.onTranslate()
                             QuickAction.VOICE -> listener?.onVoice()
@@ -1336,6 +1363,7 @@ class KeyboardView(context: Context) : View(context) {
             KeyType.MIC -> l.onVoice()
             KeyType.ASSISTANT -> l.onAssistant()
             KeyType.SECRET -> l.onSecretToggle()
+            KeyType.EMOJI -> l.onEmojiToggle()
             KeyType.SHIFT -> {
                 val now = SystemClock.uptimeMillis()
                 shift = when {

@@ -29,6 +29,9 @@ class CommandExecutor(private val appCtx: Context) {
         is Command.AppChat,
         is Command.AppCall,
         is Command.AppMessage,
+        is Command.ChromeNavigate,
+        is Command.InAppSearch,
+        is Command.AppAction,
         Command.TakePhoto -> true
         else -> false
     }
@@ -38,7 +41,7 @@ class CommandExecutor(private val appCtx: Context) {
         onProgress: (String) -> Unit = {}
     ): String {
         AssistantLog.d("CommandExecutor.executeAsync: $cmd")
-        return when (cmd) {
+        val result = when (cmd) {
             is Command.AppChat -> {
                 val flow = cmd.appName?.let { AppFlows.find(it) }
                 if (cmd.appName != null && flow == null) {
@@ -57,6 +60,15 @@ class CommandExecutor(private val appCtx: Context) {
                     ?: return "❌ '${cmd.appName}' flow পাওয়া যায়নি"
                 flowRunner.runAppMessage(flow, cmd.contact, cmd.text, cmd.send, onProgress)
             }
+            is Command.ChromeNavigate ->
+                flowRunner.runChromeUrlOrSearch(cmd.urlOrQuery, cmd.isUrl, onProgress)
+            is Command.InAppSearch -> {
+                val flow = cmd.appKey?.let { AppFlows.find(it) }
+                    ?: svc?.foregroundPackage()?.let { AssistantMemory.appKeyFromPackage(it) }?.let { AppFlows.find(it) }
+                flowRunner.runInAppSearch(flow, cmd.query, onProgress)
+            }
+            is Command.AppAction ->
+                flowRunner.runAppScreenAction(cmd.appKey, cmd.action, cmd.text, onProgress)
             Command.TakePhoto -> {
                 onProgress("ক্যামেরা খোলা হচ্ছে…")
                 val cam = Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)
@@ -65,17 +77,35 @@ class CommandExecutor(private val appCtx: Context) {
                 }
                 flowRunner.tapShutterIfPresent()
             }
-            else -> execute(cmd)
+            else -> return execute(cmd)
         }
+        AssistantMemory.shared.recordExecution(cmd, svc?.foregroundPackage().orEmpty())
+        return result
     }
 
     fun execute(cmd: Command): String {
         AssistantLog.d("CommandExecutor.execute: $cmd")
-        return when (cmd) {
+        val result = when (cmd) {
             is Command.OpenApp -> openApp(cmd.name)
             is Command.Call -> call(cmd.target)
             is Command.YoutubeSearch -> youtube(cmd)
-            is Command.Swipe -> withSvc { swipe(it, cmd.dir) }
+            is Command.Swipe -> withSvc { swipe(it, cmd.dir, cmd.scale) }
+            is Command.MediaStep -> withSvc { mediaStep(it, cmd.next) }
+            is Command.PlayScreenItem -> withSvc {
+                if (it.clickOrdinalVideo(cmd.index)) {
+                    "▶️ ${cmd.index + 1}নং ভিডিও চালু হয়েছে"
+                } else {
+                    "⚠️ স্ক্রিনে ${cmd.index + 1}নং ভিডিও পাইনি"
+                }
+            }
+            Command.SubmitActiveInput -> withSvc {
+                val inp = it.findEditable()
+                if (it.submitFromInput(inp, listOf("send", "search", "submit", "go", "post"))) {
+                    "📤 পাঠানো / সার্চ করা হয়েছে"
+                } else {
+                    "⚠️ Send / Search বাটন পাইনি"
+                }
+            }
             is Command.ClickText -> withSvc {
                 if (it.clickByText(cmd.text)) "👆 ${cmd.text}" else "'${cmd.text}' screen-এ পাইনি"
             }
@@ -118,9 +148,16 @@ class CommandExecutor(private val appCtx: Context) {
             is Command.WriteSms -> writeSms(cmd)
             is Command.OpenSystemSettings -> openSystemSettings(cmd.target)
 
-            Command.Sleep, Command.StopAssistant, Command.PanicStop -> "" // service সামলায়
-            is Command.AppChat, is Command.AppCall, is Command.AppMessage -> "⏳ async flow"
+            Command.Sleep, Command.StopAssistant, Command.PanicStop -> return ""
+            is Command.AppChat,
+            is Command.AppCall,
+            is Command.AppMessage,
+            is Command.ChromeNavigate,
+            is Command.InAppSearch,
+            is Command.AppAction -> return "⏳ async flow"
         }
+        AssistantMemory.shared.recordExecution(cmd, svc?.foregroundPackage().orEmpty())
+        return result
     }
 
     // ------------------------------------------------------------ helpers
@@ -145,19 +182,47 @@ class CommandExecutor(private val appCtx: Context) {
         return if (launch(i)) "📱 $name" else "'$name' খুলতে পারলাম না (Display over other apps permission দিন)"
     }
 
-    private fun swipe(s: AssistantAccessibilityService, dir: Dir): String {
-        val real = if (AssistantConfig.UP_MEANS_FINGER_UP) dir else when (dir) {
-            Dir.UP -> Dir.DOWN
-            Dir.DOWN -> Dir.UP
-            else -> dir
+    private fun swipe(s: AssistantAccessibilityService, dir: Dir, scale: ScrollScale = ScrollScale.NORMAL): String {
+        val byContent = AssistantPrefs.scrollByContentDirection(appCtx)
+        val real = if (!byContent) {
+            dir
+        } else {
+            when (dir) {
+                Dir.UP -> Dir.DOWN
+                Dir.DOWN -> Dir.UP
+                else -> dir
+            }
         }
-        s.swipe(real)
+        s.swipe(real, scale)
+        val scaleLabel = when (scale) {
+            ScrollScale.SLIGHT -> " (একটু)"
+            ScrollScale.NORMAL -> ""
+            ScrollScale.FAR -> " (বেশি)"
+        }
         return when (dir) {
-            Dir.UP -> "⬆️ up"
-            Dir.DOWN -> "⬇️ down"
+            Dir.UP -> "⬆️ up$scaleLabel"
+            Dir.DOWN -> "⬇️ down$scaleLabel"
             Dir.LEFT -> "⬅️ left"
             Dir.RIGHT -> "➡️ right"
         }
+    }
+
+    private fun mediaStep(s: AssistantAccessibilityService, next: Boolean): String {
+        val pkg = s.foregroundPackage()
+        if (pkg in AssistantConfig.SHORT_VIDEO_APPS) {
+            s.swipe(if (next) Dir.UP else Dir.DOWN, ScrollScale.NORMAL)
+            return if (next) "⏭️ পরের ভিডিও" else "⏮️ আগের ভিডিও"
+        }
+        val hints = if (next) {
+            listOf("next video", "next", "পরের")
+        } else {
+            listOf("previous video", "previous", "আগের")
+        }
+        if (s.clickByHints(hints)) {
+            return if (next) "⏭️ পরের ভিডিও" else "⏮️ আগের ভিডিও"
+        }
+        s.swipe(if (next) Dir.UP else Dir.DOWN, ScrollScale.NORMAL)
+        return if (next) "⏭️ পরের ভিডিও" else "⏮️ আগের ভিডিও"
     }
 
     private fun like(s: AssistantAccessibilityService): String {
@@ -243,6 +308,17 @@ class CommandExecutor(private val appCtx: Context) {
 
     private fun youtube(cmd: Command.YoutubeSearch): String {
         val q = cmd.query
+        val currentSvc = svc
+        if (!cmd.mostViewed && currentSvc != null) {
+            val fg = currentSvc.foregroundPackage()
+            val onVideoScreen = fg == AssistantConfig.YOUTUBE_PKG ||
+                fg in AssistantConfig.FACEBOOK_PACKAGES ||
+                fg in AssistantConfig.TIKTOK_PACKAGES ||
+                fg in AssistantConfig.CHROME_PACKAGES
+            if (onVideoScreen && currentSvc.clickVisibleVideo(q)) {
+                return "▶️ স্ক্রিন থেকে চালু: $q"
+            }
+        }
         val view = Intent(
             Intent.ACTION_VIEW,
             Uri.parse("https://www.youtube.com/results?search_query=" + Uri.encode(q))

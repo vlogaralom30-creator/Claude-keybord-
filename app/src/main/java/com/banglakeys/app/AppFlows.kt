@@ -2,7 +2,10 @@ package com.banglakeys.app
 
 enum class Kind {
     AI_CHAT,
-    MESSENGER
+    MESSENGER,
+    BROWSER,
+    VIDEO,
+    SOCIAL
 }
 
 /**
@@ -102,6 +105,50 @@ object AppFlows {
             sendHints = listOf("send", "পাঠান", "পাঠাও"),
             audioCallHints = listOf("call", "voice call", "audio call", "কল", "অডিও কল"),
             videoCallHints = listOf("video call", "video", "ভিডিও কল", "ভিডিও")
+        ),
+        AppFlow(
+            key = "chrome",
+            names = listOf("chrome", "chorom", "crome", "browser", "ক্রোম", "ক্রোমে", "ব্রাউজার"),
+            packages = listOf("com.android.chrome", "com.chrome.beta", "com.chrome.dev"),
+            kind = Kind.BROWSER,
+            inputHints = listOf("search or type url", "search or type web address", "search", "url_bar", "ঠিকানা", "সার্চ"),
+            searchHints = listOf("search", "url_bar", "omnibox", "সার্চ"),
+            sendHints = listOf("go", "search", "enter", "যান"),
+            audioCallHints = emptyList(),
+            videoCallHints = emptyList()
+        ),
+        AppFlow(
+            key = "youtube",
+            names = listOf("youtube", "you tube", "yt", "utube", "ইউটিউব", "ইউটিউবে"),
+            packages = listOf("com.google.android.youtube"),
+            kind = Kind.VIDEO,
+            inputHints = listOf("search youtube", "add a comment", "comment", "লিখুন", "কমেন্ট"),
+            searchHints = listOf("search", "search youtube", "menu_search", "সার্চ"),
+            sendHints = listOf("send", "post", "comment", "পাঠান", "পোস্ট"),
+            audioCallHints = emptyList(),
+            videoCallHints = emptyList()
+        ),
+        AppFlow(
+            key = "facebook",
+            names = listOf("facebook", "fb", "face book", "ফেসবুক", "ফেসবুকে", "এফবি"),
+            packages = listOf("com.facebook.katana", "com.facebook.lite"),
+            kind = Kind.SOCIAL,
+            inputHints = listOf("write a comment", "comment", "search facebook", "what's on your mind", "কমেন্ট", "লিখুন"),
+            searchHints = listOf("search facebook", "search", "সার্চ", "খুঁজুন"),
+            sendHints = listOf("send", "post", "submit", "পাঠান", "পোস্ট"),
+            audioCallHints = emptyList(),
+            videoCallHints = emptyList()
+        ),
+        AppFlow(
+            key = "tiktok",
+            names = listOf("tiktok", "tik tok", "tick tock", "tiktak", "টিকটক", "টিক টক", "টিকটকে"),
+            packages = listOf("com.zhiliaoapp.musically", "com.ss.android.ugc.trill", "com.zhiliaoapp.musically.go"),
+            kind = Kind.VIDEO,
+            inputHints = listOf("add comment", "comment", "search", "কমেন্ট", "লিখুন"),
+            searchHints = listOf("search", "discover", "খুঁজুন", "সার্চ"),
+            sendHints = listOf("send", "post", "পাঠান", "পোস্ট"),
+            audioCallHints = emptyList(),
+            videoCallHints = emptyList()
         )
     )
 

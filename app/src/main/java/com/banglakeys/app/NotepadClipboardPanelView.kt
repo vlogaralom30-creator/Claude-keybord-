@@ -16,14 +16,24 @@ import android.widget.TextView
 import kotlin.math.min
 
 /**
- * KeyboardView ও NotepadClipboardPanelView-কে একই Container-এ ধরে রাখে এবং
+ * KeyboardView, NotepadClipboardPanelView ও EmojiPanelView-কে একই Container-এ ধরে রাখে এবং
  * প্যানেল খোলা/বন্ধ হলেও ঠিক KeyboardView-এর সমান height লক করে রাখে (size jump করে না)।
  */
 class KeyboardHostLayout(
     context: Context,
     val keyboardView: KeyboardView = KeyboardView(context),
     val panelView: NotepadClipboardPanelView = NotepadClipboardPanelView(context),
+    val emojiPanelView: EmojiPanelView = EmojiPanelView(context),
 ) : FrameLayout(context) {
+
+    enum class HostMode {
+        KEYBOARD,
+        CLIPBOARD,
+        EMOJI,
+    }
+
+    var mode: HostMode = HostMode.KEYBOARD
+        private set
 
     init {
         keyboardView.layoutParams = LayoutParams(
@@ -35,14 +45,27 @@ class KeyboardHostLayout(
             LayoutParams.MATCH_PARENT,
             LayoutParams.MATCH_PARENT
         )
+        emojiPanelView.visibility = View.GONE
+        emojiPanelView.layoutParams = LayoutParams(
+            LayoutParams.MATCH_PARENT,
+            LayoutParams.MATCH_PARENT
+        )
         addView(keyboardView)
         addView(panelView)
+        addView(emojiPanelView)
+    }
+
+    fun setMode(newMode: HostMode) {
+        mode = newMode
+        keyboardView.visibility = if (newMode == HostMode.KEYBOARD) View.VISIBLE else View.INVISIBLE
+        panelView.visibility = if (newMode == HostMode.CLIPBOARD) View.VISIBLE else View.GONE
+        emojiPanelView.visibility = if (newMode == HostMode.EMOJI) View.VISIBLE else View.GONE
+        if (newMode != HostMode.CLIPBOARD) panelView.setManageMode(false)
+        if (newMode != HostMode.EMOJI) emojiPanelView.dismissTonePopup()
     }
 
     fun showPanel(show: Boolean) {
-        keyboardView.visibility = if (show) View.INVISIBLE else View.VISIBLE
-        panelView.visibility = if (show) View.VISIBLE else View.GONE
-        if (!show) panelView.setManageMode(false)
+        setMode(if (show) HostMode.CLIPBOARD else HostMode.KEYBOARD)
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
@@ -51,6 +74,12 @@ class KeyboardHostLayout(
         val lockedH = keyboardView.measuredHeight
         if (panelView.visibility != View.GONE) {
             panelView.measure(
+                MeasureSpec.makeMeasureSpec(lockedW, MeasureSpec.EXACTLY),
+                MeasureSpec.makeMeasureSpec(lockedH, MeasureSpec.EXACTLY)
+            )
+        }
+        if (emojiPanelView.visibility != View.GONE) {
+            emojiPanelView.measure(
                 MeasureSpec.makeMeasureSpec(lockedW, MeasureSpec.EXACTLY),
                 MeasureSpec.makeMeasureSpec(lockedH, MeasureSpec.EXACTLY)
             )
@@ -64,6 +93,9 @@ class KeyboardHostLayout(
         keyboardView.layout(0, 0, w, h)
         if (panelView.visibility != View.GONE) {
             panelView.layout(0, 0, w, h)
+        }
+        if (emojiPanelView.visibility != View.GONE) {
+            emojiPanelView.layout(0, 0, w, h)
         }
     }
 }

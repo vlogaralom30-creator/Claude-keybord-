@@ -32,6 +32,7 @@ object AssistantPrefs {
     private const val KEY_AD_SKIP_GAMES_ENABLED = "ad_skip_games_enabled"
     private const val KEY_AD_SKIP_COUNT = "ad_skip_count"
     private const val KEY_AD_SKIP_LAST = "ad_skip_last"
+    private const val KEY_SCROLL_CONTENT_DIR = "scroll_by_content_direction"
 
     const val MIN_FLOW_TIMEOUT_SEC = 2
     const val MAX_FLOW_TIMEOUT_SEC = 15
@@ -42,6 +43,13 @@ object AssistantPrefs {
 
     private fun prefs(ctx: Context): SharedPreferences =
         ctx.getSharedPreferences(AssistantConfig.PREFS, Context.MODE_PRIVATE)
+
+    fun scrollByContentDirection(ctx: Context): Boolean =
+        prefs(ctx).getBoolean(KEY_SCROLL_CONTENT_DIR, true)
+
+    fun setScrollByContentDirection(ctx: Context, byContent: Boolean) {
+        prefs(ctx).edit().putBoolean(KEY_SCROLL_CONTENT_DIR, byContent).apply()
+    }
 
     fun storageTreeUri(ctx: Context): String? =
         prefs(ctx).getString(KEY_STORAGE_TREE_URI, null)?.takeIf { it.isNotBlank() }

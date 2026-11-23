@@ -417,7 +417,14 @@ class AssistantListenerService : Service() {
         }
 
         val alreadyAwake = wasPtt || now < awakeUntil
-        val res = SmartCommandResolver.resolve(candidates, alreadyAwake)
+        val fgPkg = AssistantAccessibilityService.instance?.foregroundPackage().orEmpty()
+        AssistantMemory.shared.updateScreenContext(fgPkg)
+        val res = SmartCommandResolver.resolveWithMemory(
+            candidates = candidates,
+            alreadyAwake = alreadyAwake,
+            memory = AssistantMemory.shared,
+            foregroundPackage = fgPkg
+        )
 
         if (!res.woke && !alreadyAwake) return
 
@@ -576,6 +583,9 @@ class AssistantListenerService : Service() {
                 is Command.AppChat -> cmd.appName ?: "Chat"
                 is Command.AppCall -> cmd.appName
                 is Command.AppMessage -> cmd.appName
+                is Command.ChromeNavigate -> "Chrome"
+                is Command.InAppSearch -> cmd.appKey ?: "Search"
+                is Command.AppAction -> cmd.appKey ?: "Action"
                 else -> "Assistant"
             }
             overlay.render(CommandOverlayManager.OverlayState.RunningFlow(label, "শুরু হচ্ছে…"))

@@ -13,6 +13,13 @@ object ContactLookup {
         for (g in AssistantConfig.CONTACT_GROUPS) {
             if (g.any { it.lowercase() == q }) names.addAll(g)
         }
+        val words = q.split(Regex("\\s+")).filter { it.length >= 3 }
+        for (w in words) {
+            names.add(w)
+            for (g in AssistantConfig.CONTACT_GROUPS) {
+                if (g.any { it.lowercase() == w }) names.addAll(g)
+            }
+        }
         return names.toList()
     }
 

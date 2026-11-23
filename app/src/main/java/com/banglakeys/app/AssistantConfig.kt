@@ -8,18 +8,17 @@ object AssistantConfig {
     const val PREFS = "assistant_prefs"
     const val KEY_BANGLA = "bangla"
 
-    /** এই শব্দগুলোর যেকোনোটা শুনলে assistant জেগে ওঠে (ছোট হাতের অক্ষরে লিখুন)। */
+    /** Wake wordগুলোর যেকোনোটা শুনলে assistant জেগে ওঠে (ছোট হাতের অক্ষরে লিখুন)। */
     val WAKE_WORDS = listOf(
         "hey bot", "hay bot", "hi bot", "hey boat", "hey but", "heybot", "ok bot", "okay bot",
-        "হেই বট", "হে বট", "হ্যালো বট", "হাই বট", "ওকে বট"
+        "হেই বট", "হে বট", "হ্যালো বট", "হাই বট", "ওকে বট", "এই বট"
     )
 
     /** Wake word বা কমান্ডের পর এতক্ষণ (ms) আর "Hey Bot" না বললেও চলবে। */
     const val AWAKE_WINDOW_MS = 20_000L
 
     /**
-     * true  = "up" বললে আঙুল নিচ থেকে উপরে swipe করবে (TikTok/Reels/Shorts-এ পরের ভিডিও)।
-     * false = উল্টো (up বললে আঙুল উপর থেকে নিচে)।
+     * Legacy fallback default (runtime toggle `AssistantPrefs.scrollByContentDirection(ctx)` এর সাথে সিঙ্ক থাকে)।
      */
     const val UP_MEANS_FINGER_UP = true
 
@@ -30,8 +29,20 @@ object AssistantConfig {
         "com.ss.android.ugc.trill",      // TikTok (কিছু region)
         "com.instagram.android",         // Instagram Reels
         "com.facebook.katana",           // Facebook Reels
+        "com.facebook.lite",             // Facebook Lite
         "com.google.android.youtube"     // YouTube (Shorts/player)
     )
+
+    val CHROME_PACKAGES = setOf(
+        "com.android.chrome",
+        "com.chrome.beta",
+        "com.chrome.dev",
+        "org.mozilla.firefox",
+        "com.microsoft.emmx"
+    )
+
+    val FACEBOOK_PACKAGES = setOf("com.facebook.katana", "com.facebook.lite")
+    val TIKTOK_PACKAGES = setOf("com.zhiliaoapp.musically", "com.zhiliaoapp.musically.go", "com.ss.android.ugc.trill")
 
     const val YOUTUBE_PKG = "com.google.android.youtube"
 
@@ -54,6 +65,8 @@ object AssistantConfig {
     val CONTACT_GROUPS: List<List<String>> = listOf(
         listOf("ammi", "amma", "ammu", "mom", "maa", "mother", "আম্মি", "আম্মু", "আম্মা", "আম্মো", "মা"),
         listOf("abbu", "abba", "abbo", "dad", "baba", "father", "আব্বু", "আব্বা", "বাবা"),
-        listOf("mim", "meem", "mimm", "মিম")
+        listOf("mim", "meem", "mimm", "মিম"),
+        listOf("bhai", "vai", "bhaiya", "vaiya", "brother", "ভাই", "ভাইয়া"),
+        listOf("apu", "apa", "apuni", "sister", "আপু", "আপা")
     )
 }

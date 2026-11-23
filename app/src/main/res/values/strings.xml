@@ -60,4 +60,6 @@
     <string name="notepad_edit_title">লেখা সম্পাদনা</string>
     <string name="btn_save">সেভ করুন</string>
     <string name="btn_cancel">বাতিল</string>
+    <string name="command_guide_title">কমান্ড গাইড ও 99% লিস্ট</string>
+    <string name="btn_open_command_guide">ভয়েস কমান্ড গাইড ও টেস্টার</string>
 </resources>

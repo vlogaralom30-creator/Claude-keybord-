@@ -2,13 +2,29 @@ package com.banglakeys.app
 
 enum class Dir { UP, DOWN, LEFT, RIGHT }
 
+enum class ScrollScale { SLIGHT, NORMAL, FAR }
+
+enum class AppActionType {
+    LIKE, COMMENT, SUBSCRIBE, FOLLOW, REFRESH, NEW_TAB, FULLSCREEN, END_CALL, SPEAKER_ON, SPEAKER_OFF
+}
+
 enum class SettingsTarget { WIFI, BLUETOOTH, DISPLAY, SOUND }
 
 sealed class Command {
     data class OpenApp(val name: String) : Command()
     data class Call(val target: String) : Command()
     data class YoutubeSearch(val query: String, val mostViewed: Boolean) : Command()
-    data class Swipe(val dir: Dir) : Command()
+    data class Swipe(val dir: Dir, val scale: ScrollScale = ScrollScale.NORMAL) : Command()
+    data class MediaStep(val next: Boolean) : Command()
+    data class ChromeNavigate(val urlOrQuery: String, val isUrl: Boolean) : Command()
+    data class InAppSearch(val appKey: String?, val query: String) : Command()
+    data class AppAction(
+        val appKey: String?,
+        val action: AppActionType,
+        val text: String? = null
+    ) : Command()
+    data class PlayScreenItem(val index: Int = 0) : Command()
+    object SubmitActiveInput : Command()
     data class ClickText(val text: String) : Command()
     data class TypeText(val text: String) : Command()
     data class VolumeUp(val steps: Int = 1) : Command()
@@ -70,7 +86,7 @@ sealed class Command {
 /**
  * বলা কথা (English / Banglish / বাংলা) -> Command।
  *
- * মূল শব্দভান্ডার `BanglaVocab.kt` থেকে আসে, আর Pack F/G/H/I-এর সব উন্নত কমান্ডও সমর্থিত।
+ * মূল শব্দভান্ডার `BanglaVocab.kt` থেকে আসে, আর Pack F/G/H/I সহ Chrome/YouTube/Facebook/TikTok/Scroll ওয়েভ সমর্থিত।
  */
 object CommandParser {
 
@@ -163,6 +179,8 @@ object CommandParser {
         "সব বন্ধ", "সব কিছু বন্ধ", "সব কাজ বন্ধ", "সব থামাও"
     )
 
+    private val DOMAIN_REGEX = Regex("""(?:https?://)?([a-z0-9\-]+(?:\.[a-z]{2,})+)""")
+
     fun parse(raw: String): Command? {
         val n = norm(raw)
             .replace(" you tube ", " youtube ")
@@ -193,12 +211,20 @@ object CommandParser {
         ) return Command.StopAssistant
         if (hasAny(V.SLEEP)) return Command.Sleep
 
-        // ---- 3. Mute / Unmute
+        // ---- 3. Mute / Unmute & Call controls
         if (hasAny(V.UNMUTE)) return Command.Unmute
         if (hasAny(V.MUTE)) return Command.Mute
+        if (V.END_CALL_PHRASES.any { n.contains(" $it ") }) {
+            return Command.AppAction(null, AppActionType.END_CALL)
+        }
+        if (V.SPEAKER_ON_PHRASES.any { n.contains(" $it ") }) {
+            return Command.AppAction(null, AppActionType.SPEAKER_ON)
+        }
+        if (V.SPEAKER_OFF_PHRASES.any { n.contains(" $it ") }) {
+            return Command.AppAction(null, AppActionType.SPEAKER_OFF)
+        }
 
-        // ---- 4. App বন্ধ: "sob app close koro" -> CloseAllApps, "ei app bondho koro" -> CloseApp,
-        //           আর সাধারণ "close app" / "অ্যাপ বন্ধ" -> Home (আগের regression অনুযায়ী)
+        // ---- 4. App বন্ধ: "sob app close koro" -> CloseAllApps, "ei app bondho koro" -> CloseApp
         if (allWord && hasAny(V.CLOSE)) return Command.CloseAllApps
         if (hasAny(V.CLOSE) && hasAny(V.APP_WORD)) {
             return if (hasAny(THIS_APP_MARKERS)) Command.CloseApp else Command.Home
@@ -213,6 +239,9 @@ object CommandParser {
         // ---- 7. Pack G: AI Chat / Current app type & send
         parsePackG(n, tokens)?.let { return it }
 
+        // ---- 7.5 App-specific workflows (Chrome URL/Search, YouTube/Facebook/TikTok actions & comments, InAppSearch)
+        parseAppWorkflows(raw, n, tokens)?.let { return it }
+
         // ---- 8. Pack I: Everyday utilities (Alarm, Timer, Camera, Settings, Email, SMS, Note, Web, Nav, Song)
         parsePackI(n, tokens)?.let { return it }
 
@@ -221,6 +250,9 @@ object CommandParser {
             val who = rest(CALL_DROP)
             if (who.isNotBlank()) return Command.Call(who)
         }
+
+        // ---- 9.5 Ordinal / Demonstrative on-screen video play ("first video play koro", "ei video chalao")
+        parseOrdinalScreenPlay(tokens)?.let { return it }
 
         // ---- 10. YouTube search (+ most viewed): "youtube search koro adele hello"
         val yt = hasAny(V.YOUTUBE)
@@ -262,20 +294,29 @@ object CommandParser {
             return if (target.isBlank()) Command.Tap else Command.ClickText(target)
         }
 
-        // ---- 15. Type / enter
+        // ---- 15. Type / enter / direct send
         val ti = tokens.indexOfFirst { it in V.TYPE }
         if (ti >= 0 && ti < tokens.size - 1) {
             return Command.TypeText(tokens.drop(ti + 1).joinToString(" "))
         }
         if (hasAny(V.ENTER)) return Command.Enter
+        if (tokens.any { it in V.SUBMIT_WORDS } &&
+            tokens.all { it in V.SUBMIT_WORDS || it in V.FILLERS || it in THIS_APP_MARKERS }
+        ) {
+            return Command.SubmitActiveInput
+        }
 
-        // ---- 16. Like / reaction (wow, nice, sundor ... সবই Like)
+        // ---- 16. Like / reaction
         if (hasAny(V.LIKE)) return Command.Like
 
-        // ---- 17. Pause / play
+        // ---- 17. Short-video Next / Prev ("next video", "porer video", "ager video")
+        if (V.MEDIA_NEXT_PHRASES.any { n.contains(" $it ") }) return Command.MediaStep(next = true)
+        if (V.MEDIA_PREV_PHRASES.any { n.contains(" $it ") }) return Command.MediaStep(next = false)
+
+        // ---- 18. Pause / play
         if (hasAny(V.PAUSE)) return Command.PlayPause
 
-        // ---- 18. System
+        // ---- 19. System
         if (hasAny(V.BACK)) return Command.Back
         if (hasAny(V.HOME)) return Command.Home
         if (hasAny(V.RECENTS)) return Command.Recents
@@ -284,11 +325,107 @@ object CommandParser {
         if (hasAny(V.SCREENSHOT)) return Command.Screenshot
         if (hasAny(V.LOCK)) return Command.Lock
 
-        // ---- 19. Swipe / scroll
-        if (hasAny(V.SWIPE_UP)) return Command.Swipe(Dir.UP)
-        if (hasAny(V.SWIPE_DOWN)) return Command.Swipe(Dir.DOWN)
-        if (hasAny(V.SWIPE_LEFT)) return Command.Swipe(Dir.LEFT)
-        if (hasAny(V.SWIPE_RIGHT)) return Command.Swipe(Dir.RIGHT)
+        // ---- 20. Swipe / scroll (with SLIGHT / NORMAL / FAR intensity)
+        val scale = parseScrollScale(n, tokens)
+        if (hasAny(V.SWIPE_UP)) return Command.Swipe(Dir.UP, scale)
+        if (hasAny(V.SWIPE_DOWN)) return Command.Swipe(Dir.DOWN, scale)
+        if (hasAny(V.SWIPE_LEFT)) return Command.Swipe(Dir.LEFT, scale)
+        if (hasAny(V.SWIPE_RIGHT)) return Command.Swipe(Dir.RIGHT, scale)
+
+        // ---- 21. Generic in-app search ("search <query>")
+        if (tokens.any { it in V.SEARCH }) {
+            val drop = V.SEARCH + V.FILLERS + V.OPEN
+            val q = tokens.filter { it !in drop }.joinToString(" ").trim()
+            if (q.isNotEmpty()) return Command.InAppSearch(null, q)
+        }
+
+        return null
+    }
+
+    private fun parseScrollScale(n: String, tokens: List<String>): ScrollScale {
+        if (n.contains(" aro beshi ") || n.contains(" আরও বেশি ") || n.contains(" আরো বেশি ") ||
+            tokens.any { it in V.SCROLL_FAR }
+        ) {
+            return ScrollScale.FAR
+        }
+        if (tokens.any { it in V.SCROLL_SLIGHT }) {
+            return ScrollScale.SLIGHT
+        }
+        return ScrollScale.NORMAL
+    }
+
+    private fun parseOrdinalScreenPlay(tokens: List<String>): Command.PlayScreenItem? {
+        if (!tokens.any { it in V.PLAY }) return null
+        val ordEntry = tokens.firstNotNullOfOrNull { V.ORDINAL_INDEX[it] } ?: return null
+        val allowedNoise = V.PLAY + V.MEDIA + V.FILLERS + V.ORDINAL_INDEX.keys + setOf("number", "নম্বর", "নো")
+        val remaining = tokens.filter { it !in allowedNoise }
+        return if (remaining.isEmpty()) Command.PlayScreenItem(index = ordEntry) else null
+    }
+
+    private fun parseAppWorkflows(raw: String, n: String, tokens: List<String>): Command? {
+        val rawLower = raw.lowercase()
+            .replace(" dot ", ".")
+            .replace(" ডট ", ".")
+            .trim()
+
+        val matchedFlowPair = AppFlows.findInNormalized(n, null)
+        val appKey = matchedFlowPair?.first?.key
+        val aliasTokens = matchedFlowPair?.second?.split(" ")?.toSet() ?: emptySet()
+
+        // 1. Refresh / Reload / New Tab / Subscribe / Follow / Fullscreen / Comment
+        if (V.NEW_TAB_WORDS.any { n.contains(" $it ") }) {
+            return Command.AppAction(appKey ?: "chrome", AppActionType.NEW_TAB)
+        }
+        if (tokens.any { it in V.REFRESH_WORDS }) {
+            return Command.AppAction(appKey, AppActionType.REFRESH)
+        }
+        if (tokens.any { it in V.SUBSCRIBE_WORDS }) {
+            return Command.AppAction(appKey ?: "youtube", AppActionType.SUBSCRIBE)
+        }
+        if (tokens.any { it in V.FOLLOW_WORDS }) {
+            return Command.AppAction(appKey, AppActionType.FOLLOW)
+        }
+        if (V.FULLSCREEN_WORDS.any { n.contains(" $it ") }) {
+            return Command.AppAction(appKey, AppActionType.FULLSCREEN)
+        }
+
+        val commentIdx = tokens.indexOfFirst { it in V.COMMENT_WORDS }
+        if (commentIdx >= 0) {
+            val connectorDrop = V.FILLERS + LIKHO_TRIGGERS + SEND_TRIGGERS + setOf("about", "je", "যে", "খোলো", "খুলো", "open", "kholo", "khulo")
+            val bodyTokens = tokens.drop(commentIdx + 1)
+                .dropWhile { it in connectorDrop || it in aliasTokens }
+                .dropLastWhile { it in SEND_TRIGGERS || it in V.FILLERS }
+            val text = bodyTokens.joinToString(" ").trim().takeIf { it.isNotEmpty() }
+            return Command.AppAction(appKey, AppActionType.COMMENT, text = text)
+        }
+
+        // 2. Chrome explicit navigation / search ("chrome e example.com khulo", "chrome e cricket search")
+        if (appKey == "chrome") {
+            val domainMatch = DOMAIN_REGEX.find(rawLower)
+            if (domainMatch != null) {
+                return Command.ChromeNavigate(domainMatch.groupValues[1], isUrl = true)
+            }
+            val drop = aliasTokens + V.OPEN + V.SEARCH + V.FILLERS + setOf("website", "site", "jao", "যাও")
+            val q = tokens.filter { it !in drop }.joinToString(" ").trim()
+            if (q.isNotEmpty()) {
+                val looksLikeSingleSite = tokens.any { it in setOf("website", "site", "ওয়েবসাইট") } && !q.contains(" ")
+                return Command.ChromeNavigate(if (looksLikeSingleSite) "$q.com" else q, isUrl = looksLikeSingleSite)
+            }
+        }
+
+        // 3. Explicit In-App Search for social/video apps (e.g. "facebook e cricket search koro", "tiktok e dance khujo")
+        if (appKey != null && appKey != "youtube" &&
+            (matchedFlowPair.first.kind == Kind.SOCIAL || matchedFlowPair.first.kind == Kind.VIDEO)
+        ) {
+            val hasSearchOrMedia = tokens.any { it in V.SEARCH || it in V.PLAY || it in V.MEDIA }
+            if (hasSearchOrMedia) {
+                val drop = aliasTokens + V.SEARCH + V.OPEN + V.FILLERS + V.PLAY + setOf("er", "for")
+                val q = tokens.filter { it !in drop }.joinToString(" ").trim()
+                if (q.isNotEmpty()) {
+                    return Command.InAppSearch(appKey, q)
+                }
+            }
+        }
 
         return null
     }

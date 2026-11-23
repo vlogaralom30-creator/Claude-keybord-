@@ -269,6 +269,20 @@ class AssistantAccessibilityService : AccessibilityService() {
 
     fun foregroundPackage(): String = rootInActiveWindow?.packageName?.toString() ?: ""
 
+    fun screenWidthPx(): Int = screenW()
+    fun screenHeightPx(): Int = screenH()
+
+    fun captureUiNodes(): List<ScreenInspector.UiNodeInfo> =
+        ScreenInspector.capture(rootInActiveWindow)
+
+    fun clickUiNode(info: ScreenInspector.UiNodeInfo): Boolean {
+        val live = ScreenInspector.resolveLiveNode(rootInActiveWindow, info.id)
+        if (live != null && clickNode(live)) return true
+        return if (info.width > 0 && info.height > 0) {
+            tap(info.centerX.toFloat(), info.centerY.toFloat())
+        } else false
+    }
+
     fun waitForPackage(packages: List<String>, timeoutMs: Long): Boolean {
         val start = System.currentTimeMillis()
         while (System.currentTimeMillis() - start < timeoutMs) {
@@ -285,7 +299,17 @@ class AssistantAccessibilityService : AccessibilityService() {
 
     fun findEditable(): AccessibilityNodeInfo? {
         val root = rootInActiveWindow ?: return null
+        val nodes = ScreenInspector.capture(root)
+        val best = ScreenInspector.findPrimaryEditable(nodes)
+        if (best != null) {
+            ScreenInspector.resolveLiveNode(root, best.id)?.let { return it }
+        }
         var found: AccessibilityNodeInfo? = null
+        walk(root, 0) { n ->
+            if (found != null) return@walk
+            if (n.isEditable && n.isVisibleToUser) found = n
+        }
+        if (found != null) return found
         walk(root, 0) { n ->
             if (found != null) return@walk
             if (n.isEditable) found = n
@@ -295,6 +319,11 @@ class AssistantAccessibilityService : AccessibilityService() {
 
     fun findByHints(hints: List<String>): AccessibilityNodeInfo? {
         val root = rootInActiveWindow ?: return null
+        val nodes = ScreenInspector.capture(root)
+        val best = ScreenInspector.findBestByHints(nodes, hints, preferClickable = true)
+        if (best != null) {
+            ScreenInspector.resolveLiveNode(root, best.id)?.let { return it }
+        }
         val lowerHints = hints.map { it.lowercase() }
         var found: AccessibilityNodeInfo? = null
         walk(root, 0) { n ->
@@ -302,7 +331,8 @@ class AssistantAccessibilityService : AccessibilityService() {
             val label = labelOf(n).lowercase()
             val text = n.text?.toString().orEmpty().lowercase()
             val hint = if (Build.VERSION.SDK_INT >= 26) n.hintText?.toString().orEmpty().lowercase() else ""
-            if (lowerHints.any { h -> label.contains(h) || text.contains(h) || hint.contains(h) }) {
+            val vid = n.viewIdResourceName.orEmpty().lowercase()
+            if (lowerHints.any { h -> label.contains(h) || text.contains(h) || hint.contains(h) || vid.contains(h) }) {
                 found = n
             }
         }
@@ -314,7 +344,7 @@ class AssistantAccessibilityService : AccessibilityService() {
         var best: AccessibilityNodeInfo? = null
         var maxY = -1
         walk(root, 0) { n ->
-            if (n.isClickable) {
+            if (n.isClickable && n.isVisibleToUser) {
                 val r = Rect()
                 n.getBoundsInScreen(r)
                 if (r.top > maxY && r.bottom <= screenH()) {
@@ -327,8 +357,67 @@ class AssistantAccessibilityService : AccessibilityService() {
     }
 
     fun clickByHints(hints: List<String>): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val nodes = ScreenInspector.capture(root)
+        val best = ScreenInspector.findBestByHints(nodes, hints, preferClickable = true)
+        if (best != null && clickUiNode(best)) return true
         val node = findByHints(hints) ?: return false
         return clickNode(node)
+    }
+
+    /**
+     * লেখা বসানোর পর Send / Search / Post বাটন চাপার 3-ধাপের অফলাইন সমাধান:
+     *  ১) Label / hint / viewId দেখে Send/Search বাটন
+     *  ২) ইনপুট বক্সের একই সারিতে ডান পাশে থাকা unlabeled icon button (ImageView/ImageButton)
+     *  ৩) ACTION_IME_ENTER (কিবোর্ডের Go/Search/Send অ্যাকশন)
+     */
+    fun submitFromInput(
+        inputNode: AccessibilityNodeInfo?,
+        actionHints: List<String> = emptyList()
+    ): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val nodes = ScreenInspector.capture(root)
+        val inputRect = Rect()
+        inputNode?.getBoundsInScreen(inputRect)
+
+        val matchedInputInfo = if (inputNode != null && !inputRect.isEmpty) {
+            nodes.firstOrNull {
+                it.isVisible && (it.isEditable || it.className.contains("EditText", true)) &&
+                    kotlin.math.abs(it.centerY - inputRect.centerY()) < 60 &&
+                    kotlin.math.abs(it.left - inputRect.left) < 60
+            } ?: ScreenInspector.findPrimaryEditable(nodes)
+        } else {
+            ScreenInspector.findPrimaryEditable(nodes)
+        }
+
+        val btn = ScreenInspector.findCompanionActionButton(
+            nodes = nodes,
+            inputNode = matchedInputInfo,
+            actionHints = actionHints,
+            screenWidth = screenW()
+        )
+        if (btn != null && clickUiNode(btn)) {
+            return true
+        }
+
+        if (Build.VERSION.SDK_INT >= 30 && inputNode != null) {
+            if (inputNode.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)) {
+                return true
+            }
+        }
+        return pressEnter()
+    }
+
+    fun clickVisibleVideo(query: String): Boolean {
+        val nodes = captureUiNodes()
+        val match = ScreenInspector.findMatchingVideoOnScreen(nodes, query, screenW(), screenH()) ?: return false
+        return clickUiNode(match)
+    }
+
+    fun clickOrdinalVideo(index: Int): Boolean {
+        val nodes = captureUiNodes()
+        val match = ScreenInspector.findOrdinalVideoCard(nodes, index, screenH()) ?: return false
+        return clickUiNode(match)
     }
 
     fun findNode(filter: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {
@@ -357,12 +446,19 @@ class AssistantAccessibilityService : AccessibilityService() {
 
     // ------------------------------------------------------------- gestures
 
-    fun swipe(dir: Dir): Boolean {
+    fun swipe(dir: Dir): Boolean = swipe(dir, ScrollScale.NORMAL)
+
+    fun swipe(dir: Dir, scale: ScrollScale): Boolean {
         val w = screenW().toFloat()
         val h = screenH().toFloat()
+        val (nearRatio, farRatio, durMs) = when (scale) {
+            ScrollScale.SLIGHT -> Triple(0.59f, 0.39f, 220L)
+            ScrollScale.NORMAL -> Triple(0.72f, 0.28f, 260L)
+            ScrollScale.FAR -> Triple(0.86f, 0.14f, 320L)
+        }
         return when (dir) {
-            Dir.UP -> swipe(w * 0.5f, h * 0.72f, w * 0.5f, h * 0.28f, 260)
-            Dir.DOWN -> swipe(w * 0.5f, h * 0.28f, w * 0.5f, h * 0.72f, 260)
+            Dir.UP -> swipe(w * 0.5f, h * nearRatio, w * 0.5f, h * farRatio, durMs)
+            Dir.DOWN -> swipe(w * 0.5f, h * farRatio, w * 0.5f, h * nearRatio, durMs)
             Dir.LEFT -> swipe(w * 0.8f, h * 0.5f, w * 0.2f, h * 0.5f, 260)
             Dir.RIGHT -> swipe(w * 0.2f, h * 0.5f, w * 0.8f, h * 0.5f, 260)
         }
@@ -431,6 +527,7 @@ class AssistantAccessibilityService : AccessibilityService() {
         var target: AccessibilityNodeInfo? = null
         walk(root, 0) { n ->
             if (target != null) return@walk
+            if (!n.isVisibleToUser) return@walk
             val label = labelOf(n).lowercase()
             val t = n.text?.toString().orEmpty().lowercase()
             val hit = if (exact) (label == key || t == key) else (label.contains(key) || t.contains(key))
@@ -452,37 +549,29 @@ class AssistantAccessibilityService : AccessibilityService() {
         return if (!r.isEmpty) tap(r.centerX().toFloat(), r.centerY().toFloat()) else false
     }
 
-    private fun parseViews(desc: String): Long? {
-        val m = VIEWS_REGEX.find(desc) ?: return null
-        val num = m.groupValues[1].replace(",", "").toDoubleOrNull() ?: return null
-        val mul = when (m.groupValues[2].lowercase()) {
-            "k", "হাজার" -> 1_000.0
-            "m" -> 1_000_000.0
-            "b" -> 1_000_000_000.0
-            "lakh", "লাখ" -> 100_000.0
-            "crore", "কোটি" -> 10_000_000.0
-            else -> 1.0
-        }
-        return (num * mul).toLong()
-    }
+    private fun parseViews(desc: String): Long? = ScreenInspector.parseViewCount(desc)
 
     fun findFirstVideo(): AccessibilityNodeInfo? {
         var found: AccessibilityNodeInfo? = null
         walk(rootInActiveWindow, 0) { n ->
             if (found != null) return@walk
+            if (!n.isVisibleToUser) return@walk
             val d = n.contentDescription?.toString().orEmpty()
             if (d.isNotEmpty() && (parseViews(d) != null || d.contains("play video", true))) found = n
         }
-        return found
+        if (found != null) return found
+        val ordinal = ScreenInspector.findOrdinalVideoCard(captureUiNodes(), 0, screenH()) ?: return null
+        return ScreenInspector.resolveLiveNode(rootInActiveWindow, ordinal.id)
     }
 
     fun findMostViewedVideo(): AccessibilityNodeInfo? {
         var best: AccessibilityNodeInfo? = null
         var bestViews = -1L
         walk(rootInActiveWindow, 0) { n ->
+            if (!n.isVisibleToUser) return@walk
             val d = n.contentDescription?.toString().orEmpty()
-            if (d.isEmpty()) return@walk
-            val v = parseViews(d) ?: return@walk
+            val t = n.text?.toString().orEmpty()
+            val v = parseViews(d) ?: parseViews(t) ?: return@walk
             if (v > bestViews) { bestViews = v; best = n }
         }
         return best
@@ -495,6 +584,7 @@ class AssistantAccessibilityService : AccessibilityService() {
         var depth = 0
         while (n != null && depth < 6) {
             if (n.isEditable) {
+                n.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
                 val args = Bundle().apply {
                     putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
                 }
@@ -512,14 +602,16 @@ class AssistantAccessibilityService : AccessibilityService() {
         node.getBoundsInScreen(r)
         if (!r.isEmpty) {
             tap(r.centerX().toFloat(), r.centerY().toFloat())
-            try { Thread.sleep(100L) } catch (_: Exception) {}
+            try { Thread.sleep(150L) } catch (_: Exception) {}
             return typeText(text)
         }
         return false
     }
 
     fun typeText(text: String): Boolean {
-        val f = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return false
+        val f = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+            ?: findEditable()
+            ?: return false
         val old = if (Build.VERSION.SDK_INT >= 26 && f.isShowingHintText) "" else f.text?.toString().orEmpty()
         val args = Bundle()
         args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, old + text)
@@ -528,7 +620,9 @@ class AssistantAccessibilityService : AccessibilityService() {
 
     fun pressEnter(): Boolean {
         if (Build.VERSION.SDK_INT < 30) return false
-        val f = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return false
+        val f = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+            ?: findEditable()
+            ?: return false
         return f.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
     }
 }

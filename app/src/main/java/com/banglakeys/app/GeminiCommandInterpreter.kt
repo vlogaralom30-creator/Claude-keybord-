@@ -19,9 +19,10 @@ object GeminiCommandInterpreter {
         "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s"
 
     private val COMMAND_TYPES = listOf(
-        "open_app", "call", "youtube_search", "swipe", "click_text", "type_text",
-        "play_pause", "like", "double_tap", "tap", "enter", "back", "home",
-        "recents", "notifications", "quick_settings", "lock", "screenshot",
+        "open_app", "call", "youtube_search", "swipe", "media_step", "chrome_navigate",
+        "in_app_search", "app_action", "play_screen_item", "submit_active_input",
+        "click_text", "type_text", "play_pause", "like", "double_tap", "tap", "enter",
+        "back", "home", "recents", "notifications", "quick_settings", "lock", "screenshot",
         "volume_up", "volume_down", "mute", "unmute", "close_all_apps", "close_app",
         "sleep", "stop_assistant", "panic_stop",
         "create_folder", "create_file", "app_chat", "app_call", "app_message",
@@ -40,7 +41,13 @@ object GeminiCommandInterpreter {
         - open_app: কোনো অ্যাপ খুলতে বললে -> "name" (অ্যাপের নাম হুবহু, যেমন "tiktok"; ambiguous যেমন "reel"/"video" হলে হুবহু সেটাই দাও)।
         - call: সাধারণ ফোন কল -> "target" (নাম/নম্বর)।
         - youtube_search: ইউটিউবে খোঁজা/চালানো -> "query", "most_viewed" (true/false)।
-        - swipe: স্ক্রল/পরের-আগের -> "direction" (up/down/left/right)।
+        - swipe: স্ক্রল -> "direction" (up/down/left/right), এবং চাইলে "scale" (slight/normal/far; যেমন ektu=slight, aro beshi=far)।
+        - media_step: পরের/আগের ভিডিও বা রিলস -> "next" (true/false)।
+        - chrome_navigate: Chrome-এ ওয়েবসাইট বা সার্চ -> "query", "is_url" (true/false)।
+        - in_app_search: Facebook/TikTok/YouTube/Chrome-এ সার্চ -> "app_name" (optional), "query"।
+        - app_action: স্ক্রিন অ্যাকশন -> "action" (like/comment/subscribe/follow/refresh/new_tab/fullscreen/end_call/speaker_on/speaker_off), চাইলে "app_name", "text"।
+        - play_screen_item: স্ক্রিনের নির্দিষ্ট নম্বর ভিডিও -> "index" (0 থেকে শুরু; যেমন first/prothom=0, second=1)।
+        - submit_active_input: লেখার বক্সে থাকা লেখা সেন্ড বা সার্চ আইকন চাপা (কোনো ফিল্ড লাগে না)।
         - click_text: স্ক্রিনের নির্দিষ্ট লেখা/বাটন চাপতে -> "text"।
         - type_text: কোনো লেখা টাইপ করতে -> "text"।
         - play_pause, like, double_tap, tap, enter, back, home, recents, notifications,
@@ -82,6 +89,17 @@ object GeminiCommandInterpreter {
                 put("type", "STRING")
                 put("enum", JSONArray(listOf("up", "down", "left", "right")))
             })
+            put("scale", JSONObject().apply {
+                put("type", "STRING")
+                put("enum", JSONArray(listOf("slight", "normal", "far")))
+            })
+            put("next", JSONObject().put("type", "BOOLEAN"))
+            put("is_url", JSONObject().put("type", "BOOLEAN"))
+            put("action", JSONObject().apply {
+                put("type", "STRING")
+                put("enum", JSONArray(listOf("like", "comment", "subscribe", "follow", "refresh", "new_tab", "fullscreen", "end_call", "speaker_on", "speaker_off")))
+            })
+            put("index", JSONObject().put("type", "INTEGER"))
             put("text", JSONObject().put("type", "STRING"))
             put("parent_folder", JSONObject().put("type", "STRING"))
             put("ext", JSONObject().put("type", "STRING"))
@@ -180,13 +198,42 @@ object GeminiCommandInterpreter {
         "call" -> optNonEmpty(j, "target")?.let { Command.Call(it) }
         "youtube_search" -> optNonEmpty(j, "query")
             ?.let { Command.YoutubeSearch(it, j.optBoolean("most_viewed", false)) }
-        "swipe" -> when (j.optString("direction")) {
-            "up" -> Command.Swipe(Dir.UP)
-            "down" -> Command.Swipe(Dir.DOWN)
-            "left" -> Command.Swipe(Dir.LEFT)
-            "right" -> Command.Swipe(Dir.RIGHT)
+        "swipe" -> {
+            val scale = when (j.optString("scale").lowercase()) {
+                "slight" -> ScrollScale.SLIGHT
+                "far" -> ScrollScale.FAR
+                else -> ScrollScale.NORMAL
+            }
+            when (j.optString("direction")) {
+                "up" -> Command.Swipe(Dir.UP, scale)
+                "down" -> Command.Swipe(Dir.DOWN, scale)
+                "left" -> Command.Swipe(Dir.LEFT, scale)
+                "right" -> Command.Swipe(Dir.RIGHT, scale)
+                else -> null
+            }
+        }
+        "media_step" -> Command.MediaStep(j.optBoolean("next", true))
+        "chrome_navigate" -> optNonEmpty(j, "query")?.let {
+            Command.ChromeNavigate(it, j.optBoolean("is_url", false))
+        }
+        "in_app_search" -> optNonEmpty(j, "query")?.let {
+            Command.InAppSearch(optNonEmpty(j, "app_name"), it)
+        }
+        "app_action" -> when (j.optString("action").lowercase()) {
+            "like" -> Command.AppAction(optNonEmpty(j, "app_name"), AppActionType.LIKE, optNonEmpty(j, "text"))
+            "comment" -> Command.AppAction(optNonEmpty(j, "app_name"), AppActionType.COMMENT, optNonEmpty(j, "text"))
+            "subscribe" -> Command.AppAction(optNonEmpty(j, "app_name"), AppActionType.SUBSCRIBE)
+            "follow" -> Command.AppAction(optNonEmpty(j, "app_name"), AppActionType.FOLLOW)
+            "refresh" -> Command.AppAction(optNonEmpty(j, "app_name"), AppActionType.REFRESH)
+            "new_tab" -> Command.AppAction(optNonEmpty(j, "app_name"), AppActionType.NEW_TAB)
+            "fullscreen" -> Command.AppAction(optNonEmpty(j, "app_name"), AppActionType.FULLSCREEN)
+            "end_call" -> Command.AppAction(optNonEmpty(j, "app_name"), AppActionType.END_CALL)
+            "speaker_on" -> Command.AppAction(optNonEmpty(j, "app_name"), AppActionType.SPEAKER_ON)
+            "speaker_off" -> Command.AppAction(optNonEmpty(j, "app_name"), AppActionType.SPEAKER_OFF)
             else -> null
         }
+        "play_screen_item" -> Command.PlayScreenItem(j.optInt("index", 0).coerceIn(0, 9))
+        "submit_active_input" -> Command.SubmitActiveInput
         "click_text" -> optNonEmpty(j, "text")?.let { Command.ClickText(it) }
         "type_text" -> optNonEmpty(j, "text")?.let { Command.TypeText(it) }
         "play_pause" -> Command.PlayPause
