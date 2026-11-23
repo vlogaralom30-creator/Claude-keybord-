@@ -16,6 +16,7 @@ enum class KeyType {
     TRANSLATE,
     MIC,
     ASSISTANT,
+    SECRET,
 }
 
 /**
@@ -87,6 +88,7 @@ object Layouts {
             Key("NOTE", KeyType.NOTEPAD, 1f),
             Key("Tr", KeyType.TRANSLATE, 1f),
             Key("BOT", KeyType.ASSISTANT, 1f),
+            Key("🔐", KeyType.SECRET, 1f),
         ),
         letters(if (taka) "@#৳_&-+()/" else "@#\$_&-+()/"),
         listOf(Key("=\\<", KeyType.SYMBOLS2, 1.5f)) +

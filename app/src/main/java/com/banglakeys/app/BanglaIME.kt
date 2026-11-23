@@ -19,6 +19,8 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
     private lateinit var prefs: SharedPreferences
 
     private val buf = StringBuilder()      // active roman/word prefix buffer
+    private var secretMode = false
+    private val secretText = StringBuilder()
 
     private var userBangla = true          // user-এর পছন্দ করা ভাষা
     private var bangla = true              // এই field-এ কার্যকর ভাষা
@@ -240,6 +242,11 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
 
     override fun onText(text: String) {
         val ic = currentInputConnection ?: return
+        if (secretMode) {
+            secretText.append(text)
+            kv?.setComposing("🔐 " + secretText.toString())
+            return
+        }
         val ch = text.singleOrNull()
         val phoneticBn = bangla && symbols == 0
         val englishWord = !bangla && symbols == 0 && allowSuggest
@@ -271,6 +278,13 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
     }
 
     override fun onDelete() {
+        if (secretMode) {
+            if (secretText.isNotEmpty()) {
+                secretText.deleteCharAt(secretText.length - 1)
+            }
+            kv?.setComposing("🔐 " + secretText.toString())
+            return
+        }
         if (buf.isNotEmpty()) {
             buf.setLength(buf.length - 1)
             if (bangla) {
@@ -303,6 +317,11 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
     }
 
     override fun onSpace() {
+        if (secretMode) {
+            secretText.append(" ")
+            kv?.setComposing("🔐 " + secretText.toString())
+            return
+        }
         commitComposing()
         currentInputConnection?.commitText(" ", 1)
         refreshStrip()
@@ -316,6 +335,10 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
     }
 
     override fun onEnter() {
+        if (secretMode) {
+            sendSecretMessage()
+            return
+        }
         commitComposing()
         suggestions.resetSentenceContext()
         refreshStrip()
@@ -406,6 +429,38 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
         } else {
             refreshLayout()
         }
+    }
+
+    override fun onSecretToggle() {
+        commitComposing()
+        secretMode = !secretMode
+        secretText.setLength(0)
+        kv?.setComposing(if (secretMode) "🔐 (খালি — লিখুন, শেষে Enter)" else "")
+        Toast.makeText(
+            this,
+            if (secretMode) "🔐 Secret mode চালু" else "Secret mode বন্ধ",
+            Toast.LENGTH_SHORT
+        ).show()
+    }
+
+    private fun sendSecretMessage() {
+        val text = secretText.toString().trim()
+        secretMode = false
+        secretText.setLength(0)
+        kv?.setComposing("")
+        if (text.isBlank()) return
+
+        val contacts = SecretConfig.getContacts(this)
+        if (contacts.isEmpty()) {
+            Toast.makeText(this, "আগে Secret Message screen-এ contact/passphrase সেভ করুন", Toast.LENGTH_LONG).show()
+            return
+        }
+        val passphrase = contacts.values.first()
+        val style = SecretConfig.getStyle(this)
+        val bytes = SecretCipher.encrypt(text, passphrase)
+        val glyph = GlyphAlphabet.encode(bytes, style)
+        currentInputConnection?.commitText(glyph, 1)
+        Toast.makeText(this, "🔒 Secret message পাঠানো হলো", Toast.LENGTH_SHORT).show()
     }
 
     override fun onAssistant() {

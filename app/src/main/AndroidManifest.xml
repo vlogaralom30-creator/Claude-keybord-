@@ -90,6 +90,13 @@
             android:theme="@style/Theme.MyApplication"
             android:windowSoftInputMode="adjustResize" />
 
+        <activity
+            android:name="com.banglakeys.app.SecretComposeActivity"
+            android:exported="true"
+            android:label="🔐 Secret Message"
+            android:theme="@style/Theme.MyApplication"
+            android:windowSoftInputMode="adjustResize" />
+
         <service
             android:name="com.banglakeys.app.BanglaIME"
             android:exported="true"

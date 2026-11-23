@@ -523,6 +523,19 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
               Spacer(modifier = Modifier.width(8.dp))
               Text(stringResource(R.string.btn_open_notepad))
             }
+            OutlinedButton(
+              onClick = { context.startActivity(Intent(context, SecretComposeActivity::class.java)) },
+              modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize().testTag("open_secret_button"),
+              shape = RoundedCornerShape(14.dp),
+            ) {
+              Icon(
+                imageVector = Icons.Filled.ContentCopy,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+              )
+              Spacer(modifier = Modifier.width(8.dp))
+              Text("🔐 Secret Message Settings")
+            }
           }
         }
 
@@ -738,6 +751,9 @@ private fun EmbeddedKeyboardPreview(
           override fun onTranslate() = onTranslate()
           override fun onVoice() = onVoice()
           override fun onAssistant() = onAssistant()
+          override fun onSecretToggle() {
+            Toast.makeText(context, "🔐 Secret mode preview toggled", Toast.LENGTH_SHORT).show()
+          }
         }
       val layoutState = Triple(rows, spaceLabel, heightPct)
       if (kv.tag != layoutState) {

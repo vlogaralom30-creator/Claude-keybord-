@@ -53,6 +53,7 @@ class KeyboardView(context: Context) : View(context) {
         fun onTranslate()
         fun onVoice()
         fun onAssistant()
+        fun onSecretToggle() {}
     }
 
     var listener: Listener? = null
@@ -954,6 +955,7 @@ class KeyboardView(context: Context) : View(context) {
             KeyType.TRANSLATE -> l.onTranslate()
             KeyType.MIC -> l.onVoice()
             KeyType.ASSISTANT -> l.onAssistant()
+            KeyType.SECRET -> l.onSecretToggle()
             KeyType.SHIFT -> {
                 val now = SystemClock.uptimeMillis()
                 shift = when {

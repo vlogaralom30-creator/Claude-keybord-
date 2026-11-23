@@ -2,21 +2,22 @@ package com.banglakeys.app
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
-import android.content.Intent
 import android.graphics.Path
+import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
-import android.os.SystemClock
+import android.os.Handler
+import android.os.Looper
+import android.view.Gravity
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
-import android.widget.Toast
-import kotlinx.coroutines.delay
+import android.widget.TextView
 
 /**
  * ফোন "ছোঁয়া" ছাড়া চালানোর মূল ইঞ্জিন: swipe, tap, double tap, back/home,
- * screen-এর লেখা দেখে বাটনে click, multi-step FlowRunner helpers, ও নিরাপদ Auto Ad Skipper।
- * Settings > Accessibility থেকে একবার ON করতে হয়।
+ * screen-এর লেখা দেখে বাটনে click, Auto Ad Skipper, এবং Secret Message Auto-Detect।
  */
 class AssistantAccessibilityService : AccessibilityService() {
 
@@ -28,51 +29,283 @@ class AssistantAccessibilityService : AccessibilityService() {
             """(\d[\d.,]*)\s*(k|m|b|lakh|crore|হাজার|লাখ|কোটি)?\s*(views|view|ভিউ)""",
             RegexOption.IGNORE_CASE
         )
-
-        private const val AD_SCAN_INTERVAL_MS = 450L
-        private const val AD_CLICK_COOLDOWN_MS = 2200L
     }
-
-    private var lastAdScanAt = 0L
-    private var lastAdClickAt = 0L
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
-        AssistantLog.d("Accessibility service connected")
     }
 
-    override fun onUnbind(intent: Intent?): Boolean {
+    override fun onUnbind(intent: android.content.Intent?): Boolean {
         instance = null
+        hideSecretBubble()
+        handler.removeCallbacksAndMessages(null)
         return super.onUnbind(intent)
     }
 
     override fun onDestroy() {
         instance = null
+        hideSecretBubble()
+        handler.removeCallbacksAndMessages(null)
         super.onDestroy()
     }
 
+    private val handler = Handler(Looper.getMainLooper())
+    private var overlayView: TextView? = null
+    private var lastShownGlyph: String? = null
+    private var lastScanAt = 0L
+    private var lastAdScanAt = 0L
+
+    private val windowManager: WindowManager get() = getSystemService(WINDOW_SERVICE) as WindowManager
+
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (event == null) return
+        if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+            event.eventType != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+        ) return
+
+        val now = System.currentTimeMillis()
+
+        // 1. Auto Ad Skipper check (throttled ~450ms)
+        if (now - lastAdScanAt > 450) {
+            lastAdScanAt = now
+            scanAndSkipAds()
+        }
+
+        // 2. Secret Message auto-detect check (throttled ~800ms)
+        if (now - lastScanAt > 800) {
+            lastScanAt = now
+            scanForSecretText()
+        }
+    }
+
+    private fun scanAndSkipAds() {
         if (!AssistantPrefs.adSkipEnabled(this)) return
-        val now = SystemClock.uptimeMillis()
-        if (now - lastAdScanAt < AD_SCAN_INTERVAL_MS) return
-        if (now - lastAdClickAt < AD_CLICK_COOLDOWN_MS) return
-        lastAdScanAt = now
-        scanAndSkipAds(now)
+        val root = rootInActiveWindow ?: return
+        val pkg = foregroundPackage()
+        if (pkg.isEmpty()) return
+        val sw = screenW()
+        val sh = screenH()
+        val list = ArrayList<AdSkipper.AdNode>()
+        var idCounter = 0
+
+        fun collect(node: AccessibilityNodeInfo?, parentId: Int) {
+            if (node == null || list.size > 500) return
+            val id = idCounter++
+            val r = Rect()
+            node.getBoundsInScreen(r)
+            val adNode = AdSkipper.AdNode(
+                id = id,
+                viewId = node.viewIdResourceName ?: "",
+                className = node.className?.toString() ?: "",
+                text = node.text?.toString() ?: "",
+                contentDescription = node.contentDescription?.toString() ?: "",
+                hintText = if (Build.VERSION.SDK_INT >= 26) node.hintText?.toString() ?: "" else "",
+                isClickable = node.isClickable,
+                isEnabled = node.isEnabled,
+                isVisible = node.isVisibleToUser,
+                isEditable = node.isEditable,
+                isFocused = node.isFocused,
+                isPassword = if (Build.VERSION.SDK_INT >= 26) node.isPassword else false,
+                left = r.left,
+                top = r.top,
+                right = r.right,
+                bottom = r.bottom,
+                parentId = parentId
+            )
+            list.add(adNode)
+            for (i in 0 until node.childCount) {
+                collect(node.getChild(i), id)
+            }
+        }
+        collect(root, -1)
+
+        val allowGames = AssistantPrefs.adSkipGamesEnabled(this)
+        val match = AdSkipper.findSkipTarget(pkg, sw, sh, list, allowGameAds = allowGames)
+        if (match != null) {
+            var targetInfo: AccessibilityNodeInfo? = null
+            var currentId = 0
+            fun findInfo(n: AccessibilityNodeInfo?) {
+                if (n == null || targetInfo != null) return
+                if (currentId == match.nodeId) {
+                    targetInfo = n
+                    return
+                }
+                currentId++
+                for (i in 0 until n.childCount) {
+                    findInfo(n.getChild(i))
+                }
+            }
+            findInfo(root)
+            if (targetInfo != null) {
+                if (clickNode(targetInfo!!)) {
+                    AssistantPrefs.recordAdSkip(this, match.sourceLabel)
+                }
+            }
+        }
+    }
+
+    private fun scanForSecretText() {
+        if (!SecretConfig.autoDetectEnabled(this)) return
+        val passphrases = SecretConfig.allPassphrases(this)
+        if (passphrases.isEmpty()) return
+
+        var foundText: String? = null
+        var foundRect: Rect? = null
+        walk(rootInActiveWindow, 0) { n ->
+            if (foundText != null) return@walk
+            val t = n.text?.toString().orEmpty()
+            if (GlyphAlphabet.looksLikeGlyphText(t)) {
+                foundText = t
+                val r = Rect()
+                n.getBoundsInScreen(r)
+                foundRect = r
+            }
+        }
+        val glyphText = foundText
+        if (glyphText == null) {
+            hideSecretBubble()
+            return
+        }
+        if (glyphText == lastShownGlyph) return
+
+        val bytes = GlyphAlphabet.decodeAny(glyphText)
+        val decoded = bytes?.let { SecretCipher.decryptWithAny(it, passphrases) }
+        if (decoded != null) {
+            lastShownGlyph = glyphText
+            showSecretBubble(decoded, foundRect ?: Rect(100, 300, 100, 300))
+        }
+    }
+
+    private fun showSecretBubble(text: String, anchor: Rect) {
+        hideSecretBubble()
+        val tv = TextView(this).apply {
+            this.text = "🔓 $text"
+            setBackgroundColor(0xEE222222.toInt())
+            setTextColor(0xFFFFFFFF.toInt())
+            setPadding(24, 16, 24, 16)
+            textSize = 14f
+        }
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+            PixelFormat.TRANSLUCENT
+        )
+        params.gravity = Gravity.TOP or Gravity.START
+        params.x = anchor.left.coerceAtLeast(0)
+        params.y = (anchor.bottom + 8).coerceAtLeast(0)
+        try {
+            windowManager.addView(tv, params)
+            overlayView = tv
+        } catch (_: Exception) {}
+        handler.postDelayed({ hideSecretBubble() }, 8000)
+    }
+
+    private fun hideSecretBubble() {
+        overlayView?.let {
+            try {
+                windowManager.removeView(it)
+            } catch (_: Exception) {}
+        }
+        overlayView = null
     }
 
     override fun onInterrupt() {}
 
-    // ---------------------------------------------------------------- info
+    // ---------------------------------------------------------------- info & FlowRunner helpers
 
     fun foregroundPackage(): String = rootInActiveWindow?.packageName?.toString() ?: ""
+
+    fun waitForPackage(packages: List<String>, timeoutMs: Long): Boolean {
+        val start = System.currentTimeMillis()
+        while (System.currentTimeMillis() - start < timeoutMs) {
+            val pkg = foregroundPackage()
+            if (pkg.isNotEmpty() && packages.any { pkg.contains(it, true) }) return true
+            try {
+                Thread.sleep(100L)
+            } catch (_: InterruptedException) {
+                break
+            }
+        }
+        return false
+    }
+
+    fun findEditable(): AccessibilityNodeInfo? {
+        val root = rootInActiveWindow ?: return null
+        var found: AccessibilityNodeInfo? = null
+        walk(root, 0) { n ->
+            if (found != null) return@walk
+            if (n.isEditable) found = n
+        }
+        return found
+    }
+
+    fun findByHints(hints: List<String>): AccessibilityNodeInfo? {
+        val root = rootInActiveWindow ?: return null
+        val lowerHints = hints.map { it.lowercase() }
+        var found: AccessibilityNodeInfo? = null
+        walk(root, 0) { n ->
+            if (found != null) return@walk
+            val label = labelOf(n).lowercase()
+            val text = n.text?.toString().orEmpty().lowercase()
+            val hint = if (Build.VERSION.SDK_INT >= 26) n.hintText?.toString().orEmpty().lowercase() else ""
+            if (lowerHints.any { h -> label.contains(h) || text.contains(h) || hint.contains(h) }) {
+                found = n
+            }
+        }
+        return found
+    }
+
+    fun findLowestClickableAtBottom(): AccessibilityNodeInfo? {
+        val root = rootInActiveWindow ?: return null
+        var best: AccessibilityNodeInfo? = null
+        var maxY = -1
+        walk(root, 0) { n ->
+            if (n.isClickable) {
+                val r = Rect()
+                n.getBoundsInScreen(r)
+                if (r.top > maxY && r.bottom <= screenH()) {
+                    maxY = r.top
+                    best = n
+                }
+            }
+        }
+        return best
+    }
+
+    fun clickByHints(hints: List<String>): Boolean {
+        val node = findByHints(hints) ?: return false
+        return clickNode(node)
+    }
+
+    fun findNode(filter: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {
+        val root = rootInActiveWindow ?: return null
+        var found: AccessibilityNodeInfo? = null
+        walk(root, 0) { n ->
+            if (found != null) return@walk
+            if (filter(n)) found = n
+        }
+        return found
+    }
+
+    fun clickByAnyText(texts: List<String>): Boolean {
+        for (t in texts) {
+            if (clickByText(t)) return true
+        }
+        return false
+    }
+
+    fun dismissCurrentCard(): Boolean {
+        return swipe(Dir.DOWN)
+    }
 
     private fun screenW(): Int = resources.displayMetrics.widthPixels
     private fun screenH(): Int = resources.displayMetrics.heightPixels
 
     // ------------------------------------------------------------- gestures
 
-    /** আঙুলের দিক অনুযায়ী swipe। UP = আঙুল নিচ থেকে উপরে। */
     fun swipe(dir: Dir): Boolean {
         val w = screenW().toFloat()
         val h = screenH().toFloat()
@@ -141,81 +374,6 @@ class AssistantAccessibilityService : AccessibilityService() {
         return if (d.isNotEmpty()) d else t
     }
 
-    fun findNode(predicate: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {
-        val root = rootInActiveWindow ?: return null
-        var hit: AccessibilityNodeInfo? = null
-        walk(root, 0) { n ->
-            if (hit != null) return@walk
-            if (predicate(n)) hit = n
-        }
-        return hit
-    }
-
-    fun findEditable(): AccessibilityNodeInfo? =
-        findNode { n ->
-            n.isVisibleToUser && (n.isEditable || n.className?.toString()?.contains("EditText", true) == true)
-        }
-
-    fun findByHints(hints: List<String>): AccessibilityNodeInfo? {
-        val lowHints = hints.map { it.trim().lowercase() }.filter { it.isNotEmpty() }
-        if (lowHints.isEmpty()) return null
-        return findNode { n ->
-            if (!n.isVisibleToUser) return@findNode false
-            val text = n.text?.toString().orEmpty().lowercase()
-            val desc = n.contentDescription?.toString().orEmpty().lowercase()
-            val hint = if (Build.VERSION.SDK_INT >= 26) n.hintText?.toString().orEmpty().lowercase() else ""
-            val viewId = n.viewIdResourceName.orEmpty().lowercase()
-            lowHints.any { h ->
-                text.contains(h) || desc.contains(h) || hint.contains(h) || viewId.contains(h)
-            }
-        }
-    }
-
-    fun findLowestClickableAtBottom(): AccessibilityNodeInfo? {
-        val root = rootInActiveWindow ?: return null
-        val minY = (screenH() * 0.55f).toInt()
-        var best: AccessibilityNodeInfo? = null
-        var bestBottom = -1
-        val rect = Rect()
-        walk(root, 0) { n ->
-            if (!n.isVisibleToUser || (!n.isClickable && !n.isEditable)) return@walk
-            n.getBoundsInScreen(rect)
-            if (!rect.isEmpty && rect.centerY() >= minY && rect.bottom > bestBottom) {
-                bestBottom = rect.bottom
-                best = n
-            }
-        }
-        return best
-    }
-
-    fun clickByHints(hints: List<String>): Boolean {
-        val node = findByHints(hints) ?: return false
-        return clickNode(node)
-    }
-
-    fun enterText(node: AccessibilityNodeInfo, text: String): Boolean {
-        node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-        node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-        val args = Bundle().apply {
-            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
-        }
-        return node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
-    }
-
-    suspend fun waitForPackage(packages: List<String>, timeoutMs: Long): Boolean {
-        val targets = packages.map { it.lowercase() }.toSet()
-        if (targets.isEmpty()) return true
-        val deadline = SystemClock.uptimeMillis() + timeoutMs
-        while (true) {
-            val fg = foregroundPackage().lowercase()
-            if (fg in targets) return true
-            val rem = deadline - SystemClock.uptimeMillis()
-            if (rem <= 0L) return false
-            delay(minOf(250L, rem))
-        }
-    }
-
-    /** Screen-এ [text] লেখা (বা description) থাকা বাটনে click। exact=true হলে পুরো লেখা মিলতে হবে। */
     fun clickByText(text: String, exact: Boolean = false): Boolean {
         val root = rootInActiveWindow ?: return false
         val key = text.trim().lowercase()
@@ -230,17 +388,6 @@ class AssistantAccessibilityService : AccessibilityService() {
         return target?.let { clickNode(it) } ?: false
     }
 
-    /** [labels]-এর যেকোনো একটা লেখার বাটন screen-এ পেলে click করে (যেমন "Clear all" / "Close all")। */
-    fun clickByAnyText(labels: List<String>): Boolean = labels.any { clickByText(it) }
-
-    /** Recents-এ মাঝের (চলতি) app-কার্ড উপরে ঠেলে বন্ধ করে। */
-    fun dismissCurrentCard(): Boolean {
-        val w = screenW().toFloat()
-        val h = screenH().toFloat()
-        return swipe(w * 0.5f, h * 0.5f, w * 0.5f, h * 0.1f, 220)
-    }
-
-    /** Node-টা (বা তার clickable parent-কে) click করে; না পারলে মাঝখানে tap। */
     fun clickNode(node: AccessibilityNodeInfo): Boolean {
         var n: AccessibilityNodeInfo? = node
         var depth = 0
@@ -254,62 +401,6 @@ class AssistantAccessibilityService : AccessibilityService() {
         return if (!r.isEmpty) tap(r.centerX().toFloat(), r.centerY().toFloat()) else false
     }
 
-    // --------------------------------------------------------------- Auto Ad Skipper
-
-    private fun scanAndSkipAds(now: Long) {
-        val root = rootInActiveWindow ?: return
-        val pkg = root.packageName?.toString().orEmpty()
-        if (AdSkipper.isBlockedPackage(pkg)) return
-
-        val adNodes = ArrayList<AdSkipper.AdNode>(64)
-        val rawMap = HashMap<Int, AccessibilityNodeInfo>(64)
-        val r = Rect()
-
-        fun collect(node: AccessibilityNodeInfo?, parentId: Int, depth: Int) {
-            if (node == null || depth > 35 || adNodes.size >= 240) return
-            val id = adNodes.size + 1
-            node.getBoundsInScreen(r)
-            val hint = if (Build.VERSION.SDK_INT >= 26) node.hintText?.toString().orEmpty() else ""
-            adNodes.add(
-                AdSkipper.AdNode(
-                    id = id,
-                    viewId = node.viewIdResourceName.orEmpty(),
-                    className = node.className?.toString().orEmpty(),
-                    text = node.text?.toString().orEmpty(),
-                    contentDescription = node.contentDescription?.toString().orEmpty(),
-                    hintText = hint,
-                    isClickable = node.isClickable,
-                    isEnabled = node.isEnabled,
-                    isVisible = node.isVisibleToUser,
-                    isEditable = node.isEditable,
-                    isFocused = node.isFocused,
-                    isPassword = node.isPassword,
-                    left = r.left,
-                    top = r.top,
-                    right = r.right,
-                    bottom = r.bottom,
-                    parentId = parentId
-                )
-            )
-            rawMap[id] = node
-            for (i in 0 until node.childCount) {
-                collect(node.getChild(i), id, depth + 1)
-            }
-        }
-
-        collect(root, 0, 0)
-        val allowGames = AssistantPrefs.adSkipGamesEnabled(this)
-        val match = AdSkipper.findSkipTarget(pkg, screenW(), screenH(), adNodes, allowGames) ?: return
-        val targetNode = rawMap[match.nodeId] ?: return
-        if (clickNode(targetNode)) {
-            lastAdClickAt = now
-            AssistantPrefs.recordAdSkip(this, match.sourceLabel)
-            AssistantLog.d("AdSkipper skipped [${match.sourceLabel}] reason=${match.reason}")
-            Toast.makeText(applicationContext, "Ad skipped (${match.sourceLabel})", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    /** "1.2M views" / "350K views" / "12,345 views" থেকে সংখ্যা বের করে। */
     private fun parseViews(desc: String): Long? {
         val m = VIEWS_REGEX.find(desc) ?: return null
         val num = m.groupValues[1].replace(",", "").toDoubleOrNull() ?: return null
@@ -324,7 +415,6 @@ class AssistantAccessibilityService : AccessibilityService() {
         return (num * mul).toLong()
     }
 
-    /** YouTube search result-এ এখন যেসব ভিডিও দেখা যাচ্ছে তার ভেতর প্রথমটা। */
     fun findFirstVideo(): AccessibilityNodeInfo? {
         var found: AccessibilityNodeInfo? = null
         walk(rootInActiveWindow, 0) { n ->
@@ -335,7 +425,6 @@ class AssistantAccessibilityService : AccessibilityService() {
         return found
     }
 
-    /** এখন screen-এ দেখা যাওয়া ভিডিওগুলোর ভেতর সবচেয়ে বেশি view-ওয়ালাটা। */
     fun findMostViewedVideo(): AccessibilityNodeInfo? {
         var best: AccessibilityNodeInfo? = null
         var bestViews = -1L
@@ -350,7 +439,34 @@ class AssistantAccessibilityService : AccessibilityService() {
 
     // --------------------------------------------------------------- typing
 
-    /** এখন যে input box-এ cursor আছে সেখানে লেখা বসায়। */
+    fun enterText(node: AccessibilityNodeInfo, text: String): Boolean {
+        var n: AccessibilityNodeInfo? = node
+        var depth = 0
+        while (n != null && depth < 6) {
+            if (n.isEditable) {
+                val args = Bundle().apply {
+                    putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+                }
+                if (n.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)) return true
+            }
+            n = n.parent
+            depth++
+        }
+        val args = Bundle().apply {
+            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+        }
+        if (node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)) return true
+
+        val r = Rect()
+        node.getBoundsInScreen(r)
+        if (!r.isEmpty) {
+            tap(r.centerX().toFloat(), r.centerY().toFloat())
+            try { Thread.sleep(100L) } catch (_: Exception) {}
+            return typeText(text)
+        }
+        return false
+    }
+
     fun typeText(text: String): Boolean {
         val f = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return false
         val old = if (Build.VERSION.SDK_INT >= 26 && f.isShowingHintText) "" else f.text?.toString().orEmpty()
@@ -359,7 +475,6 @@ class AssistantAccessibilityService : AccessibilityService() {
         return f.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
     }
 
-    /** Keyboard-এর Enter/Search চাপার মতো কাজ (Android 11+)। */
     fun pressEnter(): Boolean {
         if (Build.VERSION.SDK_INT < 30) return false
         val f = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return false
