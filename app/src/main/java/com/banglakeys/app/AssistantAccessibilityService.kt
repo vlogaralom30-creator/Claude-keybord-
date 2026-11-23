@@ -53,6 +53,8 @@ class AssistantAccessibilityService : AccessibilityService() {
     private val handler = Handler(Looper.getMainLooper())
     private var overlayView: TextView? = null
     private var lastShownGlyph: String? = null
+    private var lastTriedGlyph: String? = null
+    @Volatile private var decoding = false
     private var lastScanAt = 0L
     private var lastAdScanAt = 0L
 
@@ -145,46 +147,89 @@ class AssistantAccessibilityService : AccessibilityService() {
         }
     }
 
+    private val hideBubbleRunnable = Runnable { hideSecretBubble() }
+
     private fun scanForSecretText() {
         if (!SecretConfig.autoDetectEnabled(this)) return
-        val passphrases = SecretConfig.allPassphrases(this)
-        if (passphrases.isEmpty()) return
+        val contacts = SecretConfig.getContacts(this)
+        if (contacts.isEmpty()) return
 
-        var foundText: String? = null
-        var foundRect: Rect? = null
-        walk(rootInActiveWindow, 0) { n ->
-            if (foundText != null) return@walk
-            val t = n.text?.toString().orEmpty()
-            if (GlyphAlphabet.looksLikeGlyphText(t)) {
-                foundText = t
+        val root = rootInActiveWindow ?: return
+        val candidates = ArrayList<Pair<String, Rect>>()
+        walk(root, 0) { n ->
+            if (!n.isVisibleToUser) return@walk
+            val t = n.text?.toString().orEmpty().trim()
+            if (t.isNotEmpty() && GlyphAlphabet.looksLikeGlyphText(t)) {
                 val r = Rect()
                 n.getBoundsInScreen(r)
-                foundRect = r
+                if (!r.isEmpty) {
+                    candidates.add(t to r)
+                }
             }
         }
-        val glyphText = foundText
-        if (glyphText == null) {
+        if (candidates.isEmpty()) {
             hideSecretBubble()
+            // glyph স্ক্রিন থেকে সরে গেলে ভুলে যাই, যাতে scroll করে ফিরলে আবার দেখায়
+            lastShownGlyph = null
+            lastTriedGlyph = null
             return
         }
-        if (glyphText == lastShownGlyph) return
 
-        val bytes = GlyphAlphabet.decodeAny(glyphText)
-        val decoded = bytes?.let { SecretCipher.decryptWithAny(it, passphrases) }
-        if (decoded != null) {
-            lastShownGlyph = glyphText
-            showSecretBubble(decoded, foundRect ?: Rect(100, 300, 100, 300))
-        }
+        // চ্যাট স্ক্রিনে সবচেয়ে নিচের (নতুন) মেসেজটি আগে দেখানো হবে
+        candidates.sortByDescending { it.second.bottom }
+        val (glyphText, anchorRect) = candidates.first()
+
+        // একই লেখা আবার আবার decrypt করলে (PBKDF2 ভারী) UI আটকে যেত — একবারই চেষ্টা
+        if (glyphText == lastShownGlyph || glyphText == lastTriedGlyph || decoding) return
+        lastTriedGlyph = glyphText
+        decoding = true
+        Thread {
+            val bytes = GlyphAlphabet.decodeAny(glyphText)
+            val matched = bytes?.let { SecretCipher.decryptWithMatchingContact(it, contacts) }
+            if (matched != null) {
+                val style = GlyphAlphabet.detectStyle(glyphText) ?: GlyphStyle.RUNIC
+                SecretConfig.saveSecretCacheEntry(
+                    ctx = this,
+                    contactName = matched.first,
+                    plainText = matched.second,
+                    glyphText = glyphText,
+                    style = style,
+                    isOutgoing = false
+                )
+            }
+            handler.post {
+                decoding = false
+                if (matched != null) {
+                    lastShownGlyph = glyphText
+                    showSecretBubble("${matched.first}: ${matched.second}", anchorRect)
+                }
+            }
+        }.start()
     }
 
     private fun showSecretBubble(text: String, anchor: Rect) {
         hideSecretBubble()
+        val density = resources.displayMetrics.density
+        val margin = (12 * density).toInt()
+        val sw = screenW()
+        val sh = screenH()
+        val bubbleMaxW = (sw * 0.86f).toInt().coerceAtLeast((180 * density).toInt())
+
+        val bg = android.graphics.drawable.GradientDrawable().apply {
+            shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+            cornerRadius = 16 * density
+            setColor(0xEB0B2E2B.toInt())
+            setStroke((1.5f * density).toInt(), 0xFF26A69A.toInt())
+        }
+
         val tv = TextView(this).apply {
             this.text = "🔓 $text"
-            setBackgroundColor(0xEE222222.toInt())
+            background = bg
             setTextColor(0xFFFFFFFF.toInt())
-            setPadding(24, 16, 24, 16)
+            setPadding((16 * density).toInt(), (11 * density).toInt(), (16 * density).toInt(), (11 * density).toInt())
             textSize = 14f
+            maxWidth = bubbleMaxW
+            elevation = 8 * density
         }
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -194,16 +239,22 @@ class AssistantAccessibilityService : AccessibilityService() {
             PixelFormat.TRANSLUCENT
         )
         params.gravity = Gravity.TOP or Gravity.START
-        params.x = anchor.left.coerceAtLeast(0)
-        params.y = (anchor.bottom + 8).coerceAtLeast(0)
+        params.x = anchor.left.coerceIn(margin, (sw - bubbleMaxW - margin).coerceAtLeast(margin))
+        val preferredY = anchor.bottom + (8 * density).toInt()
+        params.y = if (preferredY > sh - (140 * density).toInt()) {
+            (anchor.top - (96 * density).toInt()).coerceAtLeast(margin)
+        } else {
+            preferredY.coerceAtLeast(margin)
+        }
         try {
             windowManager.addView(tv, params)
             overlayView = tv
         } catch (_: Exception) {}
-        handler.postDelayed({ hideSecretBubble() }, 8000)
+        handler.postDelayed(hideBubbleRunnable, 8000)
     }
 
     private fun hideSecretBubble() {
+        handler.removeCallbacks(hideBubbleRunnable)
         overlayView?.let {
             try {
                 windowManager.removeView(it)

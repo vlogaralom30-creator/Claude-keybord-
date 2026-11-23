@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.Keyboard
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tune
@@ -144,21 +145,43 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
   var previewBanglaMode by rememberSaveable { mutableStateOf(true) }
   var previewSymbolsMode by rememberSaveable { mutableIntStateOf(0) }
   var previewInPanel by rememberSaveable { mutableStateOf(false) }
+  var previewSecretMode by rememberSaveable { mutableStateOf(false) }
+  var previewSecretText by rememberSaveable { mutableStateOf("") }
+  var previewSecretTarget by remember { mutableStateOf<String?>(null) }
   var suggestVersion by remember { mutableIntStateOf(0) }
 
   val suggestionsRepo = remember { Suggestions(context) }
 
+  val activeSecretPlain =
+    remember(previewSecretText, previewBanglaMode, previewSymbolsMode) {
+      if (!(previewBanglaMode && previewSymbolsMode == 0)) previewSecretText
+      else Regex("[A-Za-z^`]+").replace(previewSecretText) { Phonetic.convert(it.value) }
+    }
   val composingDisplay =
-    remember(composingRoman, previewBanglaMode) {
-      if (composingRoman.isEmpty()) ""
-      else if (previewBanglaMode) Phonetic.convert(composingRoman)
-      else composingRoman
+    remember(composingRoman, previewBanglaMode, previewSecretMode, activeSecretPlain, previewSecretTarget) {
+      if (previewSecretMode) {
+        val target = previewSecretTarget ?: "?"
+        if (activeSecretPlain.isEmpty()) "🔐 → $target (লিখুন, শেষে 🔒 Send)"
+        else "🔐 $target: $activeSecretPlain"
+      } else {
+        if (composingRoman.isEmpty()) ""
+        else if (previewBanglaMode) Phonetic.convert(composingRoman)
+        else composingRoman
+      }
     }
   val suggestionsList =
-    remember(composingRoman, previewBanglaMode, suggestVersion) {
-      suggestionsRepo.suggestionsFor(composingRoman, previewBanglaMode)
+    remember(composingRoman, previewBanglaMode, previewSecretMode, previewSecretText, suggestVersion) {
+      if (previewSecretMode) {
+        val trailing =
+          previewSecretText.takeLastWhile {
+            it in 'a'..'z' || it in 'A'..'Z' || it == '^' || it == '`' || it == '\''
+          }
+        if (trailing.isEmpty()) emptyList() else suggestionsRepo.suggestionsFor(trailing, previewBanglaMode)
+      } else {
+        suggestionsRepo.suggestionsFor(composingRoman, previewBanglaMode)
+      }
     }
-  val combinedTestText = committedText + composingDisplay
+  val combinedTestText = committedText + if (previewSecretMode) "" else composingDisplay
 
   var phoneticSampleInput by rememberSaveable { mutableStateOf("ami tOmake bhalobashi") }
   val convertedBangla = remember(phoneticSampleInput) { Phonetic.convert(phoneticSampleInput) }
@@ -239,12 +262,18 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
                   banglaMode = previewBanglaMode,
                   symbolsMode = previewSymbolsMode,
                   inPanel = previewInPanel,
+                  secretMode = previewSecretMode,
+                  secretTarget = previewSecretTarget,
                   numRow = numRow,
                   bnDigitsPref = bnDigits,
                   heightPct = heightPct,
                   composingText = composingDisplay,
                   suggestionsList = suggestionsList,
                   onText = { ch ->
+                    if (previewSecretMode) {
+                      previewSecretText += ch
+                      return@EmbeddedKeyboardPreview
+                    }
                     val single = ch.singleOrNull()
                     val isBnWordChar =
                       previewBanglaMode &&
@@ -277,6 +306,12 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
                     }
                   },
                   onDelete = {
+                    if (previewSecretMode) {
+                      if (previewSecretText.isNotEmpty()) {
+                        previewSecretText = previewSecretText.dropLast(1)
+                      }
+                      return@EmbeddedKeyboardPreview
+                    }
                     if (composingRoman.isNotEmpty()) {
                       composingRoman = composingRoman.dropLast(1)
                     } else if (committedText.isNotEmpty()) {
@@ -292,6 +327,10 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
                     }
                   },
                   onSpace = {
+                    if (previewSecretMode) {
+                      previewSecretText = "$activeSecretPlain "
+                      return@EmbeddedKeyboardPreview
+                    }
                     if (composingDisplay.isNotEmpty()) {
                       suggestionsRepo.learn(composingRoman, composingDisplay, previewBanglaMode)
                       committedText += composingDisplay
@@ -301,6 +340,22 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
                     committedText += " "
                   },
                   onEnter = {
+                    if (previewSecretMode) {
+                      val plain = activeSecretPlain.trim()
+                      val contacts = SecretConfig.getContacts(context)
+                      val target = previewSecretTarget ?: contacts.keys.firstOrNull()
+                      val pass = target?.let { contacts[it] }
+                      previewSecretMode = false
+                      previewSecretText = ""
+                      if (plain.isNotEmpty() && target != null && !pass.isNullOrBlank()) {
+                        val style = SecretConfig.getStyle(context)
+                        val glyph = GlyphAlphabet.encode(SecretCipher.encrypt(plain, pass), style)
+                        SecretConfig.saveSecretCacheEntry(context, target, plain, glyph, style, isOutgoing = true)
+                        committedText += glyph
+                        scope.launch { snackbarHostState.showSnackbar("🔒 $target-এর জন্য encrypt হয়েছে") }
+                      }
+                      return@EmbeddedKeyboardPreview
+                    }
                     if (composingDisplay.isNotEmpty()) {
                       suggestionsRepo.learn(composingRoman, composingDisplay, previewBanglaMode)
                       committedText += composingDisplay
@@ -311,7 +366,9 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
                     committedText += "\n"
                   },
                   onSwitchLang = {
-                    if (composingDisplay.isNotEmpty()) {
+                    if (previewSecretMode) {
+                      previewSecretText = activeSecretPlain
+                    } else if (composingDisplay.isNotEmpty()) {
                       suggestionsRepo.learn(composingRoman, composingDisplay, previewBanglaMode)
                       committedText += composingDisplay
                       composingRoman = ""
@@ -323,7 +380,9 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
                     suggestVersion++
                   },
                   onSymbols = { mode ->
-                    if (composingDisplay.isNotEmpty()) {
+                    if (previewSecretMode) {
+                      previewSecretText = activeSecretPlain
+                    } else if (composingDisplay.isNotEmpty()) {
                       suggestionsRepo.learn(composingRoman, composingDisplay, previewBanglaMode)
                       committedText += composingDisplay
                       composingRoman = ""
@@ -333,7 +392,14 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
                     previewSymbolsMode = mode
                   },
                   onComposingTap = {
-                    if (composingDisplay.isNotEmpty()) {
+                    if (previewSecretMode) {
+                      val names = SecretConfig.getContacts(context).keys.toList()
+                      if (names.size > 1) {
+                        val next = names[(names.indexOf(previewSecretTarget) + 1).mod(names.size)]
+                        previewSecretTarget = next
+                        SecretConfig.setActiveContact(context, next)
+                      }
+                    } else if (composingDisplay.isNotEmpty()) {
                       suggestionsRepo.learn(composingRoman, composingDisplay, previewBanglaMode)
                       committedText += composingDisplay
                       composingRoman = ""
@@ -341,10 +407,18 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
                     }
                   },
                   onSuggestionTap = { word ->
-                    suggestionsRepo.learn(composingRoman, word, previewBanglaMode)
-                    composingRoman = ""
-                    committedText += "$word "
-                    suggestVersion++
+                    if (previewSecretMode) {
+                      val trailing =
+                        previewSecretText.takeLastWhile {
+                          it in 'a'..'z' || it in 'A'..'Z' || it == '^' || it == '`' || it == '\''
+                        }
+                      previewSecretText = previewSecretText.dropLast(trailing.length) + "$word "
+                    } else {
+                      suggestionsRepo.learn(composingRoman, word, previewBanglaMode)
+                      composingRoman = ""
+                      committedText += "$word "
+                      suggestVersion++
+                    }
                   },
                   onSuggestionLongPress = { word ->
                     val removed = suggestionsRepo.forget(word, previewBanglaMode)
@@ -356,15 +430,20 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
                     }
                   },
                   onSnippet = { snippet ->
-                    if (composingDisplay.isNotEmpty()) {
-                      committedText += composingDisplay
-                      composingRoman = ""
+                    if (previewSecretMode) {
+                      previewSecretText += snippet
+                      previewInPanel = false
+                    } else {
+                      if (composingDisplay.isNotEmpty()) {
+                        committedText += composingDisplay
+                        composingRoman = ""
+                      }
+                      committedText += snippet
+                      suggestVersion++
                     }
-                    committedText += snippet
-                    suggestVersion++
                   },
                   onNotepad = {
-                    if (composingDisplay.isNotEmpty()) {
+                    if (composingDisplay.isNotEmpty() && !previewSecretMode) {
                       committedText += composingDisplay
                       composingRoman = ""
                     }
@@ -372,14 +451,17 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
                   },
                   onTranslate = {
                     val target =
-                      if (composingDisplay.isNotEmpty()) composingDisplay
+                      if (previewSecretMode) activeSecretPlain.trim()
+                      else if (composingDisplay.isNotEmpty()) composingDisplay
                       else committedText.trim()
                     if (target.isNotEmpty()) {
                       val from = if (previewBanglaMode) "bn" else "en"
                       val to = if (previewBanglaMode) "en" else "bn"
                       Translator.translate(target, from, to) { result ->
                         if (result != null) {
-                          if (composingDisplay.isNotEmpty()) {
+                          if (previewSecretMode) {
+                            previewSecretText = result
+                          } else if (composingDisplay.isNotEmpty()) {
                             composingRoman = ""
                             committedText += "$result "
                           } else {
@@ -400,6 +482,26 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
                   },
                   onAssistant = {
                     context.startActivity(Intent(context, AssistantActivity::class.java))
+                  },
+                  onSecretToggle = {
+                    val contacts = SecretConfig.getContacts(context)
+                    if (contacts.isEmpty()) {
+                      scope.launch {
+                        snackbarHostState.showSnackbar("আগে Secret Message ও AES Vault-এ একটি contact সেভ করুন")
+                      }
+                      return@EmbeddedKeyboardPreview
+                    }
+                    if (!previewSecretMode) {
+                      val active = SecretConfig.getActiveContact(context)
+                      previewSecretTarget = if (active != null && contacts.containsKey(active)) active else contacts.keys.first()
+                      previewSecretText = ""
+                      previewSecretMode = true
+                      previewInPanel = false
+                      previewSymbolsMode = 0
+                    } else {
+                      previewSecretMode = false
+                      previewSecretText = ""
+                    }
                   },
                 )
               }
@@ -529,12 +631,12 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
               shape = RoundedCornerShape(14.dp),
             ) {
               Icon(
-                imageVector = Icons.Filled.ContentCopy,
+                imageVector = Icons.Filled.Lock,
                 contentDescription = null,
                 modifier = Modifier.size(20.dp),
               )
               Spacer(modifier = Modifier.width(8.dp))
-              Text("🔐 Secret Message Settings")
+              Text(stringResource(R.string.btn_open_secret))
             }
           }
         }
@@ -689,6 +791,8 @@ private fun EmbeddedKeyboardPreview(
   banglaMode: Boolean,
   symbolsMode: Int,
   inPanel: Boolean,
+  secretMode: Boolean,
+  secretTarget: String?,
   numRow: Boolean,
   bnDigitsPref: Boolean,
   heightPct: Int,
@@ -708,6 +812,7 @@ private fun EmbeddedKeyboardPreview(
   onTranslate: () -> Unit,
   onVoice: () -> Unit,
   onAssistant: () -> Unit,
+  onSecretToggle: () -> Unit,
 ) {
   val context = LocalContext.current
   val rows =
@@ -751,15 +856,14 @@ private fun EmbeddedKeyboardPreview(
           override fun onTranslate() = onTranslate()
           override fun onVoice() = onVoice()
           override fun onAssistant() = onAssistant()
-          override fun onSecretToggle() {
-            Toast.makeText(context, "🔐 Secret mode preview toggled", Toast.LENGTH_SHORT).show()
-          }
+          override fun onSecretToggle() = onSecretToggle()
         }
       val layoutState = Triple(rows, spaceLabel, heightPct)
       if (kv.tag != layoutState) {
         kv.tag = layoutState
         kv.setLayout(rows, spaceLabel, heightPct / 100f)
       }
+      kv.setSecretMode(secretMode, secretTarget)
       kv.setComposing(composingText)
       kv.setSuggestions(suggestionsList)
     },

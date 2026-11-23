@@ -48,6 +48,8 @@
     <string name="notepad_clips_subtitle">যা কিছু copy করেন তা এখানে নিজে থেকেই জমা হয়।</string>
     <string name="notepad_clear_all">সব মুছুন</string>
     <string name="notepad_empty_clips">Clipboard history এখনো খালি।</string>
+    <string name="btn_open_secret">Secret Message ও AES Vault</string>
+    <string name="secret_title">Secret Message ও AES Vault</string>
     <string name="cd_app_icon">Bangla Keys app icon</string>
     <string name="cd_status_icon">Keyboard status</string>
     <string name="cd_copy_icon">Copy text</string>

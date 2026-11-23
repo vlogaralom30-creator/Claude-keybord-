@@ -88,6 +88,8 @@ class KeyboardView(context: Context) : View(context) {
     private var spaceLabel = ""
     private var enterLabel: String? = null
     private var rowScale = 1f
+    private var secretModeActive = false
+    private var secretRecipient: String? = null
 
     private var shift = SHIFT_OFF
     private var lastShiftTap = 0L
@@ -128,6 +130,9 @@ class KeyboardView(context: Context) : View(context) {
     private var badgeStrokeC = 0
     private var badgeTextC = 0
     private var actionBgC = 0
+    private var secretBadgeBgC = 0
+    private var secretBadgeStrokeC = 0
+    private var secretBadgeTextC = 0
 
     private val stripH: Float get() = 48f * d
     private val vPad: Float get() = 4f * d
@@ -177,6 +182,18 @@ class KeyboardView(context: Context) : View(context) {
         invalidate()
     }
 
+    fun setSecretMode(active: Boolean, recipient: String? = null) {
+        if (secretModeActive != active || secretRecipient != recipient) {
+            secretModeActive = active
+            secretRecipient = recipient
+            stripDirty = true
+            updateStripRects()
+            invalidate()
+        }
+    }
+
+    fun isSecretMode(): Boolean = secretModeActive
+
     /** English-এ বাক্যের শুরুতে auto capital */
     fun setAutoShift(on: Boolean) {
         if (shift != SHIFT_CAPS) {
@@ -217,6 +234,9 @@ class KeyboardView(context: Context) : View(context) {
             badgeStrokeC = 0xFF26A69A.toInt()
             badgeTextC = 0xFF80CBC4.toInt()
             actionBgC = 0xFF2C2C2E.toInt()
+            secretBadgeBgC = 0xFF1B3B2B.toInt()
+            secretBadgeStrokeC = 0xFF34D399.toInt()
+            secretBadgeTextC = 0xFFA7F3D0.toInt()
         } else {
             bgC = 0xFFE6E9EC.toInt()
             keyC = 0xFFFFFFFF.toInt()
@@ -234,6 +254,9 @@ class KeyboardView(context: Context) : View(context) {
             badgeStrokeC = 0xFF4DB6AC.toInt()
             badgeTextC = 0xFF00695C.toInt()
             actionBgC = 0xFFD8DFE6.toInt()
+            secretBadgeBgC = 0xFFD1FAE5.toInt()
+            secretBadgeStrokeC = 0xFF059669.toInt()
+            secretBadgeTextC = 0xFF065F46.toInt()
         }
         invalidate()
     }
@@ -404,21 +427,35 @@ class KeyboardView(context: Context) : View(context) {
         // ১) Composing Badge (থাকলে)
         if (!composingRect.isEmpty && composing.isNotEmpty()) {
             val pressed = isStripPressed(StripHit.Composing)
+            val useSecretColors = secretModeActive || composing.startsWith("🔐")
             paint.style = Paint.Style.FILL
-            paint.color = if (pressed) pressC else badgeBgC
+            paint.color = when {
+                pressed -> pressC
+                useSecretColors -> secretBadgeBgC
+                else -> badgeBgC
+            }
             c.drawRoundRect(composingRect, pillRadius, pillRadius, paint)
 
-            strokePaint.color = badgeStrokeC
-            strokePaint.strokeWidth = 1.1f * d
+            strokePaint.color = if (useSecretColors) secretBadgeStrokeC else badgeStrokeC
+            strokePaint.strokeWidth = 1.25f * d
             c.drawRoundRect(composingRect, pillRadius, pillRadius, strokePaint)
 
             drawFittedPillText(
                 c = c,
                 text = composing,
                 rect = composingRect,
-                color = if (pressed) textC else badgeTextC,
+                color = when {
+                    pressed -> textC
+                    useSecretColors -> secretBadgeTextC
+                    else -> badgeTextC
+                },
                 bold = true,
-                preferredSp = 15.5f
+                preferredSp = 15.5f,
+                truncateAt = if (useSecretColors && composing.length > 18) {
+                    TextUtils.TruncateAt.START
+                } else {
+                    TextUtils.TruncateAt.END
+                }
             )
         }
 
@@ -480,7 +517,8 @@ class KeyboardView(context: Context) : View(context) {
         rect: RectF,
         color: Int,
         bold: Boolean,
-        preferredSp: Float
+        preferredSp: Float,
+        truncateAt: TextUtils.TruncateAt = TextUtils.TruncateAt.END
     ) {
         val availW = (rect.width() - 12f * d).coerceAtLeast(8f * d)
         stripTextPaint.color = color
@@ -495,7 +533,7 @@ class KeyboardView(context: Context) : View(context) {
             stripTextPaint.textSize = size
         }
 
-        val label = TextUtils.ellipsize(text, stripTextPaint, availW, TextUtils.TruncateAt.END).toString()
+        val label = TextUtils.ellipsize(text, stripTextPaint, availW, truncateAt).toString()
         val fm = stripTextPaint.fontMetrics
         val y = rect.centerY() - (fm.ascent + fm.descent) / 2f
         c.drawText(label, rect.centerX(), y, stripTextPaint)
@@ -521,11 +559,12 @@ class KeyboardView(context: Context) : View(context) {
         val pressed = isPressed(b)
         val isEnter = k.type == KeyType.ENTER
         val shiftActive = k.type == KeyType.SHIFT && shift != SHIFT_OFF
+        val secretActiveKey = k.type == KeyType.SECRET && secretModeActive
         val functional = !(k.type == KeyType.CHAR || k.type == KeyType.SPACE || k.type == KeyType.SNIPPET)
 
         val fill = when {
             pressed -> pressC
-            isEnter || shiftActive -> accentC
+            isEnter || shiftActive || secretActiveKey -> accentC
             functional -> fnC
             else -> keyC
         }
@@ -544,18 +583,22 @@ class KeyboardView(context: Context) : View(context) {
         val cx = b.rect.centerX()
         val cy = b.rect.centerY()
         val rh = b.rect.height()
-        val onAccent = isEnter || shiftActive
+        val onAccent = isEnter || shiftActive || secretActiveKey
         val fg = if (onAccent) 0xFFFFFFFF.toInt() else textC
 
         when (k.type) {
             KeyType.SHIFT -> drawShiftIcon(c, cx, cy, fg, shift != SHIFT_OFF, shift == SHIFT_CAPS)
             KeyType.DELETE -> drawBackspaceIcon(c, cx, cy, fg)
             KeyType.ENTER -> {
-                val el = enterLabel
-                when {
-                    el == null -> drawEnterIcon(c, cx, cy, fg)
-                    el == "SEARCH" -> drawSearchIcon(c, cx, cy, fg)
-                    else -> drawCentered(c, el, cx, cy, rh * 0.32f, fg)
+                if (secretModeActive) {
+                    drawCentered(c, "🔒 Send", cx, cy, rh * 0.28f, fg)
+                } else {
+                    val el = enterLabel
+                    when {
+                        el == null -> drawEnterIcon(c, cx, cy, fg)
+                        el == "SEARCH" -> drawSearchIcon(c, cx, cy, fg)
+                        else -> drawCentered(c, el, cx, cy, rh * 0.32f, fg)
+                    }
                 }
             }
             KeyType.SPACE -> drawCentered(c, spaceLabel, cx, cy, rh * 0.30f, hintC)
@@ -573,6 +616,7 @@ class KeyboardView(context: Context) : View(context) {
             KeyType.NOTEPAD -> drawNotepadIcon(c, cx, cy, textC)
             KeyType.MIC -> drawMicIcon(c, cx, cy, textC)
             KeyType.ASSISTANT -> drawAssistantIcon(c, cx, cy, accentC)
+            KeyType.SECRET -> drawLockIcon(c, cx, cy, if (secretActiveKey) fg else accentC, secretModeActive)
             else -> drawCentered(c, k.label, cx, cy, rh * 0.30f, textC)
         }
     }
@@ -707,6 +751,36 @@ class KeyboardView(context: Context) : View(context) {
         iconPaint.style = Paint.Style.STROKE
         c.drawCircle(cx - 1.5f * d, cy - 1.5f * d, r, iconPaint)
         c.drawLine(cx + 2.6f * d, cy + 2.6f * d, cx + 7.2f * d, cy + 7.2f * d, iconPaint)
+    }
+
+    private fun drawLockIcon(c: Canvas, cx: Float, cy: Float, color: Int, locked: Boolean) {
+        val w = 6.4f * d
+        val h = 5.2f * d
+        iconPaint.color = color
+        iconPaint.strokeWidth = 1.7f * d
+        iconPaint.style = Paint.Style.STROKE
+        // শিকল / আর্চ
+        c.drawArc(
+            cx - w * 0.62f,
+            cy - h * 1.45f,
+            cx + w * 0.62f,
+            cy - h * 0.1f,
+            if (locked) 180f else 200f,
+            if (locked) 180f else 135f,
+            false,
+            iconPaint
+        )
+        // লকের বডি
+        iconPaint.style = if (locked) Paint.Style.FILL_AND_STROKE else Paint.Style.STROKE
+        c.drawRoundRect(
+            cx - w,
+            cy - h * 0.25f,
+            cx + w,
+            cy + h * 1.05f,
+            2.2f * d,
+            2.2f * d,
+            iconPaint
+        )
     }
 
     private fun drawPopups(c: Canvas) {

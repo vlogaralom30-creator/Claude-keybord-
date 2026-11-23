@@ -81,7 +81,7 @@ object GlyphAlphabet {
     /** কোনো text এই যেকোনো glyph-লিপির মতো লাগছে কিনা — auto-detect overlay-র জন্য। */
     fun looksLikeGlyphText(text: String): Boolean = detectStyle(text) != null
 
-    private fun detectStyle(text: String): GlyphStyle? {
+    fun detectStyle(text: String): GlyphStyle? {
         val letters = text.filter { !it.isWhitespace() }
         if (letters.length < 6) return null
         for ((style, index) in INDEXES) {

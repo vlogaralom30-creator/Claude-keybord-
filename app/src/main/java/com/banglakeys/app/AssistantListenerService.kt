@@ -50,6 +50,11 @@ class AssistantListenerService : Service() {
         private var instance: AssistantListenerService? = null
 
         fun start(ctx: Context) {
+            // Mic permission ছাড়া microphone-type foreground service শুরু করলে Android 14+ এ crash করে
+            if (!AssistantSetup.hasMic(ctx)) {
+                Toast.makeText(ctx, "মাইক্রোফোন permission দিন", Toast.LENGTH_SHORT).show()
+                return
+            }
             val i = Intent(ctx, AssistantListenerService::class.java)
             if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i)
         }
@@ -59,6 +64,10 @@ class AssistantListenerService : Service() {
         }
 
         fun triggerPtt(ctx: Context) {
+            if (!AssistantSetup.hasMic(ctx)) {
+                Toast.makeText(ctx, "মাইক্রোফোন permission দিন", Toast.LENGTH_SHORT).show()
+                return
+            }
             val i = Intent(ctx, AssistantListenerService::class.java).setAction(ACTION_TRIGGER_PTT)
             if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i)
         }
@@ -89,6 +98,7 @@ class AssistantListenerService : Service() {
     private var pendingCommand: Command? = null
     private var pendingSummary: String = ""
     private var activeFlowJob: Job? = null
+    private var errorStreak = 0
 
     private val restart = Runnable { listenOnce() }
 
@@ -104,13 +114,14 @@ class AssistantListenerService : Service() {
                 if (running) {
                     startAsForeground()
                     applyModeChange()
+                } else {
+                    stopSelf()
                 }
                 return START_NOT_STICKY
             }
         }
 
-        startAsForeground()
-        if (!AssistantSetup.hasMic(this)) {
+        if (!AssistantSetup.hasMic(this) || !startAsForeground()) {
             toast("মাইক্রোফোন permission দিন")
             stopSelf()
             return START_NOT_STICKY
@@ -260,8 +271,22 @@ class AssistantListenerService : Service() {
             stopSelf()
             return
         }
-        recognizer?.destroy()
-        val r = SpeechRecognizer.createSpeechRecognizer(this)
+        recognizer?.let {
+            try { it.cancel() } catch (_: Exception) {}
+            try { it.destroy() } catch (_: Exception) {}
+        }
+        recognizer = null
+        val r = try {
+            SpeechRecognizer.createSpeechRecognizer(this)
+        } catch (e: Exception) {
+            AssistantLog.w("createSpeechRecognizer failed", e)
+            null
+        }
+        if (r == null) {
+            errorStreak = (errorStreak + 1).coerceAtMost(6)
+            scheduleNext(1000L * errorStreak)
+            return
+        }
         recognizer = r
         r.setRecognitionListener(object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) {
@@ -289,6 +314,8 @@ class AssistantListenerService : Service() {
                 val alreadyAwake = pttSessionActive || now < awakeUntil
                 val (woke, rest) = SmartCommandResolver.splitWakeSmart(text)
                 if (alreadyAwake || woke) {
+                    // কথা বলতে থাকলে awake window বাড়াই, যাতে মাঝে থামলে "ঘুমিয়ে" না যায়
+                    awakeUntil = maxOf(awakeUntil, now + AssistantConfig.AWAKE_WINDOW_MS)
                     val sec = if (now < awakeUntil) ((awakeUntil - now) / 1000L).toInt().coerceAtLeast(1) else null
                     val display = if (woke) rest.ifEmpty { "শুনছি…" } else text
                     overlay.render(
@@ -316,20 +343,37 @@ class AssistantListenerService : Service() {
                     }
                     return
                 }
+                // একটানা error হলে ধীরে ধীরে বিরতি বাড়াই — মাইক বারবার on/off হয়ে beep/ব্যাটারি নষ্ট না করতে
+                if (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
+                    errorStreak = 0 // চুপচাপ থাকা স্বাভাবিক, error নয়
+                } else {
+                    errorStreak = (errorStreak + 1).coerceAtMost(6)
+                }
                 val delay = when (error) {
                     SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> 1500L
+                    SpeechRecognizer.ERROR_CLIENT -> 700L * (errorStreak.coerceAtLeast(1))
                     SpeechRecognizer.ERROR_NETWORK,
                     SpeechRecognizer.ERROR_NETWORK_TIMEOUT,
                     SpeechRecognizer.ERROR_SERVER -> 3000L
-                    else -> 250L
+                    SpeechRecognizer.ERROR_NO_MATCH,
+                    SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> 250L
+                    else -> 500L * errorStreak.coerceAtLeast(1)
+                }
+                if (error == SpeechRecognizer.ERROR_CLIENT || error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) {
+                    recognizer?.destroy()
+                    recognizer = null
                 }
                 scheduleNext(delay)
             }
 
             override fun onResults(results: Bundle?) {
+                errorStreak = 0
                 val list = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty()
                 val wasPtt = pttSessionActive
                 pttSessionActive = false
+                if (list.isEmpty() && wasPtt) {
+                    showFeedback(null, null, "কথা শোনা যায়নি", isSuccess = false, canRetry = true)
+                }
                 handleResults(list, wasPtt)
                 if (currentMode() == ListeningMode.CONTINUOUS || pendingCommand != null) {
                     scheduleNext(250)
@@ -345,8 +389,18 @@ class AssistantListenerService : Service() {
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
+            // ছোট বিরতিতে ("Hey Bot ... open TikTok") কেটে না দিতে — আগের FIXES.md-এ থাকলেও কোডে হারিয়ে গিয়েছিল
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2500L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 15000L)
         }
-        r.startListening(intent)
+        try {
+            r.startListening(intent)
+        } catch (e: Exception) {
+            AssistantLog.w("startListening failed", e)
+            errorStreak = (errorStreak + 1).coerceAtMost(6)
+            scheduleNext(1000L * errorStreak)
+        }
     }
 
     // ------------------------------------------------------------- commands & confirmation
@@ -585,7 +639,7 @@ class AssistantListenerService : Service() {
 
     // --------------------------------------------------------- notification
 
-    private fun startAsForeground() {
+    private fun startAsForeground(): Boolean {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= 26) {
             nm.createNotificationChannel(
@@ -626,10 +680,16 @@ class AssistantListenerService : Service() {
             .setOngoing(true)
             .build()
 
-        if (Build.VERSION.SDK_INT >= 29) {
-            startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
-        } else {
-            startForeground(NOTIF_ID, n)
+        return try {
+            if (Build.VERSION.SDK_INT >= 29) {
+                startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+            } else {
+                startForeground(NOTIF_ID, n)
+            }
+            true
+        } catch (e: Exception) {
+            AssistantLog.w("startForeground failed", e)
+            false
         }
     }
 }

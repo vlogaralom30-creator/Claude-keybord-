@@ -72,4 +72,18 @@ object SecretCipher {
         }
         return null
     }
+
+    /**
+     * Contact-নামসহ সেভ করা passphrase-গুলো try করে — মিলে গেলে `(contactName, plaintext)` দেয়।
+     */
+    fun decryptWithMatchingContact(
+        data: ByteArray,
+        contacts: Map<String, String>
+    ): Pair<String, String>? {
+        for ((name, pass) in contacts) {
+            if (pass.isBlank()) continue
+            decrypt(data, pass)?.let { plain -> return name to plain }
+        }
+        return null
+    }
 }

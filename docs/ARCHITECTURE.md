@@ -85,3 +85,12 @@ runtime-এ ClassNotFound।
 - Android 14+ এ mic foreground service অ্যাপ/কিবোর্ড দৃশ্যমান থাকা অবস্থায় শুরু করতে হয়।
 - SpeechRecognizer main thread-এ তৈরি/চালাতে হয়।
 - YouTube/TikTok UI বদলালে node-ভিত্তিক কাজ (most viewed, click text) ভাঙতে পারে; gesture-ভিত্তিক কাজ টেকে বেশি।
+
+
+## ৩. v3-তে যোগ/বদলানো ফাইল
+| ফাইল | দায়িত্ব |
+|---|---|
+| `VoiceInput.kt` | কিবোর্ডের voice typing — continuous, retry, language fallback |
+| `SecretInvite.kt` | secret code বানানো, share text, import parse, fingerprint |
+| `SecretConfig.kt` | contact/passphrase/style/active contact (private prefs, backup-এ বাদ) |
+| `SecretComposeActivity.kt` | contact manager, 📤 share, 📥 import, encrypt/decrypt screen |

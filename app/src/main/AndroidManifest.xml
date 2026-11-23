@@ -23,6 +23,11 @@
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
+        <!-- Android 11+: এটা না থাকলে SpeechRecognizer.isRecognitionAvailable() false দেয়
+             এবং recognizer bind হয় না — মাইক চালু হয়েও কিছু শোনে না -->
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
     </queries>
 
     <application

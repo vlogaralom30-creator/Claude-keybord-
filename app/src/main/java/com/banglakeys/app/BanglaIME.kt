@@ -58,6 +58,8 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
     override fun onDestroy() {
         clipboardMemory.stop()
         voice.destroy()
+        // voice.destroy() মাঝপথে হলে assistant যেন "paused" হয়ে আটকে না থাকে
+        AssistantListenerService.setPaused(false)
         super.onDestroy()
     }
 
@@ -77,6 +79,12 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
         super.onStartInputView(info, restarting)
         loadPrefs()
         buf.setLength(0)
+        // অন্য field-এ গেলে secret mode ছেড়ে দিই, নইলে সেখানে টাইপ করা লেখা হারিয়ে যেত
+        if (!restarting) {
+            secretMode = false
+            secretText.setLength(0)
+            kv?.setSecretMode(false)
+        }
         inPanel = false
 
         val type = info?.inputType ?: 0
@@ -115,6 +123,17 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
 
     override fun onFinishInputView(finishingInput: Boolean) {
         if (voice.listening) voice.stop()
+        if (secretMode) {
+            val draft = secretPlain()
+            if (draft.isNotBlank()) {
+                SecretConfig.saveDraft(this, draft)
+            } else {
+                SecretConfig.clearDraft(this)
+            }
+            secretMode = false
+            secretText.setLength(0)
+            kv?.setSecretMode(false)
+        }
         commitComposing()
         super.onFinishInputView(finishingInput)
     }
@@ -195,6 +214,10 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
     // ---------------- composing & strip sync ----------------
 
     private fun refreshStrip() {
+        if (secretMode) {
+            updateSecretStrip()
+            return
+        }
         if (!allowSuggest) {
             kv?.setComposing("")
             kv?.setSuggestions(emptyList())
@@ -241,12 +264,19 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
     // ---------------- KeyboardView.Listener ----------------
 
     override fun onText(text: String) {
-        val ic = currentInputConnection ?: return
         if (secretMode) {
+            val ch = text.singleOrNull()
+            val isWordChar = ch != null &&
+                (ch in 'a'..'z' || ch in 'A'..'Z' ||
+                    ((ch == '^' || ch == '`' || ch == '\'') && secretText.isNotEmpty()))
+            if (!isWordChar) {
+                flushTrailingPhoneticInSecret()
+            }
             secretText.append(text)
-            kv?.setComposing("🔐 " + secretText.toString())
+            updateSecretStrip()
             return
         }
+        val ic = currentInputConnection ?: return
         val ch = text.singleOrNull()
         val phoneticBn = bangla && symbols == 0
         val englishWord = !bangla && symbols == 0 && allowSuggest
@@ -282,7 +312,7 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
             if (secretText.isNotEmpty()) {
                 secretText.deleteCharAt(secretText.length - 1)
             }
-            kv?.setComposing("🔐 " + secretText.toString())
+            updateSecretStrip()
             return
         }
         if (buf.isNotEmpty()) {
@@ -318,8 +348,9 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
 
     override fun onSpace() {
         if (secretMode) {
+            flushTrailingPhoneticInSecret()
             secretText.append(" ")
-            kv?.setComposing("🔐 " + secretText.toString())
+            updateSecretStrip()
             return
         }
         commitComposing()
@@ -356,6 +387,17 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
     }
 
     override fun onSwitchLang() {
+        if (secretMode) {
+            flushTrailingPhoneticInSecret()
+            userBangla = !userBangla
+            prefs.edit().putBoolean("bn", userBangla).apply()
+            bangla = userBangla
+            inPanel = false
+            symbols = 0
+            refreshLayout()
+            updateSecretStrip()
+            return
+        }
         commitComposing()
         userBangla = !userBangla
         prefs.edit().putBoolean("bn", userBangla).apply()
@@ -368,6 +410,14 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
     }
 
     override fun onSymbols(mode: Int) {
+        if (secretMode) {
+            flushTrailingPhoneticInSecret()
+            inPanel = false
+            symbols = mode
+            refreshLayout()
+            updateSecretStrip()
+            return
+        }
         commitComposing()
         inPanel = false
         symbols = mode
@@ -376,11 +426,24 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
     }
 
     override fun onComposingTap() {
+        if (secretMode) {
+            cycleSecretRecipient()
+            return
+        }
         commitComposing()
         updateAutoShift()
     }
 
     override fun onSuggestionTap(word: String) {
+        if (secretMode) {
+            val trailing = extractSecretTrailingWord()
+            if (trailing.isNotEmpty()) {
+                secretText.delete(secretText.length - trailing.length, secretText.length)
+            }
+            secretText.append(word).append(" ")
+            updateSecretStrip()
+            return
+        }
         val ic = currentInputConnection ?: return
         val typedLen = buf.length
         if (typedLen > 0) {
@@ -414,6 +477,14 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
     }
 
     override fun onSnippet(text: String) {
+        if (secretMode) {
+            flushTrailingPhoneticInSecret()
+            secretText.append(text)
+            inPanel = false
+            refreshLayout()
+            updateSecretStrip()
+            return
+        }
         commitComposing()
         currentInputConnection?.commitText(text, 1)
         refreshStrip()
@@ -431,36 +502,185 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
         }
     }
 
+    /** Secret mode-এ টাইপ করা Roman অক্ষর বাংলা মোডে phonetic করে। */
+    private fun secretPlain(): String {
+        val raw = secretText.toString()
+        if (!(bangla && symbols == 0)) return raw
+        return Regex("[A-Za-z^`]+").replace(raw) { Phonetic.convert(it.value) }
+    }
+
+    private fun extractSecretTrailingWord(): String {
+        val s = secretText.toString()
+        var i = s.length - 1
+        while (i >= 0) {
+            val c = s[i]
+            val ok = c in 'a'..'z' || c in 'A'..'Z' || c == '^' || c == '`' || c == '\''
+            if (!ok) break
+            i--
+        }
+        return s.substring(i + 1)
+    }
+
+    private fun flushTrailingPhoneticInSecret() {
+        if (!(bangla && symbols == 0)) return
+        val trailing = extractSecretTrailingWord()
+        if (trailing.isEmpty()) return
+        val converted = Phonetic.convert(trailing)
+        secretText.replace(secretText.length - trailing.length, secretText.length, converted)
+    }
+
+    private fun secretTarget(): Pair<String, String>? {
+        val contacts = SecretConfig.getContacts(this)
+        if (contacts.isEmpty()) return null
+        val active = SecretConfig.getActiveContact(this)
+        val pass = active?.let { contacts[it] }
+        return if (active != null && pass != null) active to pass
+        else contacts.entries.first().let { it.key to it.value }
+    }
+
+    private fun secretLabel(): String {
+        val name = secretTarget()?.first ?: "?"
+        return "🔐 → $name (লিখুন, শেষে 🔒 Send)"
+    }
+
+    private fun updateSecretStrip() {
+        val recipient = secretTarget()?.first
+        kv?.setSecretMode(true, recipient)
+        if (secretText.isEmpty()) {
+            kv?.setComposing(secretLabel())
+            kv?.setSuggestions(emptyList())
+            return
+        }
+        val plain = secretPlain()
+        val prefix = if (recipient != null) "🔐 $recipient: " else "🔐 "
+        kv?.setComposing(prefix + plain)
+
+        val trailing = if (allowSuggest && symbols == 0) extractSecretTrailingWord() else ""
+        if (trailing.isNotEmpty()) {
+            kv?.setSuggestions(suggestions.suggestionsFor(trailing, bangla))
+        } else {
+            kv?.setSuggestions(emptyList())
+        }
+    }
+
+    private fun cycleSecretRecipient(): Boolean {
+        val contacts = SecretConfig.getContacts(this)
+        if (contacts.size <= 1) return false
+        val names = contacts.keys.toList()
+        val cur = secretTarget()?.first
+        val next = names[(names.indexOf(cur) + 1).mod(names.size)]
+        SecretConfig.setActiveContact(this, next)
+        updateSecretStrip()
+        Toast.makeText(this, "🔐 এখন: $next-এর জন্য", Toast.LENGTH_SHORT).show()
+        return true
+    }
+
+    /** কপি করা glyph-লেখা (পাওয়া secret message) থাকলে পড়ে Toast-এ দেখায়। */
+    private fun tryDecodeClipboard() {
+        val contacts = SecretConfig.getContacts(this)
+        if (contacts.isEmpty()) return
+        try {
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            val clip = cm.primaryClip ?: return
+            if (clip.itemCount == 0) return
+            val t = clip.getItemAt(0).coerceToText(this)?.toString().orEmpty()
+            if (!GlyphAlphabet.looksLikeGlyphText(t)) return
+            val bytes = GlyphAlphabet.decodeAny(t) ?: return
+            val matched = SecretCipher.decryptWithMatchingContact(bytes, contacts)
+            if (matched != null) {
+                val style = GlyphAlphabet.detectStyle(t) ?: GlyphStyle.RUNIC
+                SecretConfig.saveSecretCacheEntry(this, matched.first, matched.second, t, style, isOutgoing = false)
+                Toast.makeText(this, "🔓 ${matched.first}: ${matched.second}", Toast.LENGTH_LONG).show()
+            } else {
+                Toast.makeText(this, "❌ এই secret message-এর passphrase আপনার কাছে নেই", Toast.LENGTH_LONG).show()
+            }
+        } catch (_: Exception) {
+        }
+    }
+
     override fun onSecretToggle() {
         commitComposing()
+        val contacts = SecretConfig.getContacts(this)
+
+        // Secret mode চালু + কিছু লেখা নেই + একাধিক contact => পরের contact-এ যাই
+        if (secretMode && secretText.isEmpty() && contacts.size > 1) {
+            cycleSecretRecipient()
+            return
+        }
+
         secretMode = !secretMode
         secretText.setLength(0)
-        kv?.setComposing(if (secretMode) "🔐 (খালি — লিখুন, শেষে Enter)" else "")
-        Toast.makeText(
-            this,
-            if (secretMode) "🔐 Secret mode চালু" else "Secret mode বন্ধ",
-            Toast.LENGTH_SHORT
-        ).show()
+        if (secretMode) {
+            if (contacts.isEmpty()) {
+                secretMode = false
+                kv?.setSecretMode(false)
+                refreshStrip()
+                Toast.makeText(
+                    this,
+                    "আগে 🔐 Secret Message screen-এ contact বানান বা বন্ধুর পাঠানো code import করুন",
+                    Toast.LENGTH_LONG
+                ).show()
+                return
+            }
+            val savedDraft = SecretConfig.getDraft(this)
+            if (savedDraft.isNotBlank()) {
+                secretText.append(savedDraft)
+            }
+            if (symbols != 0) {
+                symbols = 0
+                inPanel = false
+                refreshLayout()
+            }
+            updateSecretStrip()
+            Toast.makeText(
+                this,
+                if (savedDraft.isNotBlank()) "🔐 Secret mode চালু (খসড়া পুনরুদ্ধার হয়েছে)" else "🔐 Secret mode চালু",
+                Toast.LENGTH_SHORT
+            ).show()
+            tryDecodeClipboard()
+        } else {
+            SecretConfig.clearDraft(this)
+            kv?.setSecretMode(false)
+            refreshStrip()
+            Toast.makeText(this, "Secret mode বন্ধ", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun sendSecretMessage() {
-        val text = secretText.toString().trim()
+        val text = secretPlain().trim()
         secretMode = false
         secretText.setLength(0)
-        kv?.setComposing("")
+        SecretConfig.clearDraft(this)
+        kv?.setSecretMode(false)
+        refreshStrip()
         if (text.isBlank()) return
 
-        val contacts = SecretConfig.getContacts(this)
-        if (contacts.isEmpty()) {
+        val target = secretTarget()
+        if (target == null) {
             Toast.makeText(this, "আগে Secret Message screen-এ contact/passphrase সেভ করুন", Toast.LENGTH_LONG).show()
             return
         }
-        val passphrase = contacts.values.first()
+        val (name, passphrase) = target
         val style = SecretConfig.getStyle(this)
-        val bytes = SecretCipher.encrypt(text, passphrase)
-        val glyph = GlyphAlphabet.encode(bytes, style)
-        currentInputConnection?.commitText(glyph, 1)
-        Toast.makeText(this, "🔒 Secret message পাঠানো হলো", Toast.LENGTH_SHORT).show()
+        val glyph = try {
+            GlyphAlphabet.encode(SecretCipher.encrypt(text, passphrase), style)
+        } catch (_: Exception) {
+            Toast.makeText(this, "Encrypt করা যায়নি", Toast.LENGTH_SHORT).show()
+            return
+        }
+        // পাঠানোর আগেই AES-256-GCM ভল্ট ক্যাশে মেসেজটি সুরক্ষিতভাবে সংরক্ষণ করি
+        SecretConfig.saveSecretCacheEntry(this, name, text, glyph, style, isOutgoing = true)
+
+        // commitText ব্যর্থ হলে (field নেই) লেখা হারাতে না দিয়ে clipboard-এ রাখি
+        val ok = currentInputConnection?.commitText(glyph, 1) ?: false
+        if (!ok) {
+            ClipboardMemory.ignoreNext(glyph)
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            cm.setPrimaryClip(android.content.ClipData.newPlainText("secret", glyph))
+            Toast.makeText(this, "লেখার জায়গা পাইনি — secret লেখা Copy হয়েছে, Paste করুন", Toast.LENGTH_LONG).show()
+        } else {
+            Toast.makeText(this, "🔒 $name-এর জন্য encrypt হয়ে বসেছে", Toast.LENGTH_SHORT).show()
+        }
     }
 
     override fun onAssistant() {
@@ -501,22 +721,31 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
         }
         if (voice.listening) {
             voice.stop()
-        } else {
-            commitComposing()
-            AssistantListenerService.setPaused(true)
-            kv?.setSuggestions(emptyList())
-            kv?.setComposing("শুনছি…")
-            voice.start(bangla)
+            return
         }
+        if (secretMode) {
+            Toast.makeText(this, "Secret mode-এ voice বন্ধ — আগে Secret mode বন্ধ করুন", Toast.LENGTH_SHORT).show()
+            return
+        }
+        commitComposing()
+        AssistantListenerService.setPaused(true)
+        kv?.setSuggestions(emptyList())
+        kv?.setComposing("🎤 মাইক চালু হচ্ছে…")
+        voice.start(bangla)
+    }
+
+    override fun onVoiceReady() {
+        kv?.setComposing("🎤 বলুন…  (আবার 🎤 চাপলে বন্ধ)")
     }
 
     override fun onVoicePartial(text: String) {
         kv?.setSuggestions(emptyList())
-        kv?.setComposing("শুনছি: $text")
+        kv?.setComposing("🎤 $text")
     }
 
     override fun onVoiceResult(text: String) {
         currentInputConnection?.commitText("$text ", 1)
+        kv?.setComposing("🎤 বলুন…")
     }
 
     override fun onVoiceError(message: String) {
@@ -525,10 +754,28 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
 
     override fun onVoiceEnd() {
         AssistantListenerService.setPaused(false)
+        kv?.setComposing("")
         refreshStrip()
     }
 
     override fun onTranslate() {
+        if (secretMode) {
+            val text = secretPlain().trim()
+            if (text.isBlank()) {
+                Toast.makeText(this, "অনুবাদ করতে আগে শব্দ লিখুন", Toast.LENGTH_SHORT).show()
+                return
+            }
+            val from = if (bangla) "bn" else "en"
+            val to = if (bangla) "en" else "bn"
+            Translator.translate(text, from, to) { result ->
+                if (result != null && secretMode) {
+                    secretText.setLength(0)
+                    secretText.append(result)
+                    updateSecretStrip()
+                }
+            }
+            return
+        }
         val ic = currentInputConnection ?: return
         val text = if (buf.isNotEmpty()) {
             if (bangla) Phonetic.convert(buf.toString()) else buf.toString()
