@@ -121,6 +121,7 @@ class NotepadClipboardPanelView(context: Context) : FrameLayout(context) {
         fun onRemovePinned(index: Int, text: String)
         fun onRemoveRecent(text: String)
         fun onClearRecent()
+        fun onDecodeCipher(text: String) {}
     }
 
     var listener: Listener? = null
@@ -258,8 +259,11 @@ class NotepadClipboardPanelView(context: Context) : FrameLayout(context) {
 
     fun isManageMode(): Boolean = manageMode
 
+    private val needsDarkSurface: Boolean
+        get() = theme.usesImage || (theme.bgAsset != null && theme.dark)
+
     private fun panelBgColor(): Int {
-        return if (theme.usesImage) 0xEB15171E.toInt() else theme.bg
+        return if (needsDarkSurface) 0xEB15171E.toInt() else theme.bg
     }
 
     private fun cardBgColor(): Int {
@@ -451,18 +455,42 @@ class NotepadClipboardPanelView(context: Context) : FrameLayout(context) {
 
         val isGlyph = GlyphAlphabet.looksLikeGlyphText(rawText)
         if (isPinned || isGlyph) {
+            val tagRow = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, 0, 0, dp(4f))
+                layoutParams = LinearLayout.LayoutParams(
+                    LayoutParams.MATCH_PARENT,
+                    LayoutParams.WRAP_CONTENT
+                )
+            }
             val tagView = TextView(context).apply {
                 text = when {
-                    isPinned && isGlyph -> "📌 🔐 Secret Cipher"
+                    isPinned && isGlyph -> "📌 🔐 Cipher"
                     isPinned -> "📌 Pinned"
                     else -> "🔐 Secret Cipher"
                 }
                 setTextColor(theme.accent)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
                 typeface = Typeface.DEFAULT_BOLD
-                setPadding(0, 0, 0, dp(3f))
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             }
-            card.addView(tagView)
+            tagRow.addView(tagView)
+            if (isGlyph) {
+                tagRow.addView(miniActionBtn(
+                    label = "🔓 Decode",
+                    accent = true,
+                    onClick = { listener?.onDecodeCipher(rawText) }
+                ).apply {
+                    minHeight = dp(26f)
+                    setPadding(dp(7f), dp(2f), dp(7f), dp(2f))
+                    tag = if (isPinned) "panel_decode_pinned_$index" else "panel_decode_recent_$index"
+                    contentDescription = "Decode secret cipher"
+                })
+            }
+            card.addView(tagRow)
         }
 
         val body = TextView(context).apply {

@@ -323,14 +323,17 @@ class EmojiPanelView(
 
     fun isTonePopupVisible(): Boolean = toneScrim.visibility == View.VISIBLE
 
+    private val needsDarkSurface: Boolean
+        get() = theme.usesImage || (theme.bgAsset != null && theme.dark)
+
     private fun panelBgColor(): Int =
-        if (theme.usesImage) 0xEB15171E.toInt() else theme.bg
+        if (needsDarkSurface) 0xEB15171E.toInt() else theme.bg
 
     private fun cellFillColor(): Int =
-        if (theme.usesImage) 0x00000000 else 0x00000000
+        if (needsDarkSurface) 0x00000000 else 0x00000000
 
     private fun cardSurfaceColor(): Int =
-        if (theme.usesImage) 0xF0242733.toInt() else theme.popup
+        if (needsDarkSurface) 0xF0242733.toInt() else theme.popup
 
     private fun strokeColor(): Int =
         if (theme.border != 0) theme.border else theme.pillStroke
@@ -349,7 +352,7 @@ class EmojiPanelView(
 
     private fun applyThemeColors() {
         setBackgroundColor(panelBgColor())
-        bottomBar.setBackgroundColor(if (theme.usesImage) 0xD9101218.toInt() else mixColor(theme.bg, theme.fn, 0.45f))
+        bottomBar.setBackgroundColor(if (needsDarkSurface) 0xD9101218.toInt() else mixColor(theme.bg, theme.fn, 0.45f))
         categoryTitleView.setTextColor(theme.text)
         topDivider.setBackgroundColor(withAlpha(theme.shadow, 85))
         bottomDivider.setBackgroundColor(withAlpha(theme.shadow, 100))

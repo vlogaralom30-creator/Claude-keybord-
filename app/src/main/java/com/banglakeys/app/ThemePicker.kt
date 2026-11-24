@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -40,6 +41,12 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.geometry.RoundRect
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -50,7 +57,7 @@ import kotlin.math.roundToInt
 
 /**
  * Settings screen-এর "Keyboard Theme" card।
- * Theme বদলালে [onChanged] ডাকা হয় — তখন live keyboard preview সঙ্গে সঙ্গে নতুন theme নেয়।
+ * Theme বদলালে [onChanged] ডাকা হয় — তখন নিচের live keyboard preview সঙ্গে সঙ্গে নতুন theme নেয়।
  * আসল keyboard পরের বার খুললেই নতুন theme নেয়।
  */
 @Composable
@@ -73,8 +80,7 @@ fun ThemePickerCard(onChanged: () -> Unit) {
             }
         }
     }
-
-    fun launchPhotoPicker() {
+    val launchPhotoPicker = {
         picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
     }
 
@@ -93,7 +99,7 @@ fun ThemePickerCard(onChanged: () -> Unit) {
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
-                text = "একটি theme বেছে নিন — উপরে keyboard preview-তে সঙ্গে সঙ্গে দেখা যাবে।",
+                text = "একটি theme বেছে নিন — নিচের keyboard preview-তে সঙ্গে সঙ্গে দেখা যাবে।",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -123,7 +129,7 @@ fun ThemePickerCard(onChanged: () -> Unit) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilledTonalButton(
                         onClick = { launchPhotoPicker() },
-                        modifier = Modifier.minimumInteractiveComponentSize().testTag("pick_theme_photo_button"),
+                        modifier = Modifier.minimumInteractiveComponentSize(),
                     ) { Text("ছবি বদলান") }
                     OutlinedButton(
                         onClick = {
@@ -133,7 +139,7 @@ fun ThemePickerCard(onChanged: () -> Unit) {
                             selected = Themes.AUTO_ID
                             onChanged()
                         },
-                        modifier = Modifier.minimumInteractiveComponentSize().testTag("clear_theme_photo_button"),
+                        modifier = Modifier.minimumInteractiveComponentSize(),
                     ) { Text("মুছুন") }
                 }
                 Text(
@@ -180,8 +186,7 @@ private fun ThemeChip(theme: KeyboardTheme, selected: Boolean, onClick: () -> Un
             .clip(RoundedCornerShape(14.dp))
             .border(if (selected) 2.5.dp else 1.dp, borderColor, RoundedCornerShape(14.dp))
             .clickable(onClick = onClick)
-            .padding(6.dp)
-            .testTag("theme_chip_${theme.id}"),
+            .padding(6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         ThemePreview(theme)
@@ -199,13 +204,18 @@ private fun ThemeChip(theme: KeyboardTheme, selected: Boolean, onClick: () -> Un
 /** Theme-এর ছোট mini keyboard — ৩ সারি key, শেষ key-টা accent */
 @Composable
 private fun ThemePreview(t: KeyboardTheme) {
+    val bgImg = remember(t.id) { t.bgAsset?.let { ThemeStore.assetBitmap(it)?.asImageBitmap() } }
+    val tileImgs = remember(t.id) { t.keyTiles.mapNotNull { ThemeStore.assetBitmap(it)?.asImageBitmap() } }
     Canvas(
         modifier = Modifier
             .fillMaxWidth()
             .height(70.dp)
             .clip(RoundedCornerShape(10.dp)),
     ) {
-        if (t.usesImage) {
+        // background
+        if (bgImg != null) {
+            drawImage(bgImg, dstSize = IntSize(size.width.toInt(), size.height.toInt()))
+        } else if (t.usesImage) {
             drawRect(Brush.linearGradient(listOf(Color(0xFF5B86E5), Color(0xFF36D1DC), Color(0xFFF7797D))))
         } else if (t.bgTop != 0 && t.bgBottom != 0) {
             drawRect(Brush.verticalGradient(listOf(Color(t.bgTop), Color(t.bgBottom))))
@@ -241,6 +251,17 @@ private fun ThemePreview(t: KeyboardTheme) {
                 }
                 drawRoundRect(Color(fillInt), topLeft, sz, cr)
 
+                if (t.style == KeyStyle.TILE && !isAccent && !isFn && tileImgs.isNotEmpty()) {
+                    val path = Path().apply { addRoundRect(RoundRect(x, y, x + kw, y + rowH, cr)) }
+                    clipPath(path) {
+                        drawImage(
+                            tileImgs[(r * 5 + i) % tileImgs.size],
+                            dstOffset = IntOffset(x.toInt(), y.toInt()),
+                            dstSize = IntSize(kw.toInt().coerceAtLeast(1), rowH.toInt().coerceAtLeast(1)),
+                        )
+                    }
+                    drawRect(Color(t.tileScrim), topLeft, sz)
+                }
                 if (t.style == KeyStyle.BLOCK && !isAccent && !isFn) {
                     drawRect(Color(t.keyTop), topLeft, Size(kw, rowH * 0.3f))
                 }

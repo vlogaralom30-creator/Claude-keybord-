@@ -5,6 +5,7 @@ import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.util.Base64
 import java.io.File
 import kotlin.math.max
 
@@ -27,6 +28,8 @@ enum class KeyStyle {
     GLASS,
     /** Key-র ভেতরে উপর→নিচ gradient */
     GRADIENT,
+    /** প্রতিটা key-তে ছোট ছবির tile (keyTiles) */
+    TILE,
 }
 
 internal fun mixColor(a: Int, b: Int, t: Float): Int {
@@ -72,6 +75,11 @@ class KeyboardTheme(
     val shadowDp: Float = 1.3f,
     val monoFont: Boolean = false,
     val usesImage: Boolean = false,
+    // built-in ছবি (ThemeAssets-এর নাম) — background আর key tile
+    val bgAsset: String? = null,
+    val bgDimPct: Int = 0,
+    val keyTiles: List<String> = emptyList(),
+    val tileScrim: Int = 0,
     // suggestion strip (না দিলে auto হিসাব হবে)
     val pill: Int = key,
     val pillStroke: Int = mixColor(key, text, 0.18f),
@@ -259,6 +267,41 @@ object Themes {
             badgeText = c(0xFFC8E6C9),
         ),
 
+        // ---------- Teal Noir (কালো key, teal wave background) ----------
+        KeyboardTheme(
+            id = "teal_noir", name = "Teal Noir", emoji = "🌊", style = KeyStyle.FLAT, dark = true,
+            bg = c(0xFFE8ECEF), bgAsset = "teal_bg",
+            key = c(0xFF000000), fn = c(0xFF37474F), shadow = c(0x00000000),
+            text = c(0xFFFFFFFF), hint = c(0xFFB0BEC5), press = c(0xFF455A64), accent = c(0xFF1E73E8),
+            popup = c(0xFF111111), border = c(0xFF2A2A2A), borderDp = 0.8f, radiusDp = 9f, shadowDp = 0f,
+            pill = c(0xFF000000), pillStroke = c(0xFF37474F), badgeBg = c(0xFF0D2B45),
+            badgeStroke = c(0xFF1E73E8), badgeText = c(0xFF90CAF9), actionBg = c(0xFF37474F),
+        ),
+
+        // ---------- Manga Ink (সাদা-কালো manga tile key) ----------
+        KeyboardTheme(
+            id = "manga_ink", name = "Manga Ink", emoji = "✒️", style = KeyStyle.TILE, dark = false,
+            bg = c(0xFFFAFAFA), bgAsset = "manga_bg",
+            keyTiles = listOf("manga_t1", "manga_t2", "manga_t3", "manga_t4", "manga_t5", "manga_t6", "manga_t7", "manga_t8"),
+            tileScrim = c(0x73FFFFFF),
+            key = c(0xFFFFFFFF), fn = c(0xFFE0E0E0), shadow = c(0xFF111111),
+            text = c(0xFF111111), hint = c(0xFF555555), press = c(0xFFBDBDBD), accent = c(0xFFD32F2F),
+            popup = c(0xFFFFFFFF), border = c(0xFF111111), borderDp = 1.4f, radiusDp = 8f, shadowDp = 1.8f,
+            pill = c(0xFFFFFFFF), pillStroke = c(0xFF111111), badgeBg = c(0xFFFFEBEE),
+            badgeStroke = c(0xFFD32F2F), badgeText = c(0xFFB71C1C), actionBg = c(0xFFE0E0E0),
+        ),
+
+        // ---------- Violet Eye (কালি-তুলির background, বেগুনি চোখ) ----------
+        KeyboardTheme(
+            id = "violet_ink", name = "Violet Eye", emoji = "👁️", style = KeyStyle.GLASS, dark = false,
+            bg = c(0xFFEDEDED), bgAsset = "ink_eye_bg",
+            key = c(0xCCFFFFFF), fn = c(0xB3D8D4E8), shadow = c(0x00000000),
+            text = c(0xFF15151A), hint = c(0xFF5B5470), press = c(0xFFD1C4E9), accent = c(0xFF5E35B1),
+            popup = c(0xFFFFFFFF), border = c(0x55000000), borderDp = 0.8f, radiusDp = 10f, shadowDp = 0f,
+            pill = c(0xCCFFFFFF), pillStroke = c(0x55000000), badgeBg = c(0xFFEDE7F6),
+            badgeStroke = c(0xFF5E35B1), badgeText = c(0xFF4527A0), actionBg = c(0xB3D8D4E8),
+        ),
+
         // ---------- নিজের ছবি ----------
         KeyboardTheme(
             id = CUSTOM_ID, name = "My Photo", emoji = "🖼️", style = KeyStyle.GLASS, dark = true,
@@ -322,6 +365,19 @@ object ThemeStore {
         return t
     }
 
+    private val assetCache = HashMap<String, Bitmap>()
+
+    /** ThemeAssets-এর base64 ছবি decode করে (একবারই, তারপর cache থেকে)। */
+    fun assetBitmap(name: String): Bitmap? = synchronized(assetCache) {
+        assetCache[name] ?: try {
+            val b64 = ThemeAssets.get(name) ?: return null
+            val bytes = Base64.decode(b64, Base64.DEFAULT)
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.also { assetCache[name] = it }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     private fun customFile(ctx: Context) = File(ctx.filesDir, CUSTOM_FILE)
 
     fun hasCustomImage(ctx: Context): Boolean = customFile(ctx).exists()
@@ -352,7 +408,7 @@ object ThemeStore {
             customFile(ctx).outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 88, it) }
             bmp.recycle()
             true
-        } catch (_: Exception) {
+        } catch (e: Exception) {
             false
         }
     }
@@ -366,7 +422,7 @@ object ThemeStore {
         if (!f.exists()) return null
         return try {
             BitmapFactory.decodeFile(f.absolutePath)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
             null
         }
     }

@@ -1,14 +1,20 @@
 package com.banglakeys.app
 
+import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -68,6 +74,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -126,10 +133,17 @@ fun SecretComposeScreen(onNavigateBack: () -> Unit) {
   var contacts by remember { mutableStateOf(SecretConfig.getContacts(context)) }
   var activeContact by remember { mutableStateOf(SecretConfig.getActiveContact(context)) }
   var selectedStyle by remember { mutableStateOf(SecretConfig.getStyle(context)) }
+  var clipboardServiceEnabled by remember { mutableStateOf(SecretConfig.clipboardMonitorEnabled(context)) }
+  val clipboardServiceRunning by SecretClipboardMonitorService.running.collectAsState()
   var autoDetect by remember { mutableStateOf(SecretConfig.autoDetectEnabled(context)) }
   var accessibilityOn by remember { mutableStateOf(AssistantSetup.isAccessibilityOn(context)) }
   var aesSecured by remember { mutableStateOf(SecretConfig.isStorageAesSecured(context)) }
   var cacheEntries by remember { mutableStateOf(SecretConfig.getSecretCacheEntries(context)) }
+
+  val notifPermissionLauncher = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.RequestPermission(),
+    onResult = {},
+  )
 
   var contactName by rememberSaveable { mutableStateOf("") }
   var contactPass by rememberSaveable { mutableStateOf("") }
@@ -151,6 +165,7 @@ fun SecretComposeScreen(onNavigateBack: () -> Unit) {
       if (storedActive != null && contacts.containsKey(storedActive)) storedActive
       else contacts.keys.firstOrNull()
     selectedStyle = SecretConfig.getStyle(context)
+    clipboardServiceEnabled = SecretConfig.clipboardMonitorEnabled(context)
     autoDetect = SecretConfig.autoDetectEnabled(context)
     accessibilityOn = AssistantSetup.isAccessibilityOn(context)
     aesSecured = SecretConfig.isStorageAesSecured(context)
@@ -277,6 +292,62 @@ fun SecretComposeScreen(onNavigateBack: () -> Unit) {
                 )
               }
             }
+
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+              Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                Text(
+                  text = stringResource(R.string.secret_clipboard_service_title),
+                  style = MaterialTheme.typography.bodyLarge,
+                  fontWeight = FontWeight.Medium,
+                )
+                Text(
+                  text = stringResource(R.string.secret_clipboard_service_desc),
+                  style = MaterialTheme.typography.bodySmall,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                  text = if (clipboardServiceRunning) "● ব্যাকগ্রাউন্ড সার্ভিস সক্রিয়"
+                  else if (clipboardServiceEnabled) "○ সার্ভিস প্রস্তুত (কিবোর্ড বা নিচে থেকে চালু)"
+                  else "○ সার্ভিস বন্ধ",
+                  style = MaterialTheme.typography.labelSmall,
+                  color = if (clipboardServiceRunning) MaterialTheme.colorScheme.primary
+                  else MaterialTheme.colorScheme.onSurfaceVariant,
+                  modifier = Modifier.testTag("secret_clipboard_service_status"),
+                )
+              }
+              Switch(
+                checked = clipboardServiceEnabled,
+                onCheckedChange = { checked ->
+                  clipboardServiceEnabled = checked
+                  SecretConfig.setClipboardMonitorEnabled(context, checked)
+                  if (checked) {
+                    if (Build.VERSION.SDK_INT >= 33 &&
+                      ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+                      PackageManager.PERMISSION_GRANTED
+                    ) {
+                      notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    }
+                    SecretClipboardMonitorService.start(context)
+                    scope.launch {
+                      snackbarHostState.showSnackbar("Clipboard Monitor Service চালু হয়েছে")
+                    }
+                  } else {
+                    SecretClipboardMonitorService.stop(context)
+                    scope.launch {
+                      snackbarHostState.showSnackbar("Clipboard Monitor Service বন্ধ করা হয়েছে")
+                    }
+                  }
+                },
+                modifier = Modifier.minimumInteractiveComponentSize().testTag("secret_clipboard_service_switch"),
+              )
+            }
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
 
             Row(
               modifier = Modifier.fillMaxWidth(),

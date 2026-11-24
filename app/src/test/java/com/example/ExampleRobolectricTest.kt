@@ -512,6 +512,7 @@ class ExampleRobolectricTest {
     var translateTapped = 0
     var voiceTapped = 0
     var assistantTapped = 0
+    var secretTapped = 0
 
     kv.listener = object : com.banglakeys.app.KeyboardView.Listener {
       override fun onText(text: String) {}
@@ -530,6 +531,7 @@ class ExampleRobolectricTest {
       override fun onVoice() { voiceTapped++ }
       override fun onAssistant() { assistantTapped++ }
       override fun onEmojiToggle() { emojiTapped++ }
+      override fun onSecretToggle() { secretTapped++ }
     }
 
     // 1) Typing state: Composing badge + 3 suggestion pills
@@ -572,7 +574,7 @@ class ExampleRobolectricTest {
 
     assertTrue(kv.stripComposingRect().isEmpty)
     val actions = kv.stripQuickActionRects()
-    assertEquals(5, actions.size)
+    assertEquals(6, actions.size)
     assertTrue(kv.stripSuggestionRects().isNotEmpty())
 
     tap(actions[com.banglakeys.app.KeyboardView.QuickAction.EMOJI]!!.centerX(),
@@ -585,12 +587,15 @@ class ExampleRobolectricTest {
       actions[com.banglakeys.app.KeyboardView.QuickAction.VOICE]!!.centerY())
     tap(actions[com.banglakeys.app.KeyboardView.QuickAction.ASSISTANT]!!.centerX(),
       actions[com.banglakeys.app.KeyboardView.QuickAction.ASSISTANT]!!.centerY())
+    tap(actions[com.banglakeys.app.KeyboardView.QuickAction.SECRET]!!.centerX(),
+      actions[com.banglakeys.app.KeyboardView.QuickAction.SECRET]!!.centerY())
 
     assertEquals(1, emojiTapped)
     assertEquals(1, notepadTapped)
     assertEquals(1, translateTapped)
     assertEquals(1, voiceTapped)
     assertEquals(1, assistantTapped)
+    assertEquals(1, secretTapped)
   }
 
   @Test

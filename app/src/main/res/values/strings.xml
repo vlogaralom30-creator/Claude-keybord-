@@ -62,4 +62,10 @@
     <string name="btn_cancel">বাতিল</string>
     <string name="command_guide_title">কমান্ড গাইড ও 99% লিস্ট</string>
     <string name="btn_open_command_guide">ভয়েস কমান্ড গাইড ও টেস্টার</string>
+    <string name="secret_monitor_channel_name">Secret Clipboard Monitor</string>
+    <string name="secret_monitor_notif_title">Secret Clipboard Monitor চালু</string>
+    <string name="secret_monitor_notif_desc">কপি করা secret code স্বয়ংক্রিয়ভাবে ডিকোড হবে</string>
+    <string name="secret_monitor_stop_action">বন্ধ করুন</string>
+    <string name="secret_clipboard_service_title">Background Clipboard Monitor</string>
+    <string name="secret_clipboard_service_desc">ব্যাকগ্রাউন্ড সার্ভিসে কপি করা secret code শনাক্ত করে কিবোর্ডের উপরে বার দেখাবে</string>
 </resources>

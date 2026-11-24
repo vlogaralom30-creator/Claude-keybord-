@@ -1,6 +1,10 @@
 package com.example
 
 import android.content.Context
+import android.os.SystemClock
+import android.view.MotionEvent
+import android.view.View
+import android.widget.TextView
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -13,9 +17,12 @@ import com.banglakeys.app.KeyType
 import com.banglakeys.app.KeyboardView
 import com.banglakeys.app.Layouts
 import com.banglakeys.app.LocalAesVault
+import com.banglakeys.app.NotepadClipboardPanelView
 import com.banglakeys.app.SecretCipher
+import com.banglakeys.app.SecretClipboardDetector
 import com.banglakeys.app.SecretComposeActivity
 import com.banglakeys.app.SecretConfig
+import com.banglakeys.app.SecretDecodeBannerView
 import com.banglakeys.app.SecretInvite
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -29,6 +36,9 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowLooper
+import java.util.concurrent.Executor
+import java.util.concurrent.TimeUnit
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
@@ -186,7 +196,9 @@ class SecretFlowTest {
   @Test
   fun `secret compose activity launches with AES vault card and style chips`() {
     secretActivityRule.onNodeWithTag("aes_vault_status_card").assertIsDisplayed()
-    secretActivityRule.onNodeWithTag("secret_autodetect_switch").assertIsDisplayed()
+    secretActivityRule.onNodeWithTag("secret_clipboard_service_switch").assertIsDisplayed()
+    secretActivityRule.onNodeWithTag("secret_clipboard_service_status").assertIsDisplayed()
+    secretActivityRule.onNodeWithTag("secret_autodetect_switch").performScrollTo().assertIsDisplayed()
     secretActivityRule.onNodeWithTag("style_chip_DOTS").performScrollTo().performClick()
     secretActivityRule.waitForIdle()
     assertEquals(GlyphStyle.DOTS, SecretConfig.getStyle(context))

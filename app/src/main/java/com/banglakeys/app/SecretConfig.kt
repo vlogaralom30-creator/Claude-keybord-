@@ -270,7 +270,7 @@ object SecretConfig {
         prefs(ctx).edit().putString(KEY_STYLE, style.name).apply()
     }
 
-    // -------------------------------------------------------- auto-detect
+    // -------------------------------------------------------- auto-detect & clipboard monitor service
 
     /** কিবোর্ড-এর বাইরে screen scan করে auto-decode bubble দেখানো চালু/বন্ধ (ডিফল্ট: বন্ধ)। */
     fun autoDetectEnabled(ctx: Context): Boolean = prefs(ctx).getBoolean(KEY_AUTODETECT, false)
@@ -278,4 +278,13 @@ object SecretConfig {
     fun setAutoDetect(ctx: Context, enabled: Boolean) {
         prefs(ctx).edit().putBoolean(KEY_AUTODETECT, enabled).apply()
     }
+
+    /** ব্যাকগ্রাউন্ড Clipboard Monitor Service চালু/বন্ধ (ডিফল্ট: চালু)। */
+    fun clipboardMonitorEnabled(ctx: Context): Boolean = prefs(ctx).getBoolean(KEY_CLIPBOARD_SERVICE, true)
+
+    fun setClipboardMonitorEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean(KEY_CLIPBOARD_SERVICE, enabled).apply()
+    }
+
+    private const val KEY_CLIPBOARD_SERVICE = "clipboard_monitor_service"
 }
