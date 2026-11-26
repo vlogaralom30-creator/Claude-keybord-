@@ -4,12 +4,15 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -19,15 +22,30 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Insights
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -38,35 +56,62 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.drawscope.clipPath
-import androidx.compose.ui.geometry.RoundRect
-import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import java.util.Calendar
 import kotlin.math.roundToInt
 
 /**
  * Settings screen-এর "Keyboard Theme" card।
  * Theme বদলালে [onChanged] ডাকা হয় — তখন নিচের live keyboard preview সঙ্গে সঙ্গে নতুন theme নেয়।
- * আসল keyboard পরের বার খুললেই নতুন theme নেয়।
+ * Automated theme switcher সময় অথবা ব্যবহার অনুযায়ী যোগ করা থিমগুলোতে ঘোরে।
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun ThemePickerCard(onChanged: () -> Unit) {
+fun ThemePickerCard(refreshKey: Int = 0, onChanged: () -> Unit) {
     val ctx = LocalContext.current
     var selected by remember { mutableStateOf(ThemeStore.selectedId(ctx)) }
     var hasImage by remember { mutableStateOf(ThemeStore.hasCustomImage(ctx)) }
     var keyAlpha by remember { mutableIntStateOf(ThemeStore.imageAlpha(ctx)) }
     var dim by remember { mutableIntStateOf(ThemeStore.imageDim(ctx)) }
+
+    var autoMode by remember { mutableStateOf(ThemeAutoSwitcher.getMode(ctx)) }
+    var cadence by remember { mutableStateOf(ThemeAutoSwitcher.getCadence(ctx)) }
+    var poolIds by remember { mutableStateOf(ThemeAutoSwitcher.getPoolIds(ctx)) }
+    var usageProgress by remember { mutableIntStateOf(ThemeAutoSwitcher.usageProgress(ctx)) }
+    var statusText by remember { mutableStateOf(ThemeAutoSwitcher.statusSummary(ctx)) }
+    var showPoolPicker by remember { mutableStateOf(false) }
+
+    LaunchedEffect(refreshKey) {
+        selected = ThemeStore.selectedId(ctx)
+        hasImage = ThemeStore.hasCustomImage(ctx)
+        autoMode = ThemeAutoSwitcher.getMode(ctx)
+        cadence = ThemeAutoSwitcher.getCadence(ctx)
+        poolIds = ThemeAutoSwitcher.getPoolIds(ctx)
+        usageProgress = ThemeAutoSwitcher.usageProgress(ctx)
+        statusText = ThemeAutoSwitcher.statusSummary(ctx)
+    }
+
+    val refreshAutoStatus = {
+        autoMode = ThemeAutoSwitcher.getMode(ctx)
+        cadence = ThemeAutoSwitcher.getCadence(ctx)
+        poolIds = ThemeAutoSwitcher.getPoolIds(ctx)
+        usageProgress = ThemeAutoSwitcher.usageProgress(ctx)
+        statusText = ThemeAutoSwitcher.statusSummary(ctx)
+    }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) {
@@ -74,6 +119,10 @@ fun ThemePickerCard(onChanged: () -> Unit) {
                 hasImage = true
                 ThemeStore.setSelectedId(ctx, Themes.CUSTOM_ID)
                 selected = Themes.CUSTOM_ID
+                if (autoMode != ThemeAutoSwitcher.Mode.OFF) {
+                    ThemeAutoSwitcher.setMode(ctx, ThemeAutoSwitcher.Mode.OFF)
+                }
+                refreshAutoStatus()
                 onChanged()
             } else {
                 Toast.makeText(ctx, "ছবিটি লোড করা যায়নি", Toast.LENGTH_SHORT).show()
@@ -84,6 +133,10 @@ fun ThemePickerCard(onChanged: () -> Unit) {
         picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
     }
 
+    val resolvedNow = remember(refreshKey, selected, autoMode, statusText) { ThemeStore.resolve(ctx) }
+    val eligibleThemes = remember(hasImage) { ThemeAutoSwitcher.eligibleThemes(ctx) }
+    val mostUsed = remember(refreshKey, statusText) { ThemeAutoSwitcher.mostUsedTheme(ctx) }
+
     ElevatedCard(
         modifier = Modifier.fillMaxWidth().testTag("theme_picker_card"),
         colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
@@ -93,11 +146,32 @@ fun ThemePickerCard(onChanged: () -> Unit) {
             modifier = Modifier.padding(18.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text(
-                text = "🎨 Keyboard Theme",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "🎨 Keyboard Theme",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                if (autoMode != ThemeAutoSwitcher.Mode.OFF) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.testTag("auto_theme_active_badge"),
+                    ) {
+                        Text(
+                            text = "${resolvedNow.emoji} ${resolvedNow.name}",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                        )
+                    }
+                }
+            }
             Text(
                 text = "একটি theme বেছে নিন — নিচের keyboard preview-তে সঙ্গে সঙ্গে দেখা যাবে।",
                 style = MaterialTheme.typography.bodySmall,
@@ -109,15 +183,29 @@ fun ThemePickerCard(onChanged: () -> Unit) {
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Themes.all.forEach { t ->
+                    val isSelected = if (autoMode != ThemeAutoSwitcher.Mode.OFF) {
+                        resolvedNow.id == t.id
+                    } else {
+                        selected == t.id
+                    }
                     ThemeChip(
                         theme = t,
-                        selected = selected == t.id,
+                        selected = isSelected,
                         onClick = {
                             if (t.usesImage && !hasImage) {
                                 launchPhotoPicker()
                             } else {
+                                if (autoMode != ThemeAutoSwitcher.Mode.OFF) {
+                                    ThemeAutoSwitcher.setMode(ctx, ThemeAutoSwitcher.Mode.OFF)
+                                    Toast.makeText(
+                                        ctx,
+                                        "অটো থিম পরিবর্তন বন্ধ — ম্যানুয়াল থিম চালু",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
                                 ThemeStore.setSelectedId(ctx, t.id)
                                 selected = t.id
+                                refreshAutoStatus()
                                 onChanged()
                             }
                         },
@@ -125,7 +213,7 @@ fun ThemePickerCard(onChanged: () -> Unit) {
                 }
             }
 
-            if (selected == Themes.CUSTOM_ID) {
+            if (selected == Themes.CUSTOM_ID && autoMode == ThemeAutoSwitcher.Mode.OFF) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilledTonalButton(
                         onClick = { launchPhotoPicker() },
@@ -137,6 +225,7 @@ fun ThemePickerCard(onChanged: () -> Unit) {
                             hasImage = false
                             ThemeStore.setSelectedId(ctx, Themes.AUTO_ID)
                             selected = Themes.AUTO_ID
+                            refreshAutoStatus()
                             onChanged()
                         },
                         modifier = Modifier.minimumInteractiveComponentSize(),
@@ -172,6 +261,273 @@ fun ThemePickerCard(onChanged: () -> Unit) {
                     valueRange = 0f..70f,
                     modifier = Modifier.fillMaxWidth().testTag("theme_dim_slider"),
                 )
+            }
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Row(
+                    modifier = Modifier.weight(1f).padding(end = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.AutoAwesome,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Column {
+                        Text(
+                            text = "অটো থিম সুইচার (Auto Rotate)",
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            text = statusText,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.testTag("auto_theme_status"),
+                        )
+                    }
+                }
+                Switch(
+                    checked = autoMode != ThemeAutoSwitcher.Mode.OFF,
+                    onCheckedChange = { enabled ->
+                        val nextMode = if (enabled) ThemeAutoSwitcher.Mode.TIME_OF_DAY else ThemeAutoSwitcher.Mode.OFF
+                        ThemeAutoSwitcher.setMode(ctx, nextMode)
+                        refreshAutoStatus()
+                        onChanged()
+                    },
+                    modifier = Modifier.minimumInteractiveComponentSize().testTag("auto_theme_toggle"),
+                )
+            }
+
+            AnimatedVisibility(visible = autoMode != ThemeAutoSwitcher.Mode.OFF) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        FilterChip(
+                            selected = autoMode == ThemeAutoSwitcher.Mode.TIME_OF_DAY,
+                            onClick = {
+                                ThemeAutoSwitcher.setMode(ctx, ThemeAutoSwitcher.Mode.TIME_OF_DAY)
+                                refreshAutoStatus()
+                                onChanged()
+                            },
+                            label = { Text("সময় অনুযায়ী (Time)") },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Filled.Schedule,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            },
+                            modifier = Modifier.minimumInteractiveComponentSize().testTag("auto_mode_time"),
+                        )
+                        FilterChip(
+                            selected = autoMode == ThemeAutoSwitcher.Mode.USAGE_FREQUENCY,
+                            onClick = {
+                                ThemeAutoSwitcher.setMode(ctx, ThemeAutoSwitcher.Mode.USAGE_FREQUENCY)
+                                refreshAutoStatus()
+                                onChanged()
+                            },
+                            label = { Text("ব্যবহার অনুযায়ী (Usage)") },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Filled.Insights,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            },
+                            modifier = Modifier.minimumInteractiveComponentSize().testTag("auto_mode_usage"),
+                        )
+                    }
+
+                    if (autoMode == ThemeAutoSwitcher.Mode.TIME_OF_DAY) {
+                        val activeSlot = remember(statusText) {
+                            ThemeAutoSwitcher.TimeSlot.forHour(Calendar.getInstance().get(Calendar.HOUR_OF_DAY))
+                        }
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceContainer,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                Text(
+                                    text = "দিনের সময়ভেদে থিম পরিবর্তন (সকাল ও দুপুরে উজ্জ্বল, সন্ধ্যা ও রাতে ডার্ক):",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                FlowRow(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                                ) {
+                                    ThemeAutoSwitcher.TimeSlot.entries.forEach { slot ->
+                                        val current = slot == activeSlot
+                                        Surface(
+                                            color = if (current) MaterialTheme.colorScheme.primaryContainer
+                                            else MaterialTheme.colorScheme.surfaceContainerHigh,
+                                            shape = RoundedCornerShape(8.dp),
+                                        ) {
+                                            Text(
+                                                text = "${slot.labelBn.substringBefore(" ")} (${slot.rangeLabel})",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = if (current) FontWeight.Bold else FontWeight.Normal,
+                                                color = if (current) MaterialTheme.colorScheme.onPrimaryContainer
+                                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else if (autoMode == ThemeAutoSwitcher.Mode.USAGE_FREQUENCY) {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            ThemeAutoSwitcher.UsageCadence.entries.forEach { item ->
+                                FilterChip(
+                                    selected = cadence == item,
+                                    onClick = {
+                                        ThemeAutoSwitcher.setCadence(ctx, item)
+                                        refreshAutoStatus()
+                                        onChanged()
+                                    },
+                                    label = { Text(item.label) },
+                                    modifier = Modifier.minimumInteractiveComponentSize().testTag("auto_cadence_${item.id}"),
+                                )
+                            }
+                        }
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceContainer,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                val unitLabel = if (cadence.metric == ThemeAutoSwitcher.UsageMetric.SESSIONS) "বার খোলা" else "কী"
+                                val pct = (usageProgress.toFloat() / cadence.threshold.coerceAtLeast(1)).coerceIn(0f, 1f)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                ) {
+                                    Text(
+                                        text = "পরবর্তী থিমে অগ্রগতি",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    Text(
+                                        text = "$usageProgress / ${cadence.threshold} $unitLabel",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                }
+                                LinearProgressIndicator(
+                                    progress = { pct },
+                                    modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+                                )
+                            }
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = if (mostUsed != null) {
+                                "সবচেয়ে বেশি ব্যবহৃত: ${mostUsed.first.emoji} ${mostUsed.first.name} (${mostUsed.second})"
+                            } else {
+                                "পুলে থিম: ${poolIds.size}টি"
+                            },
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f).padding(end = 8.dp),
+                        )
+                        FilledTonalButton(
+                            onClick = {
+                                ThemeAutoSwitcher.rotateNow(ctx)
+                                refreshAutoStatus()
+                                onChanged()
+                            },
+                            modifier = Modifier.minimumInteractiveComponentSize().testTag("auto_theme_rotate_now"),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Refresh,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("পরের থিম")
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        TextButton(
+                            onClick = { showPoolPicker = !showPoolPicker },
+                            modifier = Modifier.minimumInteractiveComponentSize().testTag("auto_pool_toggle"),
+                        ) {
+                            Text("রোটেশন পুল (${poolIds.size}/${eligibleThemes.size}টি থিম)")
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Icon(
+                                imageVector = if (showPoolPicker) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                        if (poolIds.size < eligibleThemes.size) {
+                            TextButton(
+                                onClick = {
+                                    ThemeAutoSwitcher.setPoolIds(ctx, eligibleThemes.map { it.id })
+                                    refreshAutoStatus()
+                                    onChanged()
+                                },
+                                modifier = Modifier.minimumInteractiveComponentSize().testTag("auto_pool_select_all"),
+                            ) {
+                                Text("সব নির্বাচন")
+                            }
+                        }
+                    }
+
+                    AnimatedVisibility(visible = showPoolPicker) {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            eligibleThemes.forEach { t ->
+                                val included = t.id in poolIds
+                                FilterChip(
+                                    selected = included,
+                                    onClick = {
+                                        ThemeAutoSwitcher.toggleThemeInPool(ctx, t.id)
+                                        refreshAutoStatus()
+                                        onChanged()
+                                    },
+                                    label = { Text("${t.emoji} ${t.name}", maxLines = 1) },
+                                    modifier = Modifier.minimumInteractiveComponentSize().testTag("auto_pool_chip_${t.id}"),
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
     }

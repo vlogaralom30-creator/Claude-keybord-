@@ -558,6 +558,8 @@ fun SecretComposeScreen(onNavigateBack: () -> Unit) {
                   }
                   SecretConfig.setContact(context, n, p)
                   SecretConfig.setActiveContact(context, n)
+                  SecretBannerStateHolder.detector(context).resetDeduplication()
+                  scope.launch(Dispatchers.Default) { SecretCipher.warmUp(listOf(p)) }
                   contactName = ""
                   contactPass = ""
                   reloadState()
@@ -616,6 +618,8 @@ fun SecretComposeScreen(onNavigateBack: () -> Unit) {
                 val resolvedName = contactName.trim().ifBlank { "Contact ${contacts.size + 1}" }
                 SecretConfig.setContact(context, resolvedName, pass)
                 SecretConfig.setActiveContact(context, resolvedName)
+                SecretBannerStateHolder.detector(context).resetDeduplication()
+                scope.launch(Dispatchers.Default) { SecretCipher.warmUp(listOf(pass)) }
                 contactName = ""
                 importCode = ""
                 reloadState()
@@ -791,13 +795,14 @@ fun SecretComposeScreen(onNavigateBack: () -> Unit) {
                 if (rawCipher.isBlank()) return@FilledTonalButton
                 isBusy = true
                 scope.launch {
+                  val cleanGlyph = GlyphAlphabet.extractGlyphRun(rawCipher) ?: rawCipher
                   val match = withContext(Dispatchers.Default) {
                     val bytes = GlyphAlphabet.decodeAny(rawCipher)
                     bytes?.let { SecretCipher.decryptWithMatchingContact(it, contacts) }
                   }
                   if (match != null) {
-                    val style = GlyphAlphabet.detectStyle(rawCipher) ?: GlyphStyle.RUNIC
-                    SecretConfig.saveSecretCacheEntry(context, match.first, match.second, rawCipher, style, isOutgoing = false)
+                    val style = GlyphAlphabet.detectStyle(cleanGlyph) ?: GlyphStyle.RUNIC
+                    SecretConfig.saveSecretCacheEntry(context, match.first, match.second, cleanGlyph, style, isOutgoing = false)
                     decodedSender = match.first
                     decodedOutput = match.second
                     reloadState()

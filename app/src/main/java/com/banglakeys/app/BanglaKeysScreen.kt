@@ -127,18 +127,23 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
   var assistantReady by remember { mutableStateOf(AssistantSetup.isReady(context)) }
   var assistantRunning by remember { mutableStateOf(AssistantListenerService.running) }
 
-  LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
-    imeStatus = checkImeStatus(context)
-    assistantReady = AssistantSetup.isReady(context)
-    assistantRunning = AssistantListenerService.running
-  }
-
   var haptic by remember { mutableStateOf(prefs.getBoolean("haptic", true)) }
   var sound by remember { mutableStateOf(prefs.getBoolean("sound", false)) }
+  var fxLevel by remember { mutableIntStateOf(EffectsConfig.chosenLevel(context)) }
+  var fxGuardOff by remember { mutableStateOf(EffectsConfig.autoDisabled(context)) }
   var numRow by remember { mutableStateOf(prefs.getBoolean("numrow", false)) }
   var bnDigits by remember { mutableStateOf(prefs.getBoolean("bndigits", true)) }
   var heightPct by remember { mutableIntStateOf(prefs.getInt("height", 100).coerceIn(85, 125)) }
   var themeVersion by remember { mutableIntStateOf(0) }
+
+  LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+    imeStatus = checkImeStatus(context)
+    assistantReady = AssistantSetup.isReady(context)
+    assistantRunning = AssistantListenerService.running
+    fxLevel = EffectsConfig.chosenLevel(context)
+    fxGuardOff = EffectsConfig.autoDisabled(context)
+    themeVersion++
+  }
 
   var showEmbeddedKeyboard by rememberSaveable { mutableStateOf(true) }
   var committedText by rememberSaveable { mutableStateOf("") }
@@ -279,6 +284,10 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
                       }
                       suggestVersion++
                     }
+                    ThemeAutoSwitcher.onKeyTyped(context)
+                    if (ThemeAutoSwitcher.getMode(context) == ThemeAutoSwitcher.Mode.USAGE_FREQUENCY) {
+                      themeVersion++
+                    }
                   },
                   onDelete = {
                     if (composingRoman.isNotEmpty()) {
@@ -303,6 +312,10 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
                       suggestVersion++
                     }
                     committedText += " "
+                    ThemeAutoSwitcher.onKeyTyped(context)
+                    if (ThemeAutoSwitcher.getMode(context) == ThemeAutoSwitcher.Mode.USAGE_FREQUENCY) {
+                      themeVersion++
+                    }
                   },
                   onEnter = {
                     if (composingDisplay.isNotEmpty()) {
@@ -313,6 +326,10 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
                     suggestionsRepo.resetSentenceContext()
                     suggestVersion++
                     committedText += "\n"
+                    ThemeAutoSwitcher.onKeyTyped(context)
+                    if (ThemeAutoSwitcher.getMode(context) == ThemeAutoSwitcher.Mode.USAGE_FREQUENCY) {
+                      themeVersion++
+                    }
                   },
                   onSwitchLang = {
                     if (composingDisplay.isNotEmpty()) {
@@ -396,18 +413,19 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
                       if (composingDisplay.isNotEmpty()) composingDisplay
                       else committedText.trim()
                     if (target.isNotEmpty()) {
-                      val from = if (previewBanglaMode) "bn" else "en"
-                      val to = if (previewBanglaMode) "en" else "bn"
-                      Translator.translate(target, from, to) { result ->
-                        if (result != null) {
-                          if (composingDisplay.isNotEmpty()) {
-                            composingRoman = ""
-                            committedText += "$result "
-                          } else {
-                            committedText = result
+                      val (from, to) = Translator.autoDirection(target)
+                      Translator.translateEx(target, from, to) { outcome ->
+                        when (outcome) {
+                          is Translator.Outcome.Ok -> {
+                            if (composingDisplay.isNotEmpty()) {
+                              composingRoman = ""
+                              committedText += "${outcome.text} "
+                            } else {
+                              committedText = outcome.text
+                            }
                           }
-                        } else {
-                          Toast.makeText(context, "ইন্টারনেট সংযোগ প্রয়োজন", Toast.LENGTH_SHORT).show()
+                          is Translator.Outcome.Fail ->
+                            Toast.makeText(context, outcome.reason.messageBn, Toast.LENGTH_SHORT).show()
                         }
                       }
                     }
@@ -560,7 +578,7 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
           }
         }
 
-        ThemePickerCard(onChanged = { themeVersion++ })
+        ThemePickerCard(refreshKey = themeVersion, onChanged = { themeVersion++ })
 
         ElevatedCard(
           modifier = Modifier.fillMaxWidth(),
@@ -594,6 +612,54 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
               onCheckedChange = {
                 sound = it
                 prefs.edit().putBoolean("sound", it).apply()
+              },
+            )
+            val fxReason = if (fxGuardOff) EffectsConfig.autoDisabledReason(context) else ""
+            PreferenceToggleRow(
+              title = "কী ইফেক্ট (Key effects)",
+              subtitle = if (fxGuardOff) {
+                if (fxReason.isNotBlank()) "টাইপিং ধীর মনে হওয়ায় নিজে বন্ধ হয়েছে ($fxReason) — চালু করলে আবার চেষ্টা হবে"
+                else "টাইপিং ধীর মনে হওয়ায় নিজে বন্ধ হয়েছে — চালু করলে আবার চেষ্টা হবে"
+              } else {
+                "চাপলে হালকা ripple/glow ও পপ-আপ অ্যানিমেশন। ধীর হলে নিজে বন্ধ হয়ে যায়"
+              },
+              checked = fxLevel > 0 && !fxGuardOff,
+              testTag = "toggle_fx",
+              onCheckedChange = {
+                if (it) {
+                  EffectsConfig.resetGuard(context)
+                  PerfRecorder.reset()
+                  fxGuardOff = false
+                  fxLevel = if (fxLevel == 0) EffectsConfig.DEFAULT_LEVEL else fxLevel
+                } else {
+                  fxLevel = 0
+                }
+                EffectsConfig.setLevel(context, fxLevel)
+                themeVersion++
+              },
+            )
+            if (fxLevel > 0 && !fxGuardOff) {
+              PreferenceToggleRow(
+                title = "বেশি ইফেক্ট (Rich)",
+                subtitle = "বড় ও উজ্জ্বল effect — একটু বেশি ব্যাটারি/CPU লাগে",
+                checked = fxLevel >= 3,
+                testTag = "toggle_fx_rich",
+                onCheckedChange = {
+                  fxLevel = if (it) 3 else 1
+                  EffectsConfig.setLevel(context, fxLevel)
+                  themeVersion++
+                },
+              )
+            }
+            var probhat by remember { mutableStateOf(prefs.getString("bn_layout", "phonetic") == "probhat") }
+            PreferenceToggleRow(
+              title = "প্রভাত লেআউট (Ridmik-এর মতো fixed)",
+              subtitle = "Roman নয়, সরাসরি বাংলা অক্ষরের key। কিবোর্ডে 🌐 চেপে ধরলেও বদলানো যায়",
+              checked = probhat,
+              testTag = "toggle_probhat",
+              onCheckedChange = {
+                probhat = it
+                prefs.edit().putString("bn_layout", if (it) "probhat" else "phonetic").apply()
               },
             )
             PreferenceToggleRow(
@@ -827,9 +893,25 @@ private fun EmbeddedKeyboardPreview(
           override fun onVoice() = onVoice()
           override fun onAssistant() = onAssistant()
           override fun onSecretToggle() {
+            val contacts = SecretConfig.getContacts(context)
             val next = !kv.isSecretMode()
-            kv.setSecretMode(next, SecretConfig.getActiveContact(context))
-            Toast.makeText(context, "🔐 Secret mode preview toggled", Toast.LENGTH_SHORT).show()
+            if (next) {
+              if (contacts.isEmpty()) {
+                Toast.makeText(
+                  context,
+                  "আগে 🔐 Secret Message screen-এ contact বানান বা বন্ধুর পাঠানো code import করুন",
+                  Toast.LENGTH_LONG
+                ).show()
+                return
+              }
+              val active = SecretConfig.getActiveContact(context)?.takeIf { contacts.containsKey(it) }
+                ?: contacts.keys.first()
+              kv.setSecretMode(true, active)
+              Toast.makeText(context, "🔐 Secret mode preview: $active", Toast.LENGTH_SHORT).show()
+            } else {
+              kv.setSecretMode(false)
+              Toast.makeText(context, "🔐 Secret mode preview বন্ধ", Toast.LENGTH_SHORT).show()
+            }
           }
           override fun onSecretContactCycle() {
             val names = SecretConfig.getContacts(context).keys.toList()
@@ -933,14 +1015,22 @@ private fun EmbeddedKeyboardPreview(
         }
         is SecretBannerStateHolder.BannerEvent.Decoded -> {
           val rem = evState.expiresAtMs - nowMs
-          if (rem > 0L && currentRenderedId != evState.id) {
+          if (rem <= 0L) {
+            banner.tag = -1L
+            SecretBannerStateHolder.dismiss()
+            banner.hide()
+          } else if (currentRenderedId != evState.id || banner.visibility != android.view.View.VISIBLE) {
             banner.tag = evState.id
             banner.showDecoded(evState.senderName, evState.plainText, evState.cipherText, rem)
           }
         }
         is SecretBannerStateHolder.BannerEvent.Unrecognized -> {
           val rem = evState.expiresAtMs - nowMs
-          if (rem > 0L && currentRenderedId != evState.id) {
+          if (rem <= 0L) {
+            banner.tag = -1L
+            SecretBannerStateHolder.dismiss()
+            banner.hide()
+          } else if (currentRenderedId != evState.id || banner.visibility != android.view.View.VISIBLE) {
             banner.tag = evState.id
             banner.showUnrecognized(evState.cipherText, rem)
           }

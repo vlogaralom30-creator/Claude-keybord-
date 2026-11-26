@@ -55,13 +55,16 @@ class SecretClipboardMonitorService : Service() {
             return START_NOT_STICKY
         }
 
+        val explicitText = intent?.getStringExtra(EXTRA_CLIP_TEXT)
+        val force = intent?.getBooleanExtra(EXTRA_FORCE_DECODE, false) ?: false
         if (!startAsForeground()) {
+            if (!explicitText.isNullOrBlank()) {
+                inspectText(explicitText, force = force)
+            }
             stopSelf()
             return START_NOT_STICKY
         }
 
-        val explicitText = intent?.getStringExtra(EXTRA_CLIP_TEXT)
-        val force = intent?.getBooleanExtra(EXTRA_FORCE_DECODE, false) ?: false
         if (!explicitText.isNullOrBlank()) {
             inspectText(explicitText, force = force)
         } else {

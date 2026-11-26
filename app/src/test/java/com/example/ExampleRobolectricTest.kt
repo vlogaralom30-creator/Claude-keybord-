@@ -86,9 +86,13 @@ class ExampleRobolectricTest {
     assertFalse(phoneticBottom.any { it.type == KeyType.ASSISTANT })
 
     val symbolsFirstRow = Layouts.symbols(bnDigits = true, taka = true).first()
+    assertEquals(14, symbolsFirstRow.size)
     assertTrue(symbolsFirstRow.any { it.type == KeyType.NOTEPAD })
     assertTrue(symbolsFirstRow.any { it.type == KeyType.TRANSLATE })
     assertTrue(symbolsFirstRow.any { it.type == KeyType.ASSISTANT })
+    assertTrue(symbolsFirstRow.any { it.type == KeyType.SECRET })
+    val actions = com.banglakeys.app.KeyboardView.QuickAction.values().map { it.name }
+    assertTrue(actions.containsAll(listOf("NOTEPAD", "TRANSLATE", "ASSISTANT", "SECRET")))
   }
 
   @Test

@@ -72,22 +72,54 @@ object GlyphAlphabet {
         return out.toByteArray()
     }
 
-    /** কোন style-এ লেখা তা নিজে বুঝে, decode করে — sender কোন style ব্যবহার করেছিল জানা লাগে না। */
-    fun decodeAny(text: String): ByteArray? {
-        val style = detectStyle(text) ?: return null
-        return decode(text, style)
-    }
+    /** v2 payload-এর সবচেয়ে ছোট মাপ ~৫২ glyph; এর নিচে হলে এটা cipher নয় (সাধারণ ▲■ চিহ্ন বাদ দিতে)। */
+    const val MIN_GLYPHS = 40
 
-    /** কোনো text এই যেকোনো glyph-লিপির মতো লাগছে কিনা — auto-detect overlay-র জন্য। */
-    fun looksLikeGlyphText(text: String): Boolean = detectStyle(text) != null
+    private fun ignorable(c: Char) =
+        c.isWhitespace() || c in '\u200B'..'\u200D' || c == '\uFE0E' || c == '\uFE0F' || c == '\uFEFF'
 
-    fun detectStyle(text: String): GlyphStyle? {
-        val letters = text.filter { !it.isWhitespace() }
-        if (letters.length < 6) return null
+    data class Run(val style: GlyphStyle, val glyphs: String)
+
+    /**
+     * যেকোনো লেখার ভেতর থেকে সবচেয়ে লম্বা একক-style glyph অংশ বের করে। আগে পুরো লেখার ৯০% glyph না হলে
+     * detect হত না — "রহিম: ᚠᚢ… 10:42 PM" কপি করলে ব্যর্থ হত। এখন আশেপাশের লেখা/সময়/নাম থাকলেও চলে।
+     * whitespace, zero-width, emoji-selector (FE0F) ভেতরে থাকলে উপেক্ষা করা হয়।
+     */
+    fun extractRun(text: String): Run? {
+        var bestStyle: GlyphStyle? = null
+        var bestGlyphs = ""
         for ((style, index) in INDEXES) {
-            val matching = letters.count { it in index }
-            if (matching.toFloat() / letters.length > 0.9f) return style
+            val cur = StringBuilder()
+            for (i in 0..text.length) {
+                val ch = if (i < text.length) text[i] else '\u0000'
+                val inSet = i < text.length && ch in index
+                if (inSet) {
+                    cur.append(ch)
+                } else if (i < text.length && ignorable(ch)) {
+                    // run ভাঙে না
+                } else {
+                    if (cur.length >= MIN_GLYPHS && cur.length > bestGlyphs.length) {
+                        bestStyle = style
+                        bestGlyphs = cur.toString()
+                    }
+                    cur.setLength(0)
+                }
+            }
         }
-        return null
+        val st = bestStyle ?: return null
+        return Run(st, bestGlyphs)
     }
+
+    fun extractGlyphRun(text: String): String? = extractRun(text)?.glyphs
+
+    /** কোন style-এ লেখা তা নিজে বুঝে, decode করে। */
+    fun decodeAny(text: String): ByteArray? {
+        val run = extractRun(text) ?: return null
+        return decode(run.glyphs, run.style)
+    }
+
+    /** কোনো text-এ glyph cipher আছে কিনা — auto-detect overlay-র জন্য। */
+    fun looksLikeGlyphText(text: String): Boolean = extractRun(text) != null
+
+    fun detectStyle(text: String): GlyphStyle? = extractRun(text)?.style
 }

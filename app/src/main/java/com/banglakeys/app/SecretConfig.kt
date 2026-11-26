@@ -83,6 +83,7 @@ object SecretConfig {
         }
     }
 
+    @Synchronized
     fun setContact(ctx: Context, name: String, passphrase: String) {
         if (name.isBlank() || passphrase.isBlank()) return
         val map = LinkedHashMap(getContacts(ctx))
@@ -90,10 +91,12 @@ object SecretConfig {
         saveContactsEncrypted(ctx, map)
     }
 
+    @Synchronized
     fun removeContact(ctx: Context, name: String) {
         val map = LinkedHashMap(getContacts(ctx))
         map.remove(name)
         saveContactsEncrypted(ctx, map)
+        SecretCipher.clearKeyCache()
         if (getActiveContact(ctx) == name) {
             prefs(ctx).edit().remove(KEY_ACTIVE_ENC).remove(LEGACY_KEY_ACTIVE).apply()
         }
@@ -142,6 +145,7 @@ object SecretConfig {
      * Secret message-এর লেখা বা ডিক্রিপ্ট করা মেসেজ লোকাল cache-এ রাখার **আগেই**
      * AES-256-GCM দিয়ে এনক্রিপ্ট করে সংরক্ষণ করে।
      */
+    @Synchronized
     fun saveSecretCacheEntry(
         ctx: Context,
         contactName: String,
@@ -195,11 +199,13 @@ object SecretConfig {
         return out
     }
 
+    @Synchronized
     fun removeSecretCacheEntry(ctx: Context, id: String) {
         val updated = getSecretCacheEntries(ctx).filterNot { it.id == id }
         writeSecretCacheEncrypted(ctx, updated)
     }
 
+    @Synchronized
     fun clearSecretCache(ctx: Context) {
         prefs(ctx).edit().remove(KEY_CACHE_ENC).apply()
     }

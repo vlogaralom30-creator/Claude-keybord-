@@ -30,6 +30,8 @@ class Key(
     val type: KeyType = KeyType.CHAR,
     val weight: Float = 1f,
     val alt: String? = null,
+    /** Fixed layout (প্রভাত): Shift চাপলে এই অক্ষর বসে (null হলে label.uppercase())। */
+    val shiftLabel: String? = null,
 )
 
 /**
@@ -64,19 +66,61 @@ object Layouts {
         )
 
         // Row 4 (৮টি key — Emoji + MIC সহজে নাগালে)
-        rows.add(
-            listOf(
-                Key("?123", KeyType.SYMBOLS, 1.3f),
-                Key("LANG", KeyType.LANG, 0.95f),
-                Key("🙂", KeyType.EMOJI, 0.95f),
-                Key(",", weight = 0.8f),
-                Key(" ", KeyType.SPACE, 2.5f),
-                if (bangla) Key("।", weight = 0.85f, alt = ".") else Key(".", weight = 0.85f),
-                Key("MIC", KeyType.MIC, 1.15f),
-                Key("ENTER", KeyType.ENTER, 1.5f),
-            )
-        )
+        rows.add(bottomRow(bangla))
         return rows
+    }
+
+    private fun bottomRow(bangla: Boolean): List<Key> = listOf(
+        Key("?123", KeyType.SYMBOLS, 1.3f),
+        Key("LANG", KeyType.LANG, 0.95f),
+        Key("🙂", KeyType.EMOJI, 0.95f),
+        Key(",", weight = 0.8f),
+        Key(" ", KeyType.SPACE, 2.5f),
+        if (bangla) Key("।", weight = 0.85f, alt = ".") else Key(".", weight = 0.85f),
+        Key("MIC", KeyType.MIC, 1.15f),
+        Key("ENTER", KeyType.ENTER, 1.5f),
+    )
+
+    // ------------------------------------------------------------------
+    // প্রভাত (Probhat) — Ridmik-এর fixed Bangla layout। প্রতিটা key সরাসরি বাংলা অক্ষর দেয়।
+    // Shift = বাঁদিকের নিচের ⇧; হিন্ট (ডানে-উপরে) = Shift-অক্ষর; দীর্ঘ চাপ = Shift-অক্ষর।
+    // ------------------------------------------------------------------
+
+    /** `.` key-র অক্ষর (স্ক্রিনশট থেকে অনুমান: নুক্তা ়; Shift = ঁ)। ভিন্ন হলে শুধু এখানে বদলান। */
+    const val PROBHAT_KEY_DOT = "়"
+    const val PROBHAT_KEY_DOT_SHIFT = "ঁ"
+    const val PROBHAT_NAME = "প্রভাত"
+
+    private fun pair(label: String, shift: String, w: Float = 1f) =
+        Key(label, weight = w, alt = shift, shiftLabel = shift)
+
+    fun probhat(bnDigits: Boolean): List<List<Key>> {
+        val bn = "১২৩৪৫৬৭৮৯০"
+        val en = "1234567890"
+        val numbers = if (bnDigits) bn.mapIndexed { i, c -> Key(c.toString(), alt = en[i].toString()) }
+        else letters(en)
+
+        val w12 = 10f / 12f
+        val top = listOf(
+            pair("দ", "ধ", w12), pair("ূ", "ঊ", w12), pair("ী", "ঈ", w12), pair("র", "ড়", w12),
+            pair("ট", "ঠ", w12), pair("এ", "ঐ", w12), pair("ু", "উ", w12), pair("ি", "ই", w12),
+            pair("ও", "ঔ", w12), pair("প", "ফ", w12), pair("ে", "ৈ", w12), pair("ো", "ৌ", w12),
+        )
+
+        val home = listOf(spacer(0.5f)) + listOf(
+            pair("া", "অ"), pair("স", "ষ"), pair("ড", "ঢ"), pair("ত", "থ"), pair("গ", "ঘ"),
+            pair("হ", "ঃ"), pair("জ", "ঝ"), pair("ক", "খ"), pair("ল", "ং"),
+        ) + spacer(0.5f)
+
+        val w = 0.8f
+        val bottom = listOf(Key("⇧", KeyType.SHIFT, 1.3f)) + listOf(
+            pair("য়", "য", w), pair("শ", "ঢ়", w), pair("চ", "ছ", w), pair("আ", "ঋ", w),
+            pair("ব", "ভ", w), pair("ন", "ণ", w), pair("ম", "ঙ", w),
+            Key("্", weight = w),
+            pair(PROBHAT_KEY_DOT, PROBHAT_KEY_DOT_SHIFT, w),
+        ) + Key("⌫", KeyType.DELETE, 1.5f)
+
+        return listOf(numbers, top, home, bottom, bottomRow(bangla = true))
     }
 
     fun phonetic(numberRow: Boolean, bnDigits: Boolean): List<List<Key>> =

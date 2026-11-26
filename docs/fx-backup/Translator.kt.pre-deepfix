@@ -1,0 +1,223 @@
+package com.banglakeys.app
+
+import android.os.Handler
+import android.os.Looper
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.IOException
+import java.net.HttpURLConnection
+import java.net.SocketTimeoutException
+import java.net.URL
+import java.net.URLEncoder
+import java.net.UnknownHostException
+import java.util.concurrent.Executors
+
+/**
+ * বাংলা <-> English (এবং auto-detect) অনুবাদ — API key লাগে না, শুধু INTERNET permission।
+ *
+ * কেন আগেরটা "কাজ করত না":
+ *  1. MyMemory-র দৈনিক কোটা শেষ / লেখা বেশি লম্বা হলে সার্ভার HTTP 200-এ একটা *warning লেখা* ফেরত দিত —
+ *     সেটাই "অনুবাদ" ধরে বসানো হত, আবার ব্যর্থ হলে IME-তে কোনো মেসেজই আসত না (চুপচাপ কিছু হত না)।
+ *  2. `langpair=bn|en`-এর `|` encode হত না; HTTP error-এ errorStream না পড়ে exception।
+ *  3. ৫০০ অক্ষরের বেশি লেখা একবারে পাঠানো হত; বাংলা মান দুর্বল।
+ *  4. direction কিবোর্ডের mode দেখে ঠিক হত — লেখা আর mode না মিললে উল্টো অনুবাদ।
+ *
+ * এখন: ১) Google gtx (ভালো মান, auto-detect) → ২) MyMemory (যাচাই করে) fallback, লম্বা লেখা ভাগ করে,
+ * cache, স্পষ্ট error কারণ।
+ */
+object Translator {
+
+    enum class Reason(val messageBn: String) {
+        EMPTY("অনুবাদ করার মতো লেখা নেই"),
+        OFFLINE("ইন্টারনেট সংযোগ নেই"),
+        QUOTA("আজকের ফ্রি অনুবাদ সীমা শেষ — পরে চেষ্টা করুন"),
+        TIMEOUT("সার্ভার সাড়া দিচ্ছে না — আবার চেষ্টা করুন"),
+        SERVER("অনুবাদ সার্ভারে সমস্যা — আবার চেষ্টা করুন"),
+    }
+
+    sealed class Outcome {
+        data class Ok(val text: String, val provider: String, val from: String, val to: String) : Outcome()
+        data class Fail(val reason: Reason) : Outcome()
+    }
+
+    private class ProviderError(val reason: Reason) : Exception()
+
+    private const val CHUNK_MAX = 400
+    private const val CONNECT_MS = 4000
+    private const val READ_MS = 6000
+    private const val UA = "Mozilla/5.0 (Android) BanglaKeys/3"
+
+    private val main = Handler(Looper.getMainLooper())
+    private val pool = Executors.newFixedThreadPool(2)
+    private val cache = object : LinkedHashMap<String, String>(64, 0.75f, true) {
+        override fun removeEldestEntry(e: MutableMap.MutableEntry<String, String>?) = size > 60
+    }
+
+    // ------------------------------------------------------------------ public API
+
+    fun containsBengali(s: String): Boolean = s.any { it.code in 0x0980..0x09FF }
+
+    /** লেখায় বাংলা থাকলে bn→en, নইলে →bn। */
+    fun autoDirection(text: String): Pair<String, String> =
+        if (containsBengali(text)) "bn" to "en" else "en" to "bn"
+
+    /** নতুন API — সফল/ব্যর্থ কারণসহ, main thread-এ callback। */
+    fun translateEx(text: String, from: String, to: String, onDone: (Outcome) -> Unit) {
+        val clean = text.trim()
+        if (clean.isEmpty()) {
+            onDone(Outcome.Fail(Reason.EMPTY)); return
+        }
+        val key = "$from|$to|$clean"
+        synchronized(cache) { cache[key] }?.let {
+            onDone(Outcome.Ok(it, "cache", from, to)); return
+        }
+        pool.execute {
+            val out = run(clean, from, to)
+            if (out is Outcome.Ok) synchronized(cache) { cache[key] = out.text }
+            main.post { onDone(out) }
+        }
+    }
+
+    /** পুরনো API (সামঞ্জস্যের জন্য): ব্যর্থ হলে null। */
+    fun translate(text: String, from: String, to: String, onResult: (String?) -> Unit) {
+        translateEx(text, from, to) { onResult((it as? Outcome.Ok)?.text) }
+    }
+
+    // ------------------------------------------------------------------ core
+
+    private fun run(text: String, from: String, to: String): Outcome {
+        val chunks = splitChunks(text)
+        var lastReason = Reason.SERVER
+        for ((name, fn) in listOf<Pair<String, (String, String, String) -> String>>(
+            "google" to ::viaGoogle, "mymemory" to ::viaMyMemory
+        )) {
+            try {
+                val joined = chunks.joinToString(" ") { fn(it, from, to) }.trim()
+                if (joined.isNotEmpty()) return Outcome.Ok(joined, name, from, to)
+            } catch (e: ProviderError) {
+                lastReason = e.reason
+                if (e.reason == Reason.OFFLINE) break // দুটোই একই নেটওয়ার্কে — বৃথা চেষ্টা নয়
+            } catch (_: Exception) {
+                lastReason = Reason.SERVER
+            }
+        }
+        return Outcome.Fail(lastReason)
+    }
+
+    /** বাক্যের শেষে (. । ! ? নতুন লাইন) ভেঙে ≤ [CHUNK_MAX] অক্ষরের টুকরো। */
+    fun splitChunks(text: String, max: Int = CHUNK_MAX): List<String> {
+        val limit = max.coerceAtLeast(1)
+        if (text.length <= limit) return listOf(text)
+        val out = ArrayList<String>()
+        val cur = StringBuilder()
+        fun flush() { if (cur.isNotBlank()) out.add(cur.toString().trim()); cur.setLength(0) }
+        val sentence = StringBuilder()
+        fun addSentence() {
+            var s = sentence.toString(); sentence.setLength(0)
+            while (s.length > limit) { // বাক্যই বেশি লম্বা → শব্দের সীমায় কাটি
+                var cut = s.lastIndexOf(' ', limit)
+                if (cut <= 0) cut = limit
+                if (cur.length + cut > limit) flush()
+                cur.append(s, 0, cut).append(' ')
+                flush()
+                s = s.substring(cut).trimStart()
+            }
+            if (cur.length + s.length > limit) flush()
+            cur.append(s)
+        }
+        for (c in text) {
+            sentence.append(c)
+            if (c == '.' || c == '।' || c == '!' || c == '?' || c == '\n') addSentence()
+        }
+        if (sentence.isNotEmpty()) addSentence()
+        flush()
+        return out
+    }
+
+    // ------------------------------------------------------------------ providers
+
+    private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")
+
+    private fun httpGet(url: String): Pair<Int, String> {
+        val conn = try {
+            (URL(url).openConnection() as HttpURLConnection).apply {
+                connectTimeout = CONNECT_MS
+                readTimeout = READ_MS
+                requestMethod = "GET"
+                setRequestProperty("User-Agent", UA)
+                setRequestProperty("Accept", "application/json")
+            }
+        } catch (e: IOException) {
+            throw ProviderError(Reason.SERVER)
+        }
+        try {
+            val code = conn.responseCode
+            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+            val body = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+            return code to body
+        } catch (_: UnknownHostException) {
+            throw ProviderError(Reason.OFFLINE)
+        } catch (_: java.net.ConnectException) {
+            throw ProviderError(Reason.OFFLINE)
+        } catch (_: java.net.NoRouteToHostException) {
+            throw ProviderError(Reason.OFFLINE)
+        } catch (_: SocketTimeoutException) {
+            throw ProviderError(Reason.TIMEOUT)
+        } catch (_: IOException) {
+            throw ProviderError(Reason.SERVER)
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    private fun viaGoogle(text: String, from: String, to: String): String {
+        val sl = if (from.isBlank()) "auto" else from
+        val (code, body) = httpGet(
+            "https://translate.googleapis.com/translate_a/single?client=gtx&sl=${enc(sl)}&tl=${enc(to)}&dt=t&q=${enc(text)}"
+        )
+        if (code == 429) throw ProviderError(Reason.QUOTA)
+        if (code !in 200..299) throw ProviderError(Reason.SERVER)
+        return parseGoogle(body) ?: throw ProviderError(Reason.SERVER)
+    }
+
+    /** `[[["অনুবাদ","original",...],...],null,"en"]` থেকে অনুবাদ জোড়া লাগায়। */
+    fun parseGoogle(body: String): String? = try {
+        val segs = JSONArray(body).getJSONArray(0)
+        val sb = StringBuilder()
+        for (i in 0 until segs.length()) {
+            val seg = segs.optJSONArray(i) ?: continue
+            if (!seg.isNull(0)) sb.append(seg.getString(0))
+        }
+        sb.toString().takeIf { it.isNotBlank() }
+    } catch (_: Exception) {
+        null
+    }
+
+    private fun viaMyMemory(text: String, from: String, to: String): String {
+        val sl = if (from.isBlank() || from == "auto") autoDirection(text).first else from
+        val (code, body) = httpGet(
+            "https://api.mymemory.translated.net/get?q=${enc(text)}&langpair=${enc("$sl|$to")}"
+        )
+        if (code == 429) throw ProviderError(Reason.QUOTA)
+        return parseMyMemory(body)
+    }
+
+    /** MyMemory HTTP 200-এও warning পাঠায় — সেটা অনুবাদ নয়, তাই যাচাই। */
+    fun parseMyMemory(body: String): String {
+        try {
+            val j = JSONObject(body)
+            val status = j.optString("responseStatus", "200").toIntOrNull() ?: 200
+            if (status == 429) throw ProviderError(Reason.QUOTA)
+            val t = j.optJSONObject("responseData")?.optString("translatedText", "").orEmpty()
+            if (t.contains("MYMEMORY WARNING", ignoreCase = true)) throw ProviderError(Reason.QUOTA)
+            if (status != 200 || t.isBlank() || t.contains("QUERY LENGTH LIMIT", ignoreCase = true)) {
+                throw ProviderError(Reason.SERVER)
+            }
+            return t
+        } catch (e: ProviderError) {
+            throw e
+        } catch (_: Exception) {
+            throw ProviderError(Reason.SERVER)
+        }
+    }
+}

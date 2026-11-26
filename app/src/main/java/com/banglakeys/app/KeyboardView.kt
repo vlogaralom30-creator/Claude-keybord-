@@ -49,6 +49,7 @@ class KeyboardView(context: Context) : View(context) {
         fun onSpace()
         fun onSpaceLongPress()
         fun onSwitchLang()
+        fun onLayoutToggle() {}       // 🌐 দীর্ঘ চাপ: প্রভাত ⇄ ফোনেটিক
         fun onSymbols(mode: Int)      // 0 = অক্ষর, 1 = ?123, 2 = =\<
         fun onComposingTap()
         fun onFeedback()
@@ -132,6 +133,7 @@ class KeyboardView(context: Context) : View(context) {
     }
     private val path = Path()
     private val popupRect = RectF()
+    private val fx = KeyEffects(d)
 
     private var bgC = 0
     private var keyC = 0
@@ -271,6 +273,8 @@ class KeyboardView(context: Context) : View(context) {
     private fun applyTheme() {
         val t = ThemeStore.resolve(context)
         theme = t
+        fx.kind = KeyEffects.kindFor(t)
+        fx.level = EffectsConfig.level(context)
 
         bgC = t.bg
         keyC = t.key
@@ -339,6 +343,7 @@ class KeyboardView(context: Context) : View(context) {
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         cancelAll()
+        fx.clear()
         layoutKeys()
         stripDirty = true
         updateStripRects()
@@ -507,10 +512,21 @@ class KeyboardView(context: Context) : View(context) {
     // ---------------- drawing ----------------
 
     override fun onDraw(canvas: Canvas) {
+        val t0 = System.nanoTime()
         drawBackground(canvas)
         drawStrip(canvas)
         for (row in boxRows) for (b in row) drawKey(canvas, b)
-        drawPopups(canvas)
+        val now = SystemClock.uptimeMillis()
+        // press effect (শুধু overlay) popup-এর নিচে আঁকি; চললে সক্রিয় অংশ পরের frame-এ invalidate
+        val fxRunning = fx.draw(canvas, now, accentC, radius)
+        drawPopups(canvas, now)
+        if (fxRunning || fx.popupAnimating(now)) fx.scheduleNext(this)
+        PerfRecorder.onDrawDone(t0)
+        if (PerfRecorder.tick(context, fx.active, fx.level)) {
+            EffectsConfig.autoDisable(context, PerfRecorder.lastReason)
+            fx.level = 0
+            fx.clear()
+        }
     }
 
     private fun drawBackground(c: Canvas) {
@@ -763,7 +779,7 @@ class KeyboardView(context: Context) : View(context) {
     }
 
     private fun displayLabel(k: Key): String =
-        if (k.type == KeyType.CHAR && shift != SHIFT_OFF) k.label.uppercase() else k.label
+        if (k.type == KeyType.CHAR && shift != SHIFT_OFF) (k.shiftLabel ?: k.label.uppercase()) else k.label
 
     private fun drawKey(c: Canvas, b: Box) {
         val k = b.key
@@ -808,7 +824,8 @@ class KeyboardView(context: Context) : View(context) {
             KeyType.SPACE -> drawCentered(c, spaceLabel, cx, cy, rh * 0.30f, hintC)
             KeyType.CHAR -> {
                 drawCentered(c, displayLabel(k), cx, cy, rh * 0.46f, textC)
-                val alt = k.alt
+                // Shift চালু থাকলে শিফট-অক্ষর নিজেই বড় করে দেখানো হয়, তাই হিন্ট লুকাই (Ridmik-এর মতো)
+                val alt = if (shift != SHIFT_OFF && k.shiftLabel != null) null else k.alt
                 if (alt != null) {
                     textPaint.textSize = rh * 0.24f
                     textPaint.color = hintC
@@ -1192,14 +1209,15 @@ class KeyboardView(context: Context) : View(context) {
         c.drawCircle(cx, cy + s * 0.34f, 1.35f * d * scale, iconPaint)
     }
 
-    private fun drawPopups(c: Canvas) {
+    private fun drawPopups(c: Canvas, now: Long) {
+        val sc = fx.popupScale(now)
         for (i in 0 until ptrs.size()) {
             val p = ptrs.valueAt(i)
             val b = p.box ?: continue
             if (b.key.type != KeyType.CHAR || p.consumed) continue
 
-            val bw = b.rect.width() * 1.35f
-            val bh = min(rowH() * 1.05f, 54f * d)
+            val bw = b.rect.width() * 1.35f * sc
+            val bh = min(rowH() * 1.05f, 54f * d) * sc
             val left = (b.rect.centerX() - bw / 2f).coerceIn(2f * d, max(2f * d, width - bw - 2f * d))
             val top = max(0f, b.rect.top - 2f * d - bh)
             popupRect.set(left, top, left + bw, top + bh)
@@ -1210,6 +1228,7 @@ class KeyboardView(context: Context) : View(context) {
             paint.color = popupC
             c.drawRoundRect(popupRect, radius * 1.4f, radius * 1.4f, paint)
             drawCentered(c, displayLabel(b.key), popupRect.centerX(), popupRect.centerY(), bh * 0.55f, textC)
+            fx.includeDirty(popupRect.left - 2f * d, popupRect.top - 2f * d, popupRect.right + 2f * d, popupRect.bottom + 3f * d)
         }
     }
 
@@ -1284,6 +1303,7 @@ class KeyboardView(context: Context) : View(context) {
     }
 
     private fun onDown(id: Int, x: Float, y: Float) {
+        PerfRecorder.markDown()
         if (y < stripH) {
             val hit = hitTestStrip(x, y)
             val p = Ptr(null, inStrip = true, stripHit = hit)
@@ -1299,6 +1319,7 @@ class KeyboardView(context: Context) : View(context) {
         ptrs.put(id, p)
         if (b != null) {
             listener?.onFeedback()
+            fx.onPress(b.rect.left, b.rect.top, b.rect.right, b.rect.bottom, x, y, SystemClock.uptimeMillis())
             when (b.key.type) {
                 KeyType.DELETE -> {
                     p.consumed = true
@@ -1307,6 +1328,7 @@ class KeyboardView(context: Context) : View(context) {
                 }
                 KeyType.CHAR -> if (b.key.alt != null) scheduleLong(p)
                 KeyType.SPACE -> scheduleLong(p)
+                KeyType.LANG -> scheduleLong(p)
                 else -> {}
             }
         }
@@ -1425,6 +1447,7 @@ class KeyboardView(context: Context) : View(context) {
                 when (b.key.type) {
                     KeyType.CHAR -> b.key.alt?.let { listener?.onText(it) }
                     KeyType.SPACE -> listener?.onSpaceLongPress()
+                    KeyType.LANG -> listener?.onLayoutToggle()
                     else -> {}
                 }
                 listener?.onFeedback()
@@ -1445,7 +1468,20 @@ class KeyboardView(context: Context) : View(context) {
         ptrs.clear()
     }
 
+    override fun onWindowVisibilityChanged(visibility: Int) {
+        super.onWindowVisibilityChanged(visibility)
+        // কিবোর্ড আবার দেখালে Settings-এর নতুন effects level নেয়
+        if (visibility == VISIBLE) {
+            fx.level = EffectsConfig.level(context)
+        } else {
+            fx.clear()
+            PerfRecorder.clearPendingDown()
+        }
+    }
+
     override fun onDetachedFromWindow() {
+        fx.clear()
+        PerfRecorder.clearPendingDown()
         cancelAll()
         super.onDetachedFromWindow()
     }

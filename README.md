@@ -10,6 +10,8 @@ Android অ্যাপ (Kotlin, `com.banglakeys.app`): বাংলা/English 
 | 🎤 Voice typing (continuous) | `VoiceInput.kt` | [VOICE-TROUBLESHOOTING](docs/VOICE-TROUBLESHOOTING.md) |
 | 🤖 Voice Assistant ("Hey Bot …") | `AssistantListenerService.kt` + `Command*.kt` | [COMMANDS](docs/COMMANDS.md), [APP-FLOWS](docs/APP-FLOWS.md) |
 | 🔐 Secret Message + code পাঠানো | `Secret*.kt`, `GlyphAlphabet.kt` | [SECRET-MESSAGE](docs/SECRET-MESSAGE.md) |
+| ✨ Key effects (ripple/glow, typing-safe) | `KeyEffects.kt`, `EffectsConfig.kt`, `PerfRecorder.kt` | [FX-README](docs/FX-README.md) |
+| 🌐 Translate (Google → MyMemory fallback) | `Translator.kt` | CHANGELOG v3.1 |
 | Gemini fallback (ঐচ্ছিক) | `GeminiCommandInterpreter.kt` | [SETUP-GEMINI](docs/SETUP-GEMINI.md) |
 
 ## দ্রুত শুরু
@@ -19,6 +21,7 @@ Android অ্যাপ (Kotlin, `com.banglakeys.app`): বাংলা/English 
 4. Battery → BanglaKeys → **Unrestricted** (না দিলে Android background-এ মাইক বন্ধ করে দেয়)।
 
 ## ডকুমেন্ট ম্যাপ
+- `docs/INDEX.md` — সব ডকের তালিকা
 - `docs/ARCHITECTURE.md` — কোন ফাইলের কাজ কী, কোথায় edit করবেন
 - `docs/PERMISSIONS.md` — প্রতিটা permission কেন লাগে
 - `docs/TEST-AND-DEBUG.md` — ফোনে টেস্ট (`adb logcat -s BKAssistant`)

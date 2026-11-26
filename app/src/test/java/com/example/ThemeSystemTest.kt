@@ -10,9 +10,12 @@ import com.banglakeys.app.KeyboardHostLayout
 import com.banglakeys.app.KeyboardView
 import com.banglakeys.app.Layouts
 import com.banglakeys.app.ThemeAssets
+import com.banglakeys.app.ThemeAutoSwitcher
 import com.banglakeys.app.ThemeStore
 import com.banglakeys.app.Themes
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -20,6 +23,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import java.util.Calendar
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
@@ -103,5 +107,75 @@ class ThemeSystemTest {
     kv.reloadTheme()
     kv.setSecretMode(true, "বন্ধু")
     assertTrue(kv.isSecretMode())
+  }
+
+  @Test
+  fun `auto switcher rotates themes by time of day and advances across slots`() {
+    ThemeAutoSwitcher.setMode(context, ThemeAutoSwitcher.Mode.TIME_OF_DAY)
+    val morningMs = Calendar.getInstance().apply {
+      set(2026, Calendar.MARCH, 10, 9, 0, 0)
+    }.timeInMillis
+    val nightMs = Calendar.getInstance().apply {
+      set(2026, Calendar.MARCH, 10, 23, 0, 0)
+    }.timeInMillis
+    val nextMorningMs = Calendar.getInstance().apply {
+      set(2026, Calendar.MARCH, 11, 9, 0, 0)
+    }.timeInMillis
+
+    val morningTheme1 = Themes.byId(ThemeAutoSwitcher.resolveThemeId(context, morningMs))!!
+    assertFalse(morningTheme1.dark)
+
+    val nightTheme = Themes.byId(ThemeAutoSwitcher.resolveThemeId(context, nightMs))!!
+    assertTrue(nightTheme.dark)
+
+    // Returning to morning on a new day rotates to the next daytime theme
+    val morningTheme2 = Themes.byId(ThemeAutoSwitcher.resolveThemeId(context, nextMorningMs))!!
+    assertFalse(morningTheme2.dark)
+    assertNotEquals(morningTheme1.id, morningTheme2.id)
+
+    // Manual rotateNow immediately picks another theme in the active slot
+    val rotated = ThemeAutoSwitcher.rotateNow(context, nextMorningMs)
+    assertNotEquals(morningTheme2.id, rotated.id)
+  }
+
+  @Test
+  fun `auto switcher rotates by session and keystroke usage frequency within custom pool`() {
+    ThemeStore.setSelectedId(context, "pixel_arcade")
+    ThemeAutoSwitcher.setPoolIds(context, listOf("sakura", "neon_cyber", "manga_ink"))
+    ThemeAutoSwitcher.setMode(context, ThemeAutoSwitcher.Mode.USAGE_FREQUENCY)
+    ThemeAutoSwitcher.setCadence(context, ThemeAutoSwitcher.UsageCadence.OPENS_5)
+
+    assertEquals("sakura", ThemeStore.resolve(context).id)
+
+    // 4 opens should not rotate yet
+    repeat(4) {
+      assertFalse(ThemeAutoSwitcher.onKeyboardOpen(context))
+      assertEquals("sakura", ThemeStore.resolve(context).id)
+    }
+    assertEquals(4, ThemeAutoSwitcher.usageProgress(context))
+
+    // 5th open triggers rotation to neon_cyber and resets progress
+    assertTrue(ThemeAutoSwitcher.onKeyboardOpen(context))
+    assertEquals(0, ThemeAutoSwitcher.usageProgress(context))
+    assertEquals("neon_cyber", ThemeStore.resolve(context).id)
+    assertEquals("sakura", ThemeAutoSwitcher.mostUsedTheme(context)?.first?.id)
+
+    // Keystroke cadence rotates after 100 keys
+    ThemeAutoSwitcher.setCadence(context, ThemeAutoSwitcher.UsageCadence.KEYS_100)
+    repeat(99) {
+      assertFalse(ThemeAutoSwitcher.onKeyTyped(context))
+    }
+    assertTrue(ThemeAutoSwitcher.onKeyTyped(context))
+    assertEquals("manga_ink", ThemeStore.resolve(context).id)
+
+    // Pool keeps at least 1 theme when toggling
+    ThemeAutoSwitcher.toggleThemeInPool(context, "sakura")
+    ThemeAutoSwitcher.toggleThemeInPool(context, "neon_cyber")
+    val lastPool = ThemeAutoSwitcher.toggleThemeInPool(context, "manga_ink")
+    assertEquals(listOf("manga_ink"), lastPool)
+
+    // Turning auto switcher OFF restores manual selection
+    ThemeAutoSwitcher.setMode(context, ThemeAutoSwitcher.Mode.OFF)
+    assertEquals("pixel_arcade", ThemeStore.resolve(context).id)
   }
 }

@@ -64,10 +64,11 @@ class SecretClipboardDetector(
     }
 
     fun inspect(rawClipboardText: String?, force: Boolean = false, onResult: (DetectionResult) -> Unit) {
-        val candidate = rawClipboardText?.trim().orEmpty()
-        if (candidate.isEmpty()) return
+        val whole = rawClipboardText?.trim().orEmpty()
+        if (whole.isEmpty()) return
 
-        if (!GlyphAlphabet.looksLikeGlyphText(candidate)) return
+        // আশেপাশের নাম/সময় বাদ দিয়ে শুধু glyph অংশ (dedup ও ignore-ও এই অংশ ধরেই চলে)
+        val candidate = GlyphAlphabet.extractGlyphRun(whole) ?: return
 
         val now = clockMs()
         if (!force) {
@@ -81,10 +82,11 @@ class SecretClipboardDetector(
         }
 
         lastProcessedCipher = candidate
-        val contacts = SecretConfig.getContacts(context)
         val style = GlyphAlphabet.detectStyle(candidate) ?: GlyphStyle.RUNIC
 
         workerExecutor.execute {
+            // Keystore decrypt main thread-এ নয়, worker-এ
+            val contacts = SecretConfig.getContacts(context)
             val bytes = GlyphAlphabet.decodeAny(candidate)
             val match = if (bytes != null && contacts.isNotEmpty()) {
                 SecretCipher.decryptWithMatchingContact(bytes, contacts)

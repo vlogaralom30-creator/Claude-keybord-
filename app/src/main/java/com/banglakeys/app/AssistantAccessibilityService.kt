@@ -187,12 +187,13 @@ class AssistantAccessibilityService : AccessibilityService() {
             val bytes = GlyphAlphabet.decodeAny(glyphText)
             val matched = bytes?.let { SecretCipher.decryptWithMatchingContact(it, contacts) }
             if (matched != null) {
-                val style = GlyphAlphabet.detectStyle(glyphText) ?: GlyphStyle.RUNIC
+                val cleanGlyph = GlyphAlphabet.extractGlyphRun(glyphText) ?: glyphText
+                val style = GlyphAlphabet.detectStyle(cleanGlyph) ?: GlyphStyle.RUNIC
                 SecretConfig.saveSecretCacheEntry(
                     ctx = this,
                     contactName = matched.first,
                     plainText = matched.second,
-                    glyphText = glyphText,
+                    glyphText = cleanGlyph,
                     style = style,
                     isOutgoing = false
                 )

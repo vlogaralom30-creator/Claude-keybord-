@@ -2,11 +2,13 @@
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="sharedpref" path="secret_prefs.xml" />
+        <exclude domain="sharedpref" path="secret_vault_kp.xml" />
         <exclude domain="sharedpref" path="gemini_prefs.xml" />
         <exclude domain="sharedpref" path="assistant_prefs.xml" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="secret_prefs.xml" />
+        <exclude domain="sharedpref" path="secret_vault_kp.xml" />
         <exclude domain="sharedpref" path="gemini_prefs.xml" />
         <exclude domain="sharedpref" path="assistant_prefs.xml" />
     </device-transfer>

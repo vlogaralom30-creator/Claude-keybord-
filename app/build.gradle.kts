@@ -16,8 +16,8 @@ android {
     applicationId = "com.aistudio.banglakeys.kbmqrx"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    versionCode = 32
+    versionName = "3.2"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }

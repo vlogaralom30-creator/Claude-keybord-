@@ -87,6 +87,8 @@ class KeyboardTheme(
     val badgeStroke: Int = accent,
     val badgeText: Int = mixColor(accent, text, 0.40f),
     val actionBg: Int = fn,
+    // optional: key press effect (null হলে style দেখে auto — KeyEffects.kindFor)
+    val effect: KeyEffects.Kind? = null,
 )
 
 object Themes {
@@ -351,8 +353,14 @@ object ThemeStore {
         prefs(ctx).edit().putInt(KEY_IMG_DIM, v.coerceIn(0, 70)).apply()
     }
 
-    /** বর্তমান theme। "System" হলে ফোনের dark/light অনুযায়ী default। */
+    /** বর্তমান theme। অটো-সুইচার চালু থাকলে সেটার থিম, নইলে ম্যানুয়াল/System। */
     fun resolve(ctx: Context): KeyboardTheme {
+        val autoId = ThemeAutoSwitcher.resolveThemeId(ctx)
+        if (autoId != null) {
+            Themes.byId(autoId)?.let { t ->
+                if (!t.usesImage || hasCustomImage(ctx)) return t
+            }
+        }
         val id = selectedId(ctx)
         if (id == Themes.AUTO_ID) {
             val night = (ctx.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
