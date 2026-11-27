@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "Bangla Keys"
+rootProject.name = "EMO Keys"
 
 include(":app")

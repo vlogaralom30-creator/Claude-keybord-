@@ -336,7 +336,8 @@ class CommandOverlayManager(
         wDp: Int = 46,
         hDp: Int = 32,
         marginEndDp: Int = 8,
-    ): EmoHudFaceView = EmoHudFaceView(ctx, face, accent, sleeping).apply {
+        followBrain: Boolean = false,
+    ): EmoHudFaceView = EmoHudFaceView(ctx, face, accent, sleeping, followBrain).apply {
         layoutParams = LinearLayout.LayoutParams(dp(wDp), dp(hDp)).apply {
             marginEnd = dp(marginEndDp)
         }
@@ -347,6 +348,7 @@ class CommandOverlayManager(
         private val face: FaceId,
         accentColor: Int,
         private val sleeping: Boolean = false,
+        private val followBrain: Boolean = false,
     ) : View(context) {
         private val blink = BlinkAnimator()
         private val platePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -366,16 +368,18 @@ class CommandOverlayManager(
             if (width <= 0 || height <= 0) return
             val w = width.toFloat()
             val h = height.toFloat()
+            val activeFace = if (followBrain) EmoBrainHub.brain.mood else face
+            val isSleep = if (followBrain) EmoBrainHub.brain.sleeping else sleeping
             FaceRenderer.draw(
                 canvas = canvas,
-                face = face,
+                face = activeFace,
                 cx = w / 2f,
                 cy = h / 2f,
                 plateW = w * 0.94f,
                 plateH = h * 0.92f,
                 eyeGap = w * 0.41f,
                 eyeSize = h * 0.34f,
-                blink = if (sleeping) 0.78f else blink.tick(),
+                blink = if (isSleep) 0.78f else blink.tick(),
                 eyePaint = eyePaint,
                 platePaint = platePaint,
                 plateOutline = outlinePaint,
@@ -472,6 +476,7 @@ class CommandOverlayManager(
                 wDp = 36,
                 hDp = 24,
                 marginEndDp = 0,
+                followBrain = !isListeningStandby,
             )
         )
 

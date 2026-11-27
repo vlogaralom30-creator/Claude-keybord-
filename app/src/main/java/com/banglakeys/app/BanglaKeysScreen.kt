@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.Keyboard
+import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Tune
@@ -50,6 +51,7 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -63,6 +65,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -88,6 +91,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
+import com.banglakeys.app.robot.EmoLearningActivity
+import com.banglakeys.app.robot.EmoLearningStore
 import com.example.R
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -170,6 +175,12 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
       }
     }
 
+  val learningSnapshot by EmoLearningStore.state.collectAsState()
+
+  LaunchedEffect(Unit) {
+    EmoLearningStore.snapshot(context)
+  }
+
   LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
     imeStatus = checkImeStatus(context)
     assistantReady = AssistantSetup.isReady(context)
@@ -181,6 +192,7 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
     previewBanglaMode = prefs.getBoolean("bn", true)
     previewBnLayout = prefs.getString("bn_layout", "phonetic") ?: "phonetic"
     themeVersion++
+    EmoLearningStore.snapshot(context)
   }
 
   val suggestionsRepo = remember { Suggestions(context) }
@@ -369,6 +381,12 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
                   onSpace = {
                     if (composingDisplay.isNotEmpty()) {
                       suggestionsRepo.learn(composingRoman, composingDisplay, previewBanglaMode)
+                      EmoLearningStore.recordWordCommitted(
+                        ctx = context,
+                        rawWord = composingDisplay,
+                        isBangla = previewBanglaMode,
+                        viaSuggestion = false,
+                      )
                       committedText += composingDisplay
                       composingRoman = ""
                       suggestVersion++
@@ -457,6 +475,12 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
                   },
                   onSuggestionTap = { word ->
                     suggestionsRepo.learn(composingRoman, word, previewBanglaMode)
+                    EmoLearningStore.recordWordCommitted(
+                      ctx = context,
+                      rawWord = word,
+                      isBangla = previewBanglaMode,
+                      viaSuggestion = true,
+                    )
                     composingRoman = ""
                     committedText += "$word "
                     suggestVersion++
@@ -474,6 +498,9 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
                     if (composingDisplay.isNotEmpty()) {
                       committedText += composingDisplay
                       composingRoman = ""
+                    }
+                    if (EmoLearningStore.extractEmojis(snippet).isNotEmpty()) {
+                      EmoLearningStore.recordEmojiUsed(context, snippet)
                     }
                     committedText += snippet
                     suggestVersion++
@@ -664,6 +691,42 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
               color = if (assistantReady) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
               modifier = Modifier.padding(horizontal = 4.dp).testTag("assistant_setup_status_hint"),
             )
+            OutlinedButton(
+              onClick = { context.startActivity(Intent(context, EmoLearningActivity::class.java)) },
+              modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize().testTag("open_emo_learning_button"),
+              shape = RoundedCornerShape(14.dp),
+            ) {
+              Column(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+              ) {
+                Row(
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.SpaceBetween,
+                  modifier = Modifier.fillMaxWidth(),
+                ) {
+                  Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                      imageVector = Icons.Filled.Psychology,
+                      contentDescription = null,
+                      modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(stringResource(R.string.emo_learning_title))
+                  }
+                  Text(
+                    text = "${learningSnapshot.overallPercent}%",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                  )
+                }
+                LinearProgressIndicator(
+                  progress = { learningSnapshot.overallProgress.coerceIn(0f, 1f) },
+                  modifier = Modifier.fillMaxWidth().height(6.dp).clip(CircleShape),
+                )
+              }
+            }
             OutlinedButton(
               onClick = { context.startActivity(Intent(context, NotepadActivity::class.java)) },
               modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize().testTag("open_notepad_button"),
@@ -1215,7 +1278,7 @@ private fun HeroHeaderCard(
 ) {
   val gradient =
     Brush.linearGradient(
-      colors = listOf(Color(0xFF015E57), Color(0xFF00796B), Color(0xFF00897B))
+      colors = listOf(Color(0xFF080C12), Color(0xFF0D2838), Color(0xFF10587A))
     )
   val statusText =
     when (imeStatus) {
@@ -1242,7 +1305,7 @@ private fun HeroHeaderCard(
       horizontalArrangement = Arrangement.spacedBy(16.dp),
     ) {
       Image(
-        painter = painterResource(id = R.drawable.banglakeys_icon),
+        painter = painterResource(id = R.drawable.emo_keys_icon),
         contentDescription = stringResource(R.string.cd_app_icon),
         modifier = Modifier.size(64.dp).clip(RoundedCornerShape(16.dp)),
       )

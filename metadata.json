@@ -1,6 +1,6 @@
 {
-  "name": "Bangla Keys",
-  "description": "Avro-style Roman-to-Bangla phonetic keyboard IME with customizable layout, haptic feedback, and live typing tester.",
+  "name": "EMO Keys",
+  "description": "EMO Robot live-face Bangla & English keyboard with Hey EMO voice control, 12-face mood reactions, and encrypted chat.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

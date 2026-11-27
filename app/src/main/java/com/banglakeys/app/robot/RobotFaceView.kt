@@ -75,10 +75,17 @@ class RobotFaceView @JvmOverloads constructor(
     init {
         isClickable = true
         isFocusable = true
-        contentDescription = "EMO রোবট ফেস — ট্যাপ করে কথা বলুন"
+        isLongClickable = true
+        cameraDistance = 12000f * density
+        contentDescription = "EMO রোবট ফেস — ট্যাপ বা ধরে রেখে আদর করুন"
         setOnClickListener {
             EmoBrainHub.handleEvent(RobotEvent.Tap)
             invalidate()
+        }
+        setOnLongClickListener {
+            EmoBrainHub.handleEvent(RobotEvent.LongPress)
+            invalidate()
+            true
         }
     }
 
@@ -97,6 +104,14 @@ class RobotFaceView @JvmOverloads constructor(
         if (width <= 0 || height <= 0) return
 
         EmoBrainHub.tick()
+        val body = EmoBrainHub.bodyState
+        if (body.sensorsLive) {
+            rotationX = (-body.pitchDeg * 0.45f).coerceIn(-12f, 12f)
+            rotationY = (body.rollDeg * 0.45f).coerceIn(-12f, 12f)
+        } else {
+            rotationX = 0f
+            rotationY = 0f
+        }
 
         val padH = 18f * density
         val topBubbleBandH = 44f * density
@@ -110,6 +125,8 @@ class RobotFaceView @JvmOverloads constructor(
         val cy = topBubbleBandH + availFaceH / 2f
         val eyeSize = plateH * 0.25f
         val eyeGap = plateW * 0.39f
+        val gazeShiftX = body.combinedGazeX() * (plateW * 0.085f)
+        val gazeShiftY = body.combinedGazeY() * (plateH * 0.085f)
 
         FaceRenderer.draw(
             canvas = canvas,
@@ -124,10 +141,32 @@ class RobotFaceView @JvmOverloads constructor(
             eyePaint = eyePaint,
             platePaint = platePaint,
             plateOutline = outlinePaint,
+            gazeX = gazeShiftX,
+            gazeY = gazeShiftY,
             glow = true,
         )
 
-        val statusSuffix = if (brain.sleeping) " · 💤 ঘুমাচ্ছে" else ""
+        val nowMs = System.currentTimeMillis()
+        EmoParticles.draw(
+            canvas = canvas,
+            cx = cx,
+            cy = cy,
+            plateW = plateW,
+            plateH = plateH,
+            eyeGap = eyeGap,
+            isCrying = brain.isCrying,
+            mood = brain.mood,
+            effect = body.lastEffect,
+            effectAgeMs = nowMs - body.lastEffectAtMs,
+            nowMs = nowMs,
+        )
+
+        val statusSuffix = when {
+            brain.isCrying -> " · 😢 ব্যথা পেয়েছে — ট্যাপ করে আদর করো"
+            brain.sleeping -> " · 💤 ঘুমাচ্ছে"
+            body.isNearEar -> " · 🤫 ফিসফিস মোড"
+            else -> ""
+        }
         canvas.drawText(
             "${brain.mood.name} (${brain.mood.bn})$statusSuffix",
             cx,

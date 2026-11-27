@@ -168,12 +168,7 @@ object Layouts {
         letterRows(numberRow, false, false)
 
     fun symbols(bnDigits: Boolean, taka: Boolean): List<List<Key>> = listOf(
-        letters(digitsOf(bnDigits)) + listOf(
-            Key("NOTE", KeyType.NOTEPAD, 1f),
-            Key("Tr", KeyType.TRANSLATE, 1f),
-            Key("BOT", KeyType.ASSISTANT, 1f),
-            Key("🔐", KeyType.SECRET, 1f),
-        ),
+        letters(digitsOf(bnDigits)),
         letters(if (taka) "@#৳_&-+()/" else "@#\$_&-+()/"),
         listOf(Key("=\\<", KeyType.SYMBOLS2, 1.5f)) +
             letters("*\"':;!?") +

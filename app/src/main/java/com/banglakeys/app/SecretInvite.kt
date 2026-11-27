@@ -43,10 +43,10 @@ object SecretInvite {
 
     /** Share sheet-এ পাঠানোর পুরো লেখা। */
     fun shareText(passphrase: String): String =
-        "🔐 BanglaKeys secret code\n" +
+        "🔐 EMO Keys secret code\n" +
             "${PREFIX}${encode(passphrase)}\n" +
             "যাচাই: ${fingerprint(passphrase)}\n\n" +
-            "BanglaKeys-এর 🔐 Secret Message screen-এ \"Code import\"-এ এই লেখা পেস্ট করুন। " +
+            "EMO Keys-এর 🔐 Secret Message screen-এ \"Code import\"-এ এই লেখা পেস্ট করুন। " +
             "এই code অন্য কাউকে দেবেন না।"
 
     /** পেস্ট করা যেকোনো লেখা থেকে code বের করে; না পেলে null। */

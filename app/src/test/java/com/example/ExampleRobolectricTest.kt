@@ -37,7 +37,8 @@ class ExampleRobolectricTest {
   fun `read string from context`() {
     val context = ApplicationProvider.getApplicationContext<Context>()
     val appName = context.getString(R.string.app_name)
-    assertEquals("Bangla Keys", appName)
+    assertEquals("EMO Keys", appName)
+    assertEquals("EMO Keys", context.getString(R.string.ime_name))
   }
 
   @Test
@@ -86,11 +87,11 @@ class ExampleRobolectricTest {
     assertFalse(phoneticBottom.any { it.type == KeyType.ASSISTANT })
 
     val symbolsFirstRow = Layouts.symbols(bnDigits = true, taka = true).first()
-    assertEquals(14, symbolsFirstRow.size)
-    assertTrue(symbolsFirstRow.any { it.type == KeyType.NOTEPAD })
-    assertTrue(symbolsFirstRow.any { it.type == KeyType.TRANSLATE })
-    assertTrue(symbolsFirstRow.any { it.type == KeyType.ASSISTANT })
-    assertTrue(symbolsFirstRow.any { it.type == KeyType.SECRET })
+    assertEquals(10, symbolsFirstRow.size)
+    assertFalse(symbolsFirstRow.any { it.type == KeyType.NOTEPAD })
+    assertFalse(symbolsFirstRow.any { it.type == KeyType.TRANSLATE })
+    assertFalse(symbolsFirstRow.any { it.type == KeyType.ASSISTANT })
+    assertFalse(symbolsFirstRow.any { it.type == KeyType.SECRET })
     val actions = com.banglakeys.app.KeyboardView.QuickAction.values().map { it.name }
     assertTrue(actions.containsAll(listOf("NOTEPAD", "TRANSLATE", "ASSISTANT", "SECRET")))
   }

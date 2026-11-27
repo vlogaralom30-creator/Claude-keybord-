@@ -5,9 +5,7 @@ import android.os.Looper
 import java.util.concurrent.CopyOnWriteArraySet
 
 /**
- * পুরো অ্যাপ জুড়ে EMO রোবটের একক ব্রেন ও স্টেট হাব।
- * কন্ট্রোল সেন্টার, ভাসমান ওভারলে, ভয়েস লিসেনার এবং কিবোর্ড ব্যাকড্রপ সবাই
- * এই একক `brain`-এর mood, needs এবং speech শেয়ার করে।
+ * পুরো অ্যাপ জুড়ে EMO রোবটের একক ব্রেন, ভয়েস ও বডি সেন্সর স্টেট হাব।
  */
 object EmoBrainHub {
 
@@ -16,9 +14,14 @@ object EmoBrainHub {
     private val lock = Any()
     private val mainHandler = Handler(Looper.getMainLooper())
     private val listeners = CopyOnWriteArraySet<() -> Unit>()
+    private val eventSinks = CopyOnWriteArraySet<(RobotEvent) -> Unit>()
 
     @Volatile
     var isVoiceListening: Boolean = false
+        private set
+
+    @Volatile
+    var bodyState: EmoBodyState = EmoBodyState()
         private set
 
     fun addListener(listener: () -> Unit) {
@@ -29,22 +32,58 @@ object EmoBrainHub {
         listeners.remove(listener)
     }
 
+    fun addEventSink(sink: (RobotEvent) -> Unit) {
+        eventSinks.add(sink)
+    }
+
+    fun removeEventSink(sink: (RobotEvent) -> Unit) {
+        eventSinks.remove(sink)
+    }
+
+    fun updateBody(transform: (EmoBodyState) -> EmoBodyState) {
+        synchronized(lock) {
+            bodyState = transform(bodyState)
+        }
+        notifyListeners()
+    }
+
+    fun triggerEffect(effect: BodyEffect) {
+        val now = System.currentTimeMillis()
+        synchronized(lock) {
+            bodyState = bodyState.copy(lastEffect = effect, lastEffectAtMs = now)
+        }
+        notifyListeners()
+    }
+
     fun tick() {
         val changed: Boolean
         synchronized(lock) {
             val beforeMood = brain.mood
             val beforeSleep = brain.sleeping
+            val beforeCry = brain.isCrying
             brain.tick()
-            changed = (beforeMood != brain.mood || beforeSleep != brain.sleeping)
+            changed = (beforeMood != brain.mood || beforeSleep != brain.sleeping || beforeCry != brain.isCrying)
         }
         if (changed) notifyListeners()
     }
 
     fun handleEvent(event: RobotEvent) {
+        val now = System.currentTimeMillis()
         synchronized(lock) {
             brain.handle(event)
+            val effect = when (event) {
+                RobotEvent.Dropped -> BodyEffect.TEARS
+                RobotEvent.Shake, RobotEvent.CompassSpin -> BodyEffect.STARS
+                RobotEvent.FingerprintMatched, RobotEvent.LongPress, RobotEvent.Comforted -> BodyEffect.HEARTS
+                RobotEvent.EarNear -> BodyEffect.WHISPER
+                else -> null
+            }
+            if (effect != null) {
+                bodyState = bodyState.copy(lastEffect = effect, lastEffectAtMs = now)
+            }
         }
         notifyListeners()
+        notifySinks(event)
     }
 
     fun express(
@@ -72,6 +111,7 @@ object EmoBrainHub {
         synchronized(lock) {
             isVoiceListening = false
             brain.resetMemory()
+            bodyState = EmoBodyState()
         }
         notifyListeners()
     }
@@ -159,7 +199,7 @@ object EmoBrainHub {
     fun onIdleStandby() {
         isVoiceListening = false
         synchronized(lock) {
-            if (!brain.sleeping && brain.mood == FaceId.CURIOUS) {
+            if (!brain.sleeping && !brain.isCrying && brain.mood == FaceId.CURIOUS) {
                 brain.express(FaceId.NORMAL, text = null, wakeUp = false)
             }
         }
@@ -171,6 +211,14 @@ object EmoBrainHub {
             listeners.forEach { it() }
         } else {
             mainHandler.post { listeners.forEach { it() } }
+        }
+    }
+
+    private fun notifySinks(event: RobotEvent) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            eventSinks.forEach { it(event) }
+        } else {
+            mainHandler.post { eventSinks.forEach { it(event) } }
         }
     }
 }

@@ -132,7 +132,7 @@ object SetupGuidance {
             return SetupGuide(
                 id = "voice_enable_ime",
                 title = "⌨️ আগে সিস্টেম কিবোর্ড চালু করুন",
-                steps = "১. নিচের 'Keyboard enable' ও ২. 'Bangla Keys Select' করুন। তারপর যেকোনো অ্যাপে 🎤 চেপে কথা বলুন।",
+                steps = "১. নিচের 'Keyboard enable' ও ২. 'EMO Keys Select' করুন। তারপর যেকোনো অ্যাপে 🎤 চেপে কথা বলুন।",
                 actionLabel = "⚙️ চালু করুন",
                 action = GuideAction.OPEN_IME_SETTINGS,
             )

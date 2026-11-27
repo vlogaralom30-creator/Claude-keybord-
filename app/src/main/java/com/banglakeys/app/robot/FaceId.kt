@@ -1,17 +1,14 @@
 package com.banglakeys.app.robot
 
 /**
- * mini-robot-keyboard-plan.md-এর "Set 1 (চোখ-style, ১২টা)" — শুধু দুটো চোখের
- * shape দিয়ে পুরো emotion বোঝানো (Anki Vector/robot-face ধরনের), কোনো আলাদা
- * মুখ/eyebrow নেই। আপনার দেওয়া reference ছবির ১২টা shape-এর সাথে মিলিয়ে বানানো।
+ * EMO রোবটের ৩২টি এক্সপ্রেশন:
+ * - প্রথম ১২টি: ক্লাসিক চোখ-স্টাইল (Anki Vector / EMO Reference 1)
+ * - পরের ২০টি: মাল্টিপল এক্সপ্রেসিভ মুখ-চোখ-অশ্রু-ব্লাশ রিঅ্যাকশন (Reference 2)
  *
- * [tag]: p=positive, n=negative, u=neutral, f=fun, r=rare, s=sleep — plan-এর
- * Section 8 অনুযায়ী, Brain (Phase 1-এ এখনো বানানো হয়নি) mood বাছতে এটা ব্যবহার করবে।
- *
- * আমার শেপ-টু-নাম মিল আন্দাজে করা (ছবিতে কোনো লেখা ছিল না) — কোনোটা ভুল মনে হলে
- * বলবেন, শুধু নাম বদলানো এক লাইনের কাজ, শেপ পাল্টানো লাগবে না।
+ * [tag]: p=positive, n=negative, u=neutral, f=fun, r=rare, s=sleep
  */
 enum class FaceId(val bn: String, val tag: Char) {
+    // Classic 12
     SMILE("হাসি", 'p'),
     NORMAL("স্বাভাবিক", 'u'),
     SLY("চালাক", 'f'),
@@ -24,4 +21,34 @@ enum class FaceId(val bn: String, val tag: Char) {
     DIZZY("মাথা ঘোরা", 'r'),
     STARE("তাকিয়ে আছে", 'u'),
     MEH("মেহ্‌", 'n'),
+
+    // Expressive 20
+    PLEAD("অনুনয়", 'n'),
+    SMUG("দুষ্টুমি", 'f'),
+    SWIRL("চক্কর", 'r'),
+    MISCHIEF("দুষ্টু হাসি", 'f'),
+    WINK("চোখ মারা", 'p'),
+    SWEAT("হতাশ", 'n'),
+    FURIOUS("প্রচণ্ড রাগ", 'n'),
+    CRY_RIVER("ঝরঝর কান্না", 'n'),
+    HYPED("উত্তেজিত", 'p'),
+    HMPH("অভিমান", 'n'),
+    GRUMPY("গোমড়া", 'n'),
+    UWU("কিউট", 'f'),
+    GIGGLE("খিলখিল হাসি", 'p'),
+    SHOCKED("অবাক", 'r'),
+    NERVOUS("নার্ভাস", 'n'),
+    KISS_SHY("চুমু", 'p'),
+    SHOUT("চিৎকার", 'n'),
+    WINK_KISS("ফ্লাইং কিস", 'p'),
+    BORED("বিরক্ত", 'n'),
+    BEAMING("প্রাণখোলা হাসি", 'p');
+
+    val isExpressive: Boolean
+        get() = ordinal >= 12
+
+    companion object {
+        val CLASSIC_12: List<FaceId> get() = entries.subList(0, 12)
+        val EXPRESSIVE_20: List<FaceId> get() = entries.subList(12, entries.size)
+    }
 }

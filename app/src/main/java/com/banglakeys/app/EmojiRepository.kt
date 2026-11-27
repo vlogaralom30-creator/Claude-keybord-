@@ -93,6 +93,8 @@ class EmojiRepository(context: Context) {
         return skinToneMap[base] ?: emoji
     }
 
+    fun skinTonePreferenceCount(): Int = skinToneMap.size
+
     fun setPreferredSkinTone(emoji: String, variant: String) {
         val base = stripToneModifiers(emoji)
         if (variant == base) {

@@ -17,22 +17,23 @@ class SymbolsLayoutStabilityTest {
         assertEquals(4, Layouts.symbols2().size)
     }
 
-    @Test fun `letter and symbols2 rows sum to ten`() {
+    @Test fun `letter, symbols, and symbols2 rows sum to ten`() {
         val pages = listOf(
             Layouts.phonetic(true, true),
             Layouts.phonetic(false, true),
             Layouts.english(true),
+            Layouts.symbols(true, true),
+            Layouts.symbols(false, false),
             Layouts.symbols2(),
             Layouts.probhat(true),
         )
         for (p in pages) for (row in p) assertEquals(10.0, total(row), 0.01)
     }
 
-    @Test fun `symbols page keeps digits row and action shortcuts`() {
+    @Test fun `symbols page keeps clean 10-digit row without extra icon shortcuts`() {
         val first = Layouts.symbols(true, true).first()
-        assertEquals(14, first.size)
-        assertTrue(first.take(10).all { it.type == KeyType.CHAR })
-        assertTrue(first.map { it.type }.containsAll(listOf(KeyType.NOTEPAD, KeyType.TRANSLATE, KeyType.ASSISTANT, KeyType.SECRET)))
+        assertEquals(10, first.size)
+        assertTrue(first.all { it.type == KeyType.CHAR })
     }
 
     @Test fun `symbols page keeps space and enter`() {

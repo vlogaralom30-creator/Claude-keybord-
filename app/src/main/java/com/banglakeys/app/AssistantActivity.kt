@@ -25,12 +25,18 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
+import com.banglakeys.app.robot.EmoBodyActivity
+import com.banglakeys.app.robot.EmoBodySensorController
 import com.banglakeys.app.robot.EmoBrainHub
+import com.banglakeys.app.robot.EmoLearningActivity
+import com.banglakeys.app.robot.EmoLearningStore
+import com.banglakeys.app.robot.EmoLiveReactor
 import com.banglakeys.app.robot.FaceId
 import com.banglakeys.app.robot.FaceRenderer
 import com.banglakeys.app.robot.RobotEvent
@@ -133,6 +139,15 @@ class AssistantActivity : Activity() {
     private lateinit var geminiStatusText: TextView
     private lateinit var geminiKeyInput: EditText
 
+    private lateinit var switchBodySensors: Switch
+    private lateinit var switchBodyAudio: Switch
+    private lateinit var switchBodyHaptics: Switch
+    private lateinit var learningPercentBadge: TextView
+    private lateinit var learningSummarySub: TextView
+    private lateinit var learningSummaryBar: ProgressBar
+    private var centerSensors: EmoBodySensorController? = null
+    private var centerReactor: EmoLiveReactor? = null
+
     private val hubListener: () -> Unit = {
         if (!isFinishing && !isDestroyed) {
             updateFaceTileHighlights()
@@ -190,7 +205,10 @@ class AssistantActivity : Activity() {
         // ---- 0. Interactive EMO Face + Voice Quick Trigger
         root.addView(buildEmoHeroCard())
 
-        // ---- 0b. 12 Expressions & Brain Lab
+        // ---- 0a. EMO Learning Mode Progress Card
+        root.addView(buildLearningModeCard())
+
+        // ---- 0b. 32 Expressions & Brain Lab
         faceLabCard = buildFaceAndBrainLabCard()
         root.addView(faceLabCard)
 
@@ -218,6 +236,9 @@ class AssistantActivity : Activity() {
         }
         setContentView(scrollView)
 
+        centerSensors = EmoBodySensorController(this)
+        centerReactor = EmoLiveReactor(this)
+
         if (intent?.getBooleanExtra(EXTRA_SCROLL_TO_FACES, false) == true) {
             scrollView.post {
                 scrollView.smoothScrollTo(0, faceLabCard.top)
@@ -228,11 +249,29 @@ class AssistantActivity : Activity() {
     override fun onStart() {
         super.onStart()
         EmoBrainHub.addListener(hubListener)
+        syncCenterBodySensors()
     }
 
     override fun onStop() {
+        centerReactor?.stop()
+        centerSensors?.stop()
         EmoBrainHub.removeListener(hubListener)
         super.onStop()
+    }
+
+    override fun onDestroy() {
+        centerReactor?.release()
+        super.onDestroy()
+    }
+
+    private fun syncCenterBodySensors() {
+        if (AssistantPrefs.emoBodySensorsInCenter(this)) {
+            centerSensors?.start()
+            centerReactor?.start()
+        } else {
+            centerReactor?.stop()
+            centerSensors?.stop()
+        }
     }
 
     override fun onResume() {
@@ -488,6 +527,145 @@ class AssistantActivity : Activity() {
         })
 
         card.addView(quickRow)
+
+        val bodyBtn = buildIconButton(
+            icon = AssistantIcons.Kind.BOT,
+            label = "🤖 EMO Body Mode (ফোনের শরীর)",
+            fg = pal.primary,
+            bg = pal.primarySoft,
+            stroke = pal.primary,
+            testTag = "btn_open_emo_body",
+        ) {
+            startActivity(Intent(this, EmoBodyActivity::class.java))
+        }.first
+        card.addView(
+            bodyBtn,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = dp(10)
+                bottomMargin = dp(8)
+            }
+        )
+
+        card.addView(View(this).apply {
+            setBackgroundColor(pal.border)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(1)
+            ).apply {
+                topMargin = dp(2)
+                bottomMargin = dp(6)
+            }
+        })
+
+        switchBodySensors = addToggleRow(
+            card,
+            "লাইভ বডি সেন্সর (Live Body Sensors)",
+            "এই স্ক্রিনে ফোন নাড়ালে, ফেলে দিলে বা কানে নিলে EMO সাথে সাথে রিঅ্যাক্ট করবে",
+            AssistantPrefs.emoBodySensorsInCenter(this)
+        ) { checked ->
+            AssistantPrefs.setEmoBodySensorsInCenter(this, checked)
+            syncCenterBodySensors()
+        }.apply { tag = "switch_live_body_sensors" }
+
+        switchBodyAudio = addToggleRow(
+            card,
+            "EMO বাংলা ভয়েস ও সাউন্ড",
+            "স্পিকারে বাংলা অনুভূতি ও রোবট কিচিরমিচির সাউন্ড শোনাবে",
+            AssistantPrefs.emoVoiceSfxEnabled(this)
+        ) { checked ->
+            AssistantPrefs.setEmoVoiceSfxEnabled(this, checked)
+        }.apply { tag = "switch_emo_voice_sfx" }
+
+        switchBodyHaptics = addToggleRow(
+            card,
+            "EMO হ্যাপটিক হার্টবিট ও ভাইব্রেশন",
+            "আদর, ফিঙ্গারপ্রিন্ট বা পড়ে যাওয়ায় হার্টবিট ও মৃদু কম্পন দেবে",
+            AssistantPrefs.emoHapticsEnabled(this)
+        ) { checked ->
+            AssistantPrefs.setEmoHapticsEnabled(this, checked)
+        }.apply { tag = "switch_emo_haptics" }
+
+        return card
+    }
+
+    private fun buildLearningModeCard(): View {
+        val card = makeCard()
+        val headRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { bottomMargin = dp(8) }
+        }
+        headRow.addView(LinearLayout(this).apply {
+            gravity = Gravity.CENTER
+            background = roundedBg(pal.primarySoft, 10)
+            layoutParams = LinearLayout.LayoutParams(dp(34), dp(34)).apply { marginEnd = dp(10) }
+            addView(ImageView(this@AssistantActivity).apply {
+                setImageDrawable(AssistantIcons.drawable(this@AssistantActivity, AssistantIcons.Kind.SPARKLE, pal.primary, 18))
+            })
+        })
+        headRow.addView(TextView(this).apply {
+            text = "EMO Learning Mode"
+            textSize = 15.5f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(pal.text)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        learningPercentBadge = TextView(this).apply {
+            text = "0%"
+            textSize = 12.5f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(pal.primary)
+            setPadding(dp(10), dp(4), dp(10), dp(4))
+            background = roundedBg(pal.primarySoft, 99)
+            tag = "learning_summary_percent"
+        }
+        headRow.addView(learningPercentBadge)
+        card.addView(headRow)
+
+        learningSummarySub = TextView(this).apply {
+            textSize = 12f
+            setTextColor(pal.subText)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { bottomMargin = dp(8) }
+        }
+        card.addView(learningSummarySub)
+
+        learningSummaryBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100
+            progress = 0
+            progressTintList = ColorStateList.valueOf(pal.primary)
+            progressBackgroundTintList = ColorStateList.valueOf(pal.cardAlt)
+            tag = "learning_summary_progress"
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(8),
+            ).apply { bottomMargin = dp(10) }
+        }
+        card.addView(learningSummaryBar)
+
+        val openBtn = buildIconButton(
+            icon = AssistantIcons.Kind.SPARKLE,
+            label = "🧠 EMO Learning Mode খুলুন →",
+            fg = pal.primary,
+            bg = pal.primarySoft,
+            stroke = pal.primary,
+            testTag = "btn_open_emo_learning",
+        ) {
+            startActivity(Intent(this, EmoLearningActivity::class.java))
+        }.first
+        card.addView(openBtn, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+        ))
+
         return card
     }
 
@@ -496,45 +674,61 @@ class AssistantActivity : Activity() {
         addCardHeader(
             card,
             AssistantIcons.Kind.SPARKLE,
-            "১২টি EMO এক্সপ্রেশন ও ব্রেন টেস্ট",
-            "যেকোনো ফেসে ট্যাপ করে দেখুন — ভয়েস ও কিবোর্ডে এগুলোই কাজ করে"
+            "৩২টি EMO এক্সপ্রেশন ও ব্রেন টেস্ট",
+            "যেকোনো ফেসে ট্যাপ করে দেখুন — কিবোর্ড, Body Mode ও ভাসমান ওভারলেতে এগুলোই চলে"
         )
 
-        // 4 rows x 3 columns of clickable mini EMO face tiles
         faceTileBoxes.clear()
-        val faces = FaceId.values()
-        for (rowIdx in faces.indices step 3) {
-            val row = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
+        fun addFaceGridSection(sectionTitle: String, items: List<FaceId>) {
+            card.addView(TextView(this).apply {
+                text = sectionTitle
+                textSize = 12f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(pal.primary)
                 layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply { bottomMargin = dp(8) }
-            }
-            for (colIdx in 0 until 3) {
-                val idx = rowIdx + colIdx
-                if (idx < faces.size) {
-                    val face = faces[idx]
-                    val tile = buildFaceTile(face)
-                    faceTileBoxes[face] = tile
-                    row.addView(
-                        tile,
-                        LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-                            if (colIdx > 0) marginStart = dp(4)
-                            if (colIdx < 2) marginEnd = dp(4)
-                        }
-                    )
-                } else {
-                    row.addView(View(this).apply {
-                        layoutParams = LinearLayout.LayoutParams(0, 1, 1f)
-                    })
+                ).apply {
+                    topMargin = dp(4)
+                    bottomMargin = dp(6)
                 }
+            })
+            for (rowIdx in items.indices step 4) {
+                val row = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    ).apply { bottomMargin = dp(6) }
+                }
+                for (colIdx in 0 until 4) {
+                    val idx = rowIdx + colIdx
+                    if (idx < items.size) {
+                        val face = items[idx]
+                        val tile = buildFaceTile(face)
+                        faceTileBoxes[face] = tile
+                        row.addView(
+                            tile,
+                            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                                if (colIdx > 0) marginStart = dp(3)
+                                if (colIdx < 3) marginEnd = dp(3)
+                            }
+                        )
+                    } else {
+                        row.addView(View(this).apply {
+                            layoutParams = LinearLayout.LayoutParams(0, 1, 1f)
+                        })
+                    }
+                }
+                card.addView(row)
             }
-            card.addView(row)
         }
+
+        addFaceGridSection("ক্লাসিক ১২টি (Classic EMO)", FaceId.CLASSIC_12)
+        addFaceGridSection("মাল্টি-রিঅ্যাকশন ২০টি (Expressive EMO)", FaceId.EXPRESSIVE_20)
         updateFaceTileHighlights()
 
-        // Expand/collapse toggle for 19 Fake Event test buttons
+        // Expand/collapse toggle for 30 Brain & Body Event test buttons
         val toggleRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -547,7 +741,7 @@ class AssistantActivity : Activity() {
             ).apply { topMargin = dp(4) }
         }
         toggleRow.addView(TextView(this).apply {
-            text = "🧪 ব্রেন ইভেন্ট টেস্টার (১৯টি)"
+            text = "🧪 ব্রেন ও বডি ইভেন্ট টেস্টার (৩০টি)"
             textSize = 13.5f
             setTypeface(null, Typeface.BOLD)
             setTextColor(pal.text)
@@ -575,21 +769,32 @@ class AssistantActivity : Activity() {
             Triple("event_tap", "👋 Tap", RobotEvent.Tap),
             Triple("event_long_press", "🤗 Long press (আদর)", RobotEvent.LongPress),
             Triple("event_shake", "📳 Shake (ঝাঁকি)", RobotEvent.Shake),
+            Triple("event_free_fall", "😱 Free fall (পড়ছে)", RobotEvent.FreeFall),
+            Triple("event_dropped", "😭 Dropped (কান্না)", RobotEvent.Dropped),
+            Triple("event_comforted", "🥰 আদর / শান্ত", RobotEvent.Comforted),
+            Triple("event_fingerprint", "🐾 Fingerprint Match", RobotEvent.FingerprintMatched),
+            Triple("event_compass_spin", "😵‍💫 Compass Spin", RobotEvent.CompassSpin),
+            Triple("event_ear_near", "🤫 কানের কাছে (Ear)", RobotEvent.EarNear),
             Triple("event_lift", "✋ Lift (তোলা)", RobotEvent.Lift),
             Triple("event_face_down", "⬇️ Face down (ঘুম)", RobotEvent.FaceDown),
             Triple("event_face_up", "⬆️ Face up (জাগা)", RobotEvent.FaceUp),
-            Triple("event_clap", "👏 Clap", RobotEvent.Clap),
+            Triple("event_clap", "😳 Clap (চমক)", RobotEvent.Clap),
             Triple("event_loud_sound", "🔊 Loud sound", RobotEvent.LoudSound),
             Triple("event_voice_heard", "🎙️ Voice heard", RobotEvent.VoiceHeard),
             Triple("event_battery_low", "🔋 Battery low", RobotEvent.BatteryLow),
             Triple("event_charging", "⚡ Charging", RobotEvent.Charging),
-            Triple("event_dark", "🌑 Dark", RobotEvent.Dark),
-            Triple("event_bright", "☀️ Bright", RobotEvent.Bright),
+            Triple("event_dark", "🥺 Dark", RobotEvent.Dark),
+            Triple("event_bright", "😉 Bright", RobotEvent.Bright),
             Triple("event_typing_fast", "⌨️ Typing fast", RobotEvent.TypingFast),
-            Triple("event_typing_slow", "🐢 Typing slow", RobotEvent.TypingSlow),
-            Triple("event_backspace_burst", "⌫ Backspace burst", RobotEvent.BackspaceBurst),
+            Triple("event_typing_slow", "😑 Typing slow", RobotEvent.TypingSlow),
+            Triple("event_backspace_burst", "😬 Backspace burst", RobotEvent.BackspaceBurst),
             Triple("event_keyword_love", "❤️ Keyword: love", RobotEvent.KeywordLove),
-            Triple("event_keyword_anger", "😡 Keyword: anger", RobotEvent.KeywordAnger),
+            Triple("event_keyword_laugh", "😂 Keyword: haha", RobotEvent.KeywordLaugh),
+            Triple("event_keyword_kiss", "😘 Keyword: kiss", RobotEvent.KeywordKiss),
+            Triple("event_keyword_shock", "😳 Keyword: omg", RobotEvent.KeywordShock),
+            Triple("event_keyword_cry", "🥺 Keyword: cry", RobotEvent.KeywordCry),
+            Triple("event_keyword_cute", "🤭 Keyword: uwu", RobotEvent.KeywordCute),
+            Triple("event_keyword_anger", "💢 Keyword: anger", RobotEvent.KeywordAnger),
             Triple("event_message_sent", "📤 Message sent", RobotEvent.MessageSent),
         )
 
@@ -1466,6 +1671,16 @@ class AssistantActivity : Activity() {
             GeminiConfig.KeySource.BUILD_CONFIG -> "স্ট্যাটাস: বিল্ট-ইন Secrets Key সক্রিয়"
             GeminiConfig.KeySource.NONE -> "স্ট্যাটাস: Key সেট নেই (চাইলে নিচে দিন, নইলে লোকাল কমান্ড চলবে)"
         }
+
+        switchBodySensors.isChecked = AssistantPrefs.emoBodySensorsInCenter(this)
+        switchBodyAudio.isChecked = AssistantPrefs.emoVoiceSfxEnabled(this)
+        switchBodyHaptics.isChecked = AssistantPrefs.emoHapticsEnabled(this)
+
+        val learnSnap = EmoLearningStore.snapshot(this)
+        learningPercentBadge.text = "${learnSnap.overallPercent}% · ${learnSnap.stage.titleBn}"
+        learningSummaryBar.progress = learnSnap.overallPercent
+        learningSummarySub.text =
+            "টাইপিং ${learnSnap.typingPatternPercent}% (${learnSnap.totalLearnedWords} শব্দ) · ইমোজি ${learnSnap.emojiPreferencePercent}% (${learnSnap.totalEmojiUses} বার)"
 
         updateFaceTileHighlights()
         if (::faceView.isInitialized) faceView.invalidate()

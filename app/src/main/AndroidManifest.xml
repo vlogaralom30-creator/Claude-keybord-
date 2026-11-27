@@ -13,9 +13,26 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
 
     <uses-feature
         android:name="android.hardware.telephony"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.camera.front"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.sensor.accelerometer"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.sensor.compass"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.sensor.proximity"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.fingerprint"
         android:required="false" />
 
     <!-- Android 11+: ইনস্টল করা app-এর নাম দিয়ে খুঁজতে ("open <যেকোনো app>") -->
@@ -45,7 +62,7 @@
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
-            android:theme="@style/Theme.MyApplication"
+            android:theme="@style/Theme.EmoOpen"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -65,6 +82,20 @@
             android:exported="true"
             android:label="@string/emo_control_title"
             android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
+
+        <activity
+            android:name="com.banglakeys.app.robot.EmoBodyActivity"
+            android:exported="false"
+            android:label="@string/emo_body_title"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.EmoOpen" />
+
+        <activity
+            android:name="com.banglakeys.app.robot.EmoLearningActivity"
+            android:exported="false"
+            android:label="@string/emo_learning_title"
+            android:theme="@style/Theme.EmoOpen"
+            android:windowSoftInputMode="adjustResize" />
 
         <activity
             android:name="com.banglakeys.app.CommandGuideActivity"

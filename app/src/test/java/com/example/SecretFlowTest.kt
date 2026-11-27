@@ -181,9 +181,9 @@ class SecretFlowTest {
   }
 
   @Test
-  fun `symbols layout includes SECRET key and KeyboardView toggles secret mode`() {
+  fun `quick action bar includes SECRET key and KeyboardView toggles secret mode`() {
     assertTrue(com.banglakeys.app.KeyboardView.QuickAction.values().any { it.name == "SECRET" })
-    assertTrue(Layouts.symbols(bnDigits = true, taka = true).flatten().any { it.type == KeyType.SECRET })
+    assertEquals(10, Layouts.symbols(bnDigits = true, taka = true).first().size)
 
     val kv = KeyboardView(context)
     kv.setLayout(Layouts.phonetic(numberRow = false, bnDigits = true), "বাংলা", 1f)

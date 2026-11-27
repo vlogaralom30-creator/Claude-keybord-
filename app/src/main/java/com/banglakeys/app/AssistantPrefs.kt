@@ -33,6 +33,10 @@ object AssistantPrefs {
     private const val KEY_AD_SKIP_COUNT = "ad_skip_count"
     private const val KEY_AD_SKIP_LAST = "ad_skip_last"
     private const val KEY_SCROLL_CONTENT_DIR = "scroll_by_content_direction"
+    private const val KEY_EMO_BODY_SENSORS_CENTER = "emo_body_sensors_in_center"
+    private const val KEY_EMO_VOICE_SFX_ENABLED = "emo_voice_sfx_enabled"
+    private const val KEY_EMO_HAPTICS_ENABLED = "emo_haptics_enabled"
+    private const val KEY_EMO_CAMERA_EYES_ENABLED = "emo_camera_eyes_enabled"
 
     const val MIN_FLOW_TIMEOUT_SEC = 2
     const val MAX_FLOW_TIMEOUT_SEC = 15
@@ -169,5 +173,33 @@ object AssistantPrefs {
             .putInt(KEY_AD_SKIP_COUNT, next)
             .putString(KEY_AD_SKIP_LAST, label.take(64))
             .apply()
+    }
+
+    fun emoBodySensorsInCenter(ctx: Context): Boolean =
+        prefs(ctx).getBoolean(KEY_EMO_BODY_SENSORS_CENTER, false)
+
+    fun setEmoBodySensorsInCenter(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean(KEY_EMO_BODY_SENSORS_CENTER, enabled).apply()
+    }
+
+    fun emoVoiceSfxEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean(KEY_EMO_VOICE_SFX_ENABLED, true)
+
+    fun setEmoVoiceSfxEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean(KEY_EMO_VOICE_SFX_ENABLED, enabled).apply()
+    }
+
+    fun emoHapticsEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean(KEY_EMO_HAPTICS_ENABLED, true)
+
+    fun setEmoHapticsEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean(KEY_EMO_HAPTICS_ENABLED, enabled).apply()
+    }
+
+    fun emoCameraEyesEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean(KEY_EMO_CAMERA_EYES_ENABLED, false)
+
+    fun setEmoCameraEyesEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean(KEY_EMO_CAMERA_EYES_ENABLED, enabled).apply()
     }
 }

@@ -16,6 +16,7 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.LinearLayout
 import android.widget.Toast
 import com.banglakeys.app.robot.EmoBrainHub
+import com.banglakeys.app.robot.EmoLearningStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -249,6 +250,9 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
                     else -> {
                         commitComposing()
                         currentInputConnection?.commitText(emoji, 1)
+                        if (allowLearn) {
+                            EmoLearningStore.recordEmojiUsed(this@BanglaIME, emoji)
+                        }
                         kv?.notifyEmoWord(emoji, !allowLearn)
                         refreshStrip()
                         updateAutoShift()
@@ -536,6 +540,12 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
         val finalWord = if (avro) Phonetic.convert(raw) else raw
         if (allowLearn) {
             suggestions.learn(raw, finalWord, avro || bangla)
+            EmoLearningStore.recordWordCommitted(
+                ctx = this,
+                rawWord = finalWord,
+                isBangla = avro || bangla,
+                viaSuggestion = false,
+            )
         }
         kv?.notifyEmoWord(finalWord, !allowLearn)
         if (avro) {
@@ -603,6 +613,9 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
         commitComposing()
         ic.commitText(text, 1)
         if (text.isNotBlank()) {
+            if (allowLearn && EmoLearningStore.extractEmojis(text).isNotEmpty()) {
+                EmoLearningStore.recordEmojiUsed(this, text)
+            }
             kv?.notifyEmoWord(text, !allowLearn)
         }
         if (text in SENTENCE_TERMINATORS) {
@@ -637,6 +650,9 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
             }
             updateSecretStrip()
             return
+        }
+        if (allowLearn) {
+            EmoLearningStore.recordBackspace(this)
         }
         if (buf.isNotEmpty()) {
             buf.setLength(buf.length - 1)
@@ -804,6 +820,14 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
         }
         buf.setLength(0)
         ic.commitText("$word ", 1)
+        if (allowLearn) {
+            EmoLearningStore.recordWordCommitted(
+                ctx = this,
+                rawWord = word,
+                isBangla = bangla,
+                viaSuggestion = true,
+            )
+        }
         kv?.notifyEmoWord(word, !allowLearn)
         refreshStrip()
         updateAutoShift()

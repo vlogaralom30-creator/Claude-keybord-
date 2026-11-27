@@ -1,7 +1,7 @@
 package com.banglakeys.app.robot
 
 /**
- * টাইপিং গতি (fast/slow), পরপর backspace চাপা, এবং বাংলা/ইংরেজি মুড কীওয়ার্ড দেখে
+ * টাইপিং গতি (fast/slow), পরপর backspace চাপা, এবং বাংলা/ইংরেজি/ইমোজি মুড কীওয়ার্ড দেখে
  * [RobotEvent] তৈরি করে যাতে EMO কী-বোর্ড বাস্তবসম্মত প্রতিক্রিয়া দেখায়।
  */
 class TypingMoodTracker {
@@ -56,6 +56,11 @@ class TypingMoodTracker {
         val w = rawWord.trim().trimEnd('.', '।', '!', '?', ',', ';', ':').lowercase()
         if (w.isEmpty()) return null
         return when {
+            w in LAUGH_KEYWORDS -> RobotEvent.KeywordLaugh
+            w in KISS_KEYWORDS -> RobotEvent.KeywordKiss
+            w in SHOCK_KEYWORDS -> RobotEvent.KeywordShock
+            w in CRY_KEYWORDS -> RobotEvent.KeywordCry
+            w in CUTE_KEYWORDS -> RobotEvent.KeywordCute
             w in POSITIVE_KEYWORDS -> RobotEvent.KeywordLove
             w in ANGER_KEYWORDS -> RobotEvent.KeywordAnger
             else -> null
@@ -80,12 +85,42 @@ class TypingMoodTracker {
         private const val SLOW_MIN_GAP_MS = 2_800L
         private const val SLOW_MAX_GAP_MS = 7_500L
 
+        private val LAUGH_KEYWORDS = setOf(
+            "haha", "hahaha", "lol", "lmao", "rofl", "hehe", "hehehe",
+            "হাহা", "হাহাহা", "হাসি", "খিলখিল",
+            "😂", "🤣", "😆", "😄", "😁",
+        )
+
+        private val KISS_KEYWORDS = setOf(
+            "kiss", "mwah", "muah", "chumu",
+            "উম্মাহ", "চুমু",
+            "😘", "😗", "😙", "😚",
+        )
+
+        private val SHOCK_KEYWORDS = setOf(
+            "omg", "wtf", "whoa", "wow", "shocked", "what",
+            "অবাক", "বাপরে", "হায়",
+            "😳", "😱", "🤯", "😲",
+        )
+
+        private val CRY_KEYWORDS = setOf(
+            "cry", "crying", "sad", "sob", "tears", "t_t", "uff",
+            "কান্না", "কাঁদছি", "দুঃখ", "কষ্ট",
+            "😭", "😢", "🥺", "💔",
+        )
+
+        private val CUTE_KEYWORDS = setOf(
+            "cute", "uwu", "owo", "kawaii", "sweet", "pookie",
+            "কিউট", "মিষ্টি", "আদর",
+            "🥰", "🤭", "😋", "😏",
+        )
+
         private val POSITIVE_KEYWORDS = setOf(
-            "love", "lovely", "happy", "haha", "hahaha", "lol", "yay", "thanks", "thank",
-            "awesome", "great", "cute", "miss", "heart",
-            "ভালোবাসি", "ভালবাসি", "ভালো", "খুশি", "আনন্দ", "ধন্যবাদ", "সুন্দর", "মিস", "হাহা",
+            "love", "lovely", "happy", "yay", "thanks", "thank",
+            "awesome", "great", "miss", "heart",
+            "ভালোবাসি", "ভালবাসি", "ভালো", "খুশি", "আনন্দ", "ধন্যবাদ", "সুন্দর", "মিস",
             "bhalobashi", "valobashi", "bhalo", "valo", "khushi", "dhonnobad", "sundor",
-            "❤️", "😍", "🥰", "😘", "😊", "😁", "💖", "💕",
+            "❤️", "😍", "😊", "💖", "💕",
         )
 
         private val ANGER_KEYWORDS = setOf(

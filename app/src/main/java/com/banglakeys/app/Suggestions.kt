@@ -227,6 +227,52 @@ class Suggestions(context: Context) {
         lastCommittedEn = ""
     }
 
+    data class Stats(
+        val learnedBnWords: Int,
+        val learnedEnWords: Int,
+        val bigramCount: Int,
+        val totalFrequency: Int,
+    ) {
+        val totalWords: Int get() = learnedBnWords + learnedEnWords
+    }
+
+    fun stats(): Stats {
+        val bnWords = HashSet<String>()
+        var freq = 0
+        for ((_, bucket) in learnedBn) {
+            for ((w, count) in bucket) {
+                bnWords.add(w)
+                freq += count
+            }
+        }
+        val enWords = HashSet<String>()
+        for ((_, bucket) in learnedEn) {
+            for ((w, count) in bucket) {
+                enWords.add(w.lowercase())
+                freq += count
+            }
+        }
+        var bigrams = 0
+        for ((_, bucket) in bigramBn) bigrams += bucket.size
+        for ((_, bucket) in bigramEn) bigrams += bucket.size
+        return Stats(
+            learnedBnWords = bnWords.size,
+            learnedEnWords = enWords.size,
+            bigramCount = bigrams,
+            totalFrequency = freq,
+        )
+    }
+
+    fun clearLearned() {
+        learnedBn.clear()
+        learnedEn.clear()
+        bigramBn.clear()
+        bigramEn.clear()
+        lastCommittedBn = ""
+        lastCommittedEn = ""
+        save()
+    }
+
     private fun fuzzyPhoneticMatch(roman: String, query: String): Boolean {
         val normRoman = normalizePhoneticRoman(roman)
         val normQuery = normalizePhoneticRoman(query)

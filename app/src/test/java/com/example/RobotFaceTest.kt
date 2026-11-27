@@ -47,8 +47,10 @@ class RobotFaceTest {
   }
 
   @Test
-  fun `all 12 faces issue properly styled drawPath commands onto canvas with and without glow`() {
-    assertEquals(12, FaceId.entries.size)
+  fun `all 32 faces issue properly styled drawPath commands onto canvas with and without glow`() {
+    assertEquals(32, FaceId.entries.size)
+    assertEquals(12, FaceId.CLASSIC_12.size)
+    assertEquals(20, FaceId.EXPRESSIVE_20.size)
     val platePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
       color = Color.parseColor("#1A1D24")
       style = Paint.Style.FILL
@@ -96,17 +98,20 @@ class RobotFaceTest {
         glow = false,
       )
 
-      val expected = expectedStyles.getValue(face)
       val sc = shadowOf(canvas)
-      assertEquals("Unexpected path count for $face", expected.size, sc.pathPaintHistoryCount)
-
-      for (i in expected.indices) {
-        val paintAtDraw = sc.getDrawnPathPaint(i)
-        assertEquals(Color.parseColor("#36D1FF"), paintAtDraw.color)
-        assertEquals("Face $face path $i style mismatch", expected[i], paintAtDraw.style)
-        if (expected[i] == Paint.Style.STROKE) {
-          assertTrue("Face $face strokeWidth must be > 0", paintAtDraw.strokeWidth > 0f)
+      val expected = expectedStyles[face]
+      if (expected != null) {
+        assertEquals("Unexpected path count for $face", expected.size, sc.pathPaintHistoryCount)
+        for (i in expected.indices) {
+          val paintAtDraw = sc.getDrawnPathPaint(i)
+          assertEquals(Color.parseColor("#36D1FF"), paintAtDraw.color)
+          assertEquals("Face $face path $i style mismatch", expected[i], paintAtDraw.style)
+          if (expected[i] == Paint.Style.STROKE) {
+            assertTrue("Face $face strokeWidth must be > 0", paintAtDraw.strokeWidth > 0f)
+          }
         }
+      } else {
+        assertTrue("Expressive face $face must issue >= 3 paths", sc.pathPaintHistoryCount >= 3)
       }
 
       // Glow + gaze + bounce transform renders cleanly for every face without throwing
@@ -128,7 +133,11 @@ class RobotFaceTest {
         scaleY = 1.12f,
         glow = true,
       )
-      assertTrue("Glow path count for $face must be >= ${expected.size}", shadowOf(glowCanvas).pathPaintHistoryCount >= expected.size)
+      val minGlowPaths = expected?.size ?: 3
+      assertTrue(
+        "Glow path count for $face must be >= $minGlowPaths",
+        shadowOf(glowCanvas).pathPaintHistoryCount >= minGlowPaths,
+      )
     }
   }
 
@@ -325,6 +334,13 @@ class RobotFaceTest {
     assertEquals(RobotEvent.KeywordLove, tracker.onWordCommitted("ভালোবাসি"))
     assertEquals(RobotEvent.KeywordLove, tracker.onWordCommitted("khushi"))
     assertEquals(RobotEvent.KeywordLove, tracker.onWordCommitted("😍"))
+    assertEquals(RobotEvent.KeywordLaugh, tracker.onWordCommitted("haha!"))
+    assertEquals(RobotEvent.KeywordLaugh, tracker.onWordCommitted("😂"))
+    assertEquals(RobotEvent.KeywordKiss, tracker.onWordCommitted("kiss"))
+    assertEquals(RobotEvent.KeywordKiss, tracker.onWordCommitted("😘"))
+    assertEquals(RobotEvent.KeywordShock, tracker.onWordCommitted("omg"))
+    assertEquals(RobotEvent.KeywordCry, tracker.onWordCommitted("কান্না"))
+    assertEquals(RobotEvent.KeywordCute, tracker.onWordCommitted("uwu"))
     assertEquals(RobotEvent.KeywordAnger, tracker.onWordCommitted("angry"))
     assertEquals(RobotEvent.KeywordAnger, tracker.onWordCommitted("রাগ।"))
     assertNull(tracker.onWordCommitted("কবিতা"))
@@ -391,12 +407,16 @@ class RobotFaceTest {
     assertEquals(FaceId.JOY, kv.emoCurrentMood())
 
     kv.setEmoPrivacyMode(false)
+    kv.notifyEmoWord("haha", isPassword = false)
+    assertEquals(FaceId.GIGGLE, kv.emoCurrentMood())
+    kv.notifyEmoWord("😘", isPassword = false)
+    assertEquals(FaceId.WINK_KISS, kv.emoCurrentMood())
     kv.notifyEmoSend(isPassword = false)
-    assertEquals(FaceId.SMILE, kv.emoCurrentMood())
+    assertEquals(FaceId.WINK, kv.emoCurrentMood())
   }
 
   @Test
-  fun `unified EMO Control Center merges 12-face lab, events, and voice controls`() {
+  fun `unified EMO Control Center merges 32-face lab, events, and voice controls`() {
     val controller = Robolectric.buildActivity(AssistantActivity::class.java).setup()
     val activity = controller.get()
     val root = activity.window.decorView
@@ -408,13 +428,19 @@ class RobotFaceTest {
     assertNotNull(root.findViewWithTag<View>("btn_emo_hero_ptt"))
     assertNotNull(root.findViewWithTag<View>("btn_emo_lang"))
 
-    // 12-face expression tiles
+    // All 32 expression tiles
     for (face in FaceId.entries) {
       val tile = root.findViewWithTag<View>("face_tile_${face.name.lowercase()}")
       assertNotNull("Missing tile for $face", tile)
     }
     root.findViewWithTag<View>("face_tile_joy").performClick()
     assertEquals(FaceId.JOY, faceView.brain.mood)
+
+    root.findViewWithTag<View>("face_tile_wink_kiss").performClick()
+    assertEquals(FaceId.WINK_KISS, faceView.brain.mood)
+
+    root.findViewWithTag<View>("event_keyword_laugh").performClick()
+    assertEquals(FaceId.GIGGLE, faceView.brain.mood)
 
     // Brain event lab + memory reset
     root.findViewWithTag<View>("event_shake").performClick()

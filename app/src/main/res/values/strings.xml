@@ -1,9 +1,11 @@
 <resources>
-    <string name="app_name">Bangla Keys</string>
-    <string name="ime_name">Bangla Keys</string>
-    <string name="settings_title">Bangla Keys Settings</string>
+    <string name="app_name">EMO Keys</string>
+    <string name="ime_name">EMO Keys</string>
+    <string name="settings_title">EMO Keys Settings</string>
     <string name="notepad_title">Notepad ও Clipboard Memory</string>
-    <string name="hero_subtitle">Bangla Phonetic Keyboard + EMO Robot (2-in-1)</string>
+    <string name="hero_subtitle">EMO Live-Face Keyboard • Bangla &amp; English • Hey EMO Voice</string>
+    <string name="open_screen_subtitle">লাইভ EMO ফেস • বাংলা ও English কিবোর্ড • Hey EMO ভয়েস</string>
+    <string name="open_screen_enter">শুরু করুন →</string>
     <string name="status_active">Keyboard Active</string>
     <string name="status_enabled">Keyboard Enabled</string>
     <string name="status_disabled">Enable Keyboard</string>
@@ -11,7 +13,7 @@
     <string name="assistant_badge_ready">EMO Ready</string>
     <string name="assistant_badge_setup">EMO Setup</string>
     <string name="setup_title">System Keyboard Setup</string>
-    <string name="setup_desc">১. Keyboard চালু করুন, ২. বাংলা টাইপিংয়ের জন্য Bangla Keys বেছে নিন।</string>
+    <string name="setup_desc">১. Keyboard চালু করুন, ২. বাংলা ও ইংরেজি টাইপিংয়ের জন্য EMO Keys বেছে নিন।</string>
     <string name="btn_enable_keyboard">১. Keyboard enable করুন</string>
     <string name="btn_select_keyboard">২. Keyboard বেছে নিন</string>
     <string name="tools_section_title">EMO রোবট ও নোটপ্যাড টুলস</string>
@@ -50,7 +52,7 @@
     <string name="notepad_empty_clips">Clipboard history এখনো খালি।</string>
     <string name="btn_open_secret">Secret Message ও AES Vault</string>
     <string name="secret_title">Secret Message ও AES Vault</string>
-    <string name="cd_app_icon">Bangla Keys app icon</string>
+    <string name="cd_app_icon">EMO Keys app icon</string>
     <string name="cd_status_icon">Keyboard status</string>
     <string name="cd_copy_icon">Copy text</string>
     <string name="cd_delete_icon">Delete item</string>
@@ -69,6 +71,10 @@
     <string name="secret_clipboard_service_title">Background Clipboard Monitor</string>
     <string name="secret_clipboard_service_desc">ব্যাকগ্রাউন্ড সার্ভিসে কপি করা secret code শনাক্ত করে কিবোর্ডের উপরে বার দেখাবে</string>
     <string name="emo_control_title">EMO Control Center</string>
+    <string name="emo_body_title">EMO Body Mode</string>
+    <string name="emo_learning_title">EMO Learning Mode</string>
+    <string name="emo_learning_subtitle">টাইপিং প্যাটার্ন ও ইমোজি পছন্দ শেখার অগ্রগতি</string>
+    <string name="btn_open_emo_learning">🧠 EMO Learning Mode (টাইপিং ও ইমোজি শিক্ষা)</string>
     <string name="robot_face_demo_title">EMO Control Center</string>
     <string name="btn_test_robot_face">🤖 EMO কন্ট্রোল সেন্টার</string>
 </resources>
