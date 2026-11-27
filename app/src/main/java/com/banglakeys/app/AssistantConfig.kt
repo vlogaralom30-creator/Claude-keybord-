@@ -1,20 +1,23 @@
 package com.banglakeys.app
 
 /**
- * Assistant-এর সব সেটিং এক জায়গায়। নিজের মতো বদলাতে চাইলে শুধু এই ফাইল এডিট করুন।
+ * EMO রোবট ও ভয়েস কন্ট্রোল সেটিং এক জায়গায়।
  */
 object AssistantConfig {
 
     const val PREFS = "assistant_prefs"
     const val KEY_BANGLA = "bangla"
 
-    /** Wake wordগুলোর যেকোনোটা শুনলে assistant জেগে ওঠে (ছোট হাতের অক্ষরে লিখুন)। */
+    /** Wake wordগুলোর যেকোনোটা শুনলে EMO জেগে ওঠে (ছোট হাতের অক্ষরে লিখুন)। */
     val WAKE_WORDS = listOf(
-        "hey bot", "hay bot", "hi bot", "hey boat", "hey but", "heybot", "ok bot", "okay bot",
-        "হেই বট", "হে বট", "হ্যালো বট", "হাই বট", "ওকে বট", "এই বট"
+        "hey emo", "hay emo", "hi emo", "hello emo", "ok emo", "okay emo",
+        "hey emu", "hay emu", "ok emu", "okay emu",
+        "heyemo", "hayemo", "heyemu", "heyimo",
+        "হেই ইমো", "হে ইমো", "এই ইমো", "হ্যালো ইমো", "হাই ইমো", "ওকে ইমো",
+        "হেই ইমূ", "হে ইমূ", "হেই এমো"
     )
 
-    /** Wake word বা কমান্ডের পর এতক্ষণ (ms) আর "Hey Bot" না বললেও চলবে। */
+    /** Wake word বা কমান্ডের পর এতক্ষণ (ms) আর "Hey EMO" না বললেও চলবে। */
     const val AWAKE_WINDOW_MS = 20_000L
 
     /**

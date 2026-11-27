@@ -38,12 +38,17 @@ class SecretDecodeBannerView(context: Context) : FrameLayout(context) {
             val cipherText: String,
             val durationMs: Long = UNKNOWN_AUTO_HIDE_MS,
         ) : BannerState()
+
+        data class SetupGuide(
+            val guide: SetupGuidance.SetupGuide,
+        ) : BannerState()
     }
 
     interface Listener {
         fun onReplyClicked(senderName: String)
         fun onCopyPlainClicked(plainText: String)
         fun onOpenVaultClicked()
+        fun onGuideActionClicked(action: SetupGuidance.GuideAction) {}
         fun onDismissed() {}
     }
 
@@ -64,6 +69,7 @@ class SecretDecodeBannerView(context: Context) : FrameLayout(context) {
     private val replyBtn: TextView
     private val copyBtn: TextView
     private val vaultBtn: TextView
+    private val guideActionBtn: TextView
     private val closeBtn: TextView
     private val progressTrack: FrameLayout
     private val progressFill: View
@@ -186,6 +192,28 @@ class SecretDecodeBannerView(context: Context) : FrameLayout(context) {
             }
         }
 
+        guideActionBtn = TextView(context).apply {
+            text = "সেটআপ"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            minHeight = dp(38f)
+            setPadding(dp(10f), dp(4f), dp(10f), dp(4f))
+            contentDescription = "Open setup"
+            tag = "secret_banner_guide_action_btn"
+            visibility = View.GONE
+            layoutParams = LinearLayout.LayoutParams(
+                LayoutParams.WRAP_CONTENT,
+                LayoutParams.WRAP_CONTENT
+            ).apply { marginEnd = dp(4f) }
+            setOnClickListener {
+                val st = currentState as? BannerState.SetupGuide ?: return@setOnClickListener
+                val act = st.guide.action
+                hide()
+                listener?.onGuideActionClicked(act)
+            }
+        }
+
         closeBtn = TextView(context).apply {
             text = "✕"
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
@@ -205,6 +233,7 @@ class SecretDecodeBannerView(context: Context) : FrameLayout(context) {
         topRow.addView(replyBtn)
         topRow.addView(copyBtn)
         topRow.addView(vaultBtn)
+        topRow.addView(guideActionBtn)
         topRow.addView(closeBtn)
 
         progressTrack = FrameLayout(context).apply {
@@ -252,6 +281,7 @@ class SecretDecodeBannerView(context: Context) : FrameLayout(context) {
         replyBtn.visibility = View.VISIBLE
         copyBtn.visibility = View.VISIBLE
         vaultBtn.visibility = View.GONE
+        guideActionBtn.visibility = View.GONE
         visibility = View.VISIBLE
 
         startTimer(durationMs)
@@ -266,14 +296,37 @@ class SecretDecodeBannerView(context: Context) : FrameLayout(context) {
 
         senderBadge.text = "🔒 অজানা Secret Code"
         messageText.maxLines = 2
-        messageText.text = "এই কোডের passphrase সেভ করা নেই"
+        messageText.text = "এই কোডের passphrase সেভ নেই — Vault-এ গিয়ে Contact বা Invite ইমপোর্ট করুন"
 
         replyBtn.visibility = View.GONE
         copyBtn.visibility = View.GONE
         vaultBtn.visibility = View.VISIBLE
+        guideActionBtn.visibility = View.GONE
         visibility = View.VISIBLE
 
         startTimer(durationMs)
+    }
+
+    fun showGuide(guide: SetupGuidance.SetupGuide) {
+        currentState = BannerState.SetupGuide(guide)
+        expanded = false
+
+        senderBadge.text = guide.title
+        messageText.maxLines = 4
+        messageText.text = guide.steps
+
+        replyBtn.visibility = View.GONE
+        copyBtn.visibility = View.GONE
+        vaultBtn.visibility = View.GONE
+        if (!guide.actionLabel.isNullOrBlank() && guide.action != SetupGuidance.GuideAction.NONE) {
+            guideActionBtn.text = guide.actionLabel
+            guideActionBtn.visibility = View.VISIBLE
+        } else {
+            guideActionBtn.visibility = View.GONE
+        }
+        visibility = View.VISIBLE
+
+        startTimer(guide.durationMs)
     }
 
     fun hide() {
@@ -359,6 +412,9 @@ class SecretDecodeBannerView(context: Context) : FrameLayout(context) {
 
         vaultBtn.setTextColor(theme.accent)
         vaultBtn.background = pillRipple(theme.badgeBg, theme.badgeStroke, 10f)
+
+        guideActionBtn.setTextColor(theme.onAccent)
+        guideActionBtn.background = pillRipple(theme.accent, theme.accent, 10f)
 
         closeBtn.setTextColor(theme.text)
         closeBtn.background = pillRipple(theme.actionBg, theme.pillStroke, 10f)

@@ -3,7 +3,9 @@ package com.banglakeys.app
 import android.content.Context
 import android.content.res.ColorStateList
 import android.content.res.Configuration
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -19,6 +21,10 @@ import android.view.WindowManager
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import com.banglakeys.app.robot.BlinkAnimator
+import com.banglakeys.app.robot.EmoBrainHub
+import com.banglakeys.app.robot.FaceId
+import com.banglakeys.app.robot.FaceRenderer
 import kotlin.math.hypot
 
 /**
@@ -276,43 +282,21 @@ class CommandOverlayManager(
 
     private fun dp(v: Int): Int = (v * ctx.resources.displayMetrics.density).toInt().coerceAtLeast(1)
 
-    private fun palette(): HudPalette {
-        val night = (ctx.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
-            Configuration.UI_MODE_NIGHT_YES
-        return if (night) {
-            HudPalette(
-                surface = 0xF21A2020.toInt(),
-                surfaceAlt = 0xFF232C2B.toInt(),
-                border = 0xFF334340.toInt(),
-                text = 0xFFE0E5E4.toInt(),
-                subText = 0xFF9FB2AF.toInt(),
-                primary = 0xFF4DB6AC.toInt(),
-                primarySoft = 0xFF004D45.toInt(),
-                ok = 0xFF4ADE80.toInt(),
-                okSoft = 0xFF133622.toInt(),
-                warn = 0xFFFBBF24.toInt(),
-                warnSoft = 0xFF3A2D0B.toInt(),
-                danger = 0xFFF87171.toInt(),
-                dangerSoft = 0xFF3E1818.toInt()
-            )
-        } else {
-            HudPalette(
-                surface = 0xF7FFFFFF.toInt(),
-                surfaceAlt = 0xFFE9F2F0.toInt(),
-                border = 0xFFD4E3E0.toInt(),
-                text = 0xFF161D1C.toInt(),
-                subText = 0xFF536663.toInt(),
-                primary = 0xFF00796B.toInt(),
-                primarySoft = 0xFFD6F2EE.toInt(),
-                ok = 0xFF16A34A.toInt(),
-                okSoft = 0xFFDCFCE7.toInt(),
-                warn = 0xFFD97706.toInt(),
-                warnSoft = 0xFFFEF3C7.toInt(),
-                danger = 0xFFDC2626.toInt(),
-                dangerSoft = 0xFFFEE2E2.toInt()
-            )
-        }
-    }
+    private fun palette(): HudPalette = HudPalette(
+        surface = 0xF5080C12.toInt(),
+        surfaceAlt = 0xFF101824.toInt(),
+        border = 0x5536D1FF,
+        text = 0xFFF1F8FF.toInt(),
+        subText = 0xFF8FB4CE.toInt(),
+        primary = 0xFF36D1FF.toInt(),
+        primarySoft = 0xFF0E2938.toInt(),
+        ok = 0xFF22E58A.toInt(),
+        okSoft = 0xFF0D2E20.toInt(),
+        warn = 0xFFFFC857.toInt(),
+        warnSoft = 0xFF35280D.toInt(),
+        danger = 0xFFFF5A6E.toInt(),
+        dangerSoft = 0xFF351218.toInt()
+    )
 
     private fun pillBg(fill: Int, radiusDp: Int, stroke: Int? = null): GradientDrawable =
         GradientDrawable().apply {
@@ -340,9 +324,67 @@ class CommandOverlayManager(
 
     private fun rippleView(view: View, fill: Int, radiusDp: Int, stroke: Int? = null) {
         val base = pillBg(fill, radiusDp, stroke)
-        view.background = RippleDrawable(ColorStateList.valueOf(0x2800796B), base, null)
+        view.background = RippleDrawable(ColorStateList.valueOf(0x3336D1FF), base, null)
         view.isClickable = true
         view.isFocusable = false
+    }
+
+    private fun makeVisor(
+        face: FaceId,
+        accent: Int,
+        sleeping: Boolean = false,
+        wDp: Int = 46,
+        hDp: Int = 32,
+        marginEndDp: Int = 8,
+    ): EmoHudFaceView = EmoHudFaceView(ctx, face, accent, sleeping).apply {
+        layoutParams = LinearLayout.LayoutParams(dp(wDp), dp(hDp)).apply {
+            marginEnd = dp(marginEndDp)
+        }
+    }
+
+    private class EmoHudFaceView(
+        context: Context,
+        private val face: FaceId,
+        accentColor: Int,
+        private val sleeping: Boolean = false,
+    ) : View(context) {
+        private val blink = BlinkAnimator()
+        private val platePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = 0xFF060A10.toInt()
+        }
+        private val outlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = (accentColor and 0x00FFFFFF) or (0x77 shl 24)
+            style = Paint.Style.STROKE
+            strokeWidth = (1.3f * context.resources.displayMetrics.density).coerceAtLeast(1f)
+        }
+        private val eyePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = accentColor
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            if (width <= 0 || height <= 0) return
+            val w = width.toFloat()
+            val h = height.toFloat()
+            FaceRenderer.draw(
+                canvas = canvas,
+                face = face,
+                cx = w / 2f,
+                cy = h / 2f,
+                plateW = w * 0.94f,
+                plateH = h * 0.92f,
+                eyeGap = w * 0.41f,
+                eyeSize = h * 0.34f,
+                blink = if (sleeping) 0.78f else blink.tick(),
+                eyePaint = eyePaint,
+                platePaint = platePaint,
+                plateOutline = outlinePaint,
+                glow = true,
+            )
+            if (isAttachedToWindow) {
+                postInvalidateOnAnimation()
+            }
+        }
     }
 
     private fun bindState(root: LinearLayout, state: OverlayState) {
@@ -390,16 +432,17 @@ class CommandOverlayManager(
         val isListeningStandby = state is OverlayState.Listening
         val dotColor = if (isListeningStandby) p.ok else p.primary
         val stroke = if (isListeningStandby) p.primary else p.border
+        val edgeFace = if (isListeningStandby) FaceId.NORMAL else EmoBrainHub.brain.mood
 
         val tab = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            minimumWidth = dp(38)
-            minimumHeight = dp(60)
-            setPadding(dp(7), dp(9), dp(7), dp(9))
+            minimumWidth = dp(44)
+            minimumHeight = dp(64)
+            setPadding(dp(6), dp(8), dp(6), dp(8))
             background = edgeTabBg(p.surface, stroke, edge)
             elevation = dp(8).toFloat()
-            contentDescription = if (isListeningStandby) "Assistant listening tab" else "Tap to speak command"
+            contentDescription = if (isListeningStandby) "EMO listening tab" else "Tap to talk to EMO"
         }
 
         // ছোট ২-ডট গ্রিপ যা বোঝায় এটি ড্র্যাগ করা যাবে
@@ -421,17 +464,16 @@ class CommandOverlayManager(
         }
         tab.addView(gripRow)
 
-        val iconChip = LinearLayout(ctx).apply {
-            gravity = Gravity.CENTER
-            background = pillBg(if (isListeningStandby) p.primary else p.primarySoft, 12)
-            layoutParams = LinearLayout.LayoutParams(dp(26), dp(26))
-            addView(ImageView(ctx).apply {
-                val kind = if (isListeningStandby) AssistantIcons.Kind.MIC else AssistantIcons.Kind.BOT
-                val tint = if (isListeningStandby) Color.WHITE else p.primary
-                setImageDrawable(AssistantIcons.drawable(ctx, kind, tint, 15))
-            })
-        }
-        tab.addView(iconChip)
+        tab.addView(
+            makeVisor(
+                face = edgeFace,
+                accent = p.primary,
+                sleeping = !isListeningStandby && EmoBrainHub.brain.sleeping,
+                wDp = 36,
+                hDp = 24,
+                marginEndDp = 0,
+            )
+        )
 
         // লাইভ স্ট্যাটাস ডট
         tab.addView(View(ctx).apply {
@@ -564,12 +606,18 @@ class CommandOverlayManager(
             setOnClickListener { onPttTriggerClick() }
         }
 
-        tapArea.addView(ImageView(ctx).apply {
-            setImageDrawable(AssistantIcons.drawable(ctx, AssistantIcons.Kind.MIC, p.primary, 18))
-            layoutParams = LinearLayout.LayoutParams(dp(18), dp(18)).apply { marginEnd = dp(8) }
-        })
+        tapArea.addView(
+            makeVisor(
+                face = EmoBrainHub.brain.mood,
+                accent = p.primary,
+                sleeping = EmoBrainHub.brain.sleeping,
+                wDp = 44,
+                hDp = 30,
+                marginEndDp = 8,
+            )
+        )
         tapArea.addView(TextView(ctx).apply {
-            text = if (state.isBangla) "কথা বলতে ট্যাপ করুন" else "Tap to speak"
+            text = if (state.isBangla) "EMO-কে বলতে ট্যাপ করুন" else "Tap to talk to EMO"
             textSize = 13f
             setTypeface(null, Typeface.BOLD)
             setTextColor(p.text)
@@ -590,24 +638,21 @@ class CommandOverlayManager(
             gravity = Gravity.CENTER_VERTICAL
         }
 
-        val micBadge = LinearLayout(ctx).apply {
-            gravity = Gravity.CENTER
-            background = pillBg(p.primary, 14)
-            layoutParams = LinearLayout.LayoutParams(dp(28), dp(28)).apply { marginEnd = dp(8) }
-            addView(ImageView(ctx).apply {
-                setImageDrawable(AssistantIcons.drawable(ctx, AssistantIcons.Kind.MIC, Color.WHITE, 16))
-            })
+        val listenFace = if (state.isPtt || state.awakeSec != null || state.partialText.isNotBlank()) {
+            FaceId.CURIOUS
+        } else {
+            FaceId.NORMAL
         }
-        topRow.addView(micBadge)
+        topRow.addView(makeVisor(face = listenFace, accent = p.primary, wDp = 46, hDp = 32, marginEndDp = 8))
 
         val statusLabel = when {
-            state.isPtt -> "শুনছি — বলুন"
-            state.awakeSec != null && state.awakeSec > 0 -> "সক্রিয় (${state.awakeSec}s) — কমান্ড দিন"
-            else -> "\"Hey Bot\" বলে কমান্ড দিন"
+            state.isPtt -> "EMO শুনছে — বলুন"
+            state.awakeSec != null && state.awakeSec > 0 -> "EMO সক্রিয় (${state.awakeSec}s) — বলুন"
+            else -> "\"Hey EMO\" বলে কমান্ড দিন"
         }
         topRow.addView(TextView(ctx).apply {
             text = statusLabel
-            textSize = 12f
+            textSize = 12.5f
             setTypeface(null, Typeface.BOLD)
             setTextColor(p.primary)
             maxLines = 1
@@ -675,12 +720,9 @@ class CommandOverlayManager(
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        header.addView(ImageView(ctx).apply {
-            setImageDrawable(AssistantIcons.drawable(ctx, AssistantIcons.Kind.SHIELD, p.warn, 18))
-            layoutParams = LinearLayout.LayoutParams(dp(18), dp(18)).apply { marginEnd = dp(8) }
-        })
+        header.addView(makeVisor(face = FaceId.STARE, accent = p.warn, wDp = 44, hDp = 30, marginEndDp = 8))
         header.addView(TextView(ctx).apply {
-            text = "নিশ্চিত করুন"
+            text = "EMO নিশ্চিত করছে"
             textSize = 12.5f
             setTypeface(null, Typeface.BOLD)
             setTextColor(p.warn)
@@ -746,7 +788,7 @@ class CommandOverlayManager(
         val confirmBtn = buildActionButton(
             kind = AssistantIcons.Kind.CHECK_CIRCLE,
             label = "হ্যাঁ, চালান",
-            fg = Color.WHITE,
+            fg = 0xFF041A11.toInt(),
             bg = p.ok
         ) { onConfirmClick() }
         btnRow.addView(confirmBtn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
@@ -761,10 +803,7 @@ class CommandOverlayManager(
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        row.addView(ImageView(ctx).apply {
-            setImageDrawable(AssistantIcons.drawable(ctx, AssistantIcons.Kind.SPARKLE, p.primary, 18))
-            layoutParams = LinearLayout.LayoutParams(dp(18), dp(18)).apply { marginEnd = dp(8) }
-        })
+        row.addView(makeVisor(face = FaceId.SQUEEZE, accent = p.primary, wDp = 44, hDp = 30, marginEndDp = 8))
         val textCol = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
@@ -799,16 +838,13 @@ class CommandOverlayManager(
     private fun bindFeedback(card: LinearLayout, p: HudPalette, state: OverlayState.ResultFeedback) {
         val accent = if (state.isSuccess) p.ok else p.danger
         val soft = if (state.isSuccess) p.okSoft else p.dangerSoft
-        val iconKind = if (state.isSuccess) AssistantIcons.Kind.CHECK_CIRCLE else AssistantIcons.Kind.ALERT_CIRCLE
+        val face = if (state.isSuccess) FaceId.JOY else FaceId.MEH
 
         val row = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        row.addView(ImageView(ctx).apply {
-            setImageDrawable(AssistantIcons.drawable(ctx, iconKind, accent, 20))
-            layoutParams = LinearLayout.LayoutParams(dp(20), dp(20)).apply { marginEnd = dp(10) }
-        })
+        row.addView(makeVisor(face = face, accent = accent, wDp = 44, hDp = 30, marginEndDp = 10))
 
         val col = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL

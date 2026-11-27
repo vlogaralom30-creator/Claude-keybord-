@@ -34,6 +34,44 @@ class Key(
     val shiftLabel: String? = null,
 )
 
+enum class KeyboardLanguageMode {
+    AVRO,
+    BANGLA,
+    ENGLISH;
+
+    fun next(): KeyboardLanguageMode = when (this) {
+        AVRO -> BANGLA
+        BANGLA -> ENGLISH
+        ENGLISH -> AVRO
+    }
+
+    fun spaceLabel(): String = when (this) {
+        AVRO -> "অভ্র"
+        BANGLA -> "বাংলা"
+        ENGLISH -> "English"
+    }
+
+    fun toastLabel(): String = when (this) {
+        AVRO -> "অভ্র (Phonetic)"
+        BANGLA -> "বাংলা (${Layouts.PROBHAT_NAME})"
+        ENGLISH -> "English"
+    }
+
+    val isBangla: Boolean get() = this != ENGLISH
+    val isProbhat: Boolean get() = this == BANGLA
+    val isPhonetic: Boolean get() = this == AVRO
+
+    fun prefLayoutValue(): String = if (this == BANGLA) "probhat" else "phonetic"
+
+    companion object {
+        fun from(bangla: Boolean, bnLayout: String?): KeyboardLanguageMode = when {
+            !bangla -> ENGLISH
+            bnLayout == "probhat" -> BANGLA
+            else -> AVRO
+        }
+    }
+}
+
 /**
  * সব layout এখানে। Ridmik-এর মতো বদলাতে চাইলে শুধু এই file edit করলেই হবে।
  */
@@ -71,14 +109,14 @@ object Layouts {
     }
 
     private fun bottomRow(bangla: Boolean): List<Key> = listOf(
-        Key("?123", KeyType.SYMBOLS, 1.3f),
+        Key("?123", KeyType.SYMBOLS, 1.2f),
         Key("LANG", KeyType.LANG, 0.95f),
         Key("🙂", KeyType.EMOJI, 0.95f),
-        Key(",", weight = 0.8f),
-        Key(" ", KeyType.SPACE, 2.5f),
-        if (bangla) Key("।", weight = 0.85f, alt = ".") else Key(".", weight = 0.85f),
-        Key("MIC", KeyType.MIC, 1.15f),
-        Key("ENTER", KeyType.ENTER, 1.5f),
+        Key(",", weight = 0.7f),
+        Key(" ", KeyType.SPACE, 3.0f),
+        if (bangla) Key("।", weight = 0.75f, alt = ".") else Key(".", weight = 0.75f),
+        Key("MIC", KeyType.MIC, 1.0f),
+        Key("ENTER", KeyType.ENTER, 1.45f),
     )
 
     // ------------------------------------------------------------------

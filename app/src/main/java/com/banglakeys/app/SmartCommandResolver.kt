@@ -23,9 +23,9 @@ object SmartCommandResolver {
         "হেই", "হে", "হ্যালো", "হাই", "ওকে", "এই"
     )
 
-    private val WAKE_BOT_ALIASES = setOf(
-        "bot", "boat", "but", "boss", "board", "pot", "bat", "bud", "bought", "vote",
-        "বট", "বোট", "বাট", "ভট", "বস"
+    private val WAKE_EMO_ALIASES = setOf(
+        "emo", "emu", "imo", "immo", "elmo", "amo", "emoh", "emoo", "emmu",
+        "ইমো", "ইমু", "ইমূ", "এমো", "এমূ"
     )
 
     // Action ও App কীওয়ার্ডগুলোর Canonical ডিকশনারি (যাতে ভুল বানান/উচ্চারণ ঠিক হয়)
@@ -138,7 +138,7 @@ object SmartCommandResolver {
 
     /**
      * Strict + Fuzzy wake word splitter.
-     * যেমন: "Hey board open tiktok", "এ বট উপরে যাও" ও ধরতে পারে।
+     * যেমন: "Hey immo open tiktok", "হেই ইমো উপরে যাও" ও ধরতে পারে।
      */
     fun splitWakeSmart(raw: String): Pair<Boolean, String> {
         val strict = CommandParser.splitWake(raw)
@@ -156,14 +156,18 @@ object SmartCommandResolver {
             val second = tokens[1]
             val firstMatch = first in WAKE_PREFIX_ALIASES ||
                 (first.length >= 2 && editDistance(first, "hey") <= 1)
-            val secondMatch = second in WAKE_BOT_ALIASES ||
-                (second.length >= 3 && editDistance(second, "bot") <= 1)
+            val secondMatch = second in WAKE_EMO_ALIASES ||
+                (second.length in 3..4 &&
+                    (second.startsWith("em") || second.endsWith("mo") || second.endsWith("mu")) &&
+                    editDistance(second, "emo") <= 1)
             if (firstMatch && secondMatch) {
                 return true to tokens.drop(2).joinToString(" ").trim()
             }
         }
-        // Single merged token e.g. "heyboss", "heybot"
-        if (tokens.isNotEmpty() && (tokens[0] == "heybot" || tokens[0] == "heyboat" || tokens[0] == "haybot")) {
+        // Single merged token e.g. "heyemo", "heyimu"
+        if (tokens.isNotEmpty() &&
+            tokens[0] in setOf("heyemo", "hayemo", "hiemo", "okemo", "heyemu", "hayemu", "heyimo")
+        ) {
             return true to tokens.drop(1).joinToString(" ").trim()
         }
         return false to raw

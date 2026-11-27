@@ -1,6 +1,7 @@
 package com.example
 
 import com.banglakeys.app.KeyType
+import com.banglakeys.app.KeyboardLanguageMode
 import com.banglakeys.app.Layouts
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -52,5 +53,28 @@ class ProbhatLayoutTest {
         val p = Layouts.phonetic(numberRow = false, bnDigits = true)
         assertEquals("q", p[0][0].label)
         assertEquals(null, p[0][0].shiftLabel)
+    }
+
+    @Test fun `single lang icon cycles avro to bangla to english cleanly without arrows`() {
+        val start = KeyboardLanguageMode.from(bangla = true, bnLayout = "phonetic")
+        assertEquals(KeyboardLanguageMode.AVRO, start)
+        assertEquals("অভ্র", start.spaceLabel())
+        assertTrue(start.isPhonetic)
+
+        val second = start.next()
+        assertEquals(KeyboardLanguageMode.BANGLA, second)
+        assertEquals("বাংলা", second.spaceLabel())
+        assertTrue(second.isBangla)
+        assertTrue(second.isProbhat)
+        assertFalse(second.spaceLabel().contains("◀"))
+        assertFalse(second.spaceLabel().contains("▶"))
+
+        val third = second.next()
+        assertEquals(KeyboardLanguageMode.ENGLISH, third)
+        assertEquals("English", third.spaceLabel())
+        assertFalse(third.isBangla)
+
+        val wrapped = third.next()
+        assertEquals(KeyboardLanguageMode.AVRO, wrapped)
     }
 }

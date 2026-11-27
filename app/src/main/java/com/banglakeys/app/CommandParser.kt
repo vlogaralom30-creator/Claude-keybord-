@@ -204,10 +204,10 @@ object CommandParser {
             return if (AssistantConfig.LEAVE_APP_GOES_HOME) Command.Home else Command.Back
         }
 
-        // ---- 2. Assistant নিজে
+        // ---- 2. EMO নিজে
         val allWord = hasAny(V.ALL)
         if (has("quit", "exit", "কুইট") ||
-            (has("assistant", "bot", "বট") && hasAny(V.STOP_ASSISTANT) && !allWord)
+            (has("emo", "emu", "ইমো", "ইমু", "assistant", "bot", "বট") && hasAny(V.STOP_ASSISTANT) && !allWord)
         ) return Command.StopAssistant
         if (hasAny(V.SLEEP)) return Command.Sleep
 

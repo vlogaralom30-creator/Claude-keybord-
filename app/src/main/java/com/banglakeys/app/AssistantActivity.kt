@@ -1,21 +1,27 @@
 package com.banglakeys.app
 
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.content.res.ColorStateList
-import android.content.res.Configuration
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import android.text.InputType
+import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
+import android.view.WindowInsets
+import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -24,23 +30,30 @@ import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
+import com.banglakeys.app.robot.EmoBrainHub
+import com.banglakeys.app.robot.FaceId
+import com.banglakeys.app.robot.FaceRenderer
+import com.banglakeys.app.robot.RobotEvent
+import com.banglakeys.app.robot.RobotFaceView
 
 /**
- * BanglaKeys Assistant কনসোল (pure Material-styled View UI + custom Canvas vector icons).
+ * ইউনিফাইড EMO কন্ট্রোল সেন্টার (Voice Command + 12-Face Brain + Floating Overlay + Ad Skipper).
  *
- * এখান থেকে: Listening মোড, ৫/৫ সেটআপ ও SAF ফোল্ডার, Side-Edge Overlay ও অবস্থান রিসেট,
- * Auto Ad Skipper (YouTube + Verified Game/App Ads), কনফার্মেশন সেফটি, Gemini Fallback।
+ * আগের আলাদা Voice Assistant কনসোল এবং Robot Face টেস্টারকে একত্রিত করে এক জায়গায়
+ * সব EMO ক্ষমতা ও সেটিংস পরিচালনা করে।
  */
 class AssistantActivity : Activity() {
 
     companion object {
         private const val REQ_PERMS = 201
         private const val REQ_STORAGE_TREE = 202
+        const val EXTRA_SCROLL_TO_FACES = "scroll_to_faces"
     }
 
     private data class Palette(
         val bg: Int,
         val card: Int,
+        val cardAlt: Int,
         val border: Int,
         val primary: Int,
         val primarySoft: Int,
@@ -51,12 +64,36 @@ class AssistantActivity : Activity() {
         val warn: Int,
         val warnSoft: Int,
         val danger: Int,
-        val dangerSoft: Int
+        val dangerSoft: Int,
     )
 
-    private lateinit var pal: Palette
+    private val pal = Palette(
+        bg = 0xFF080C12.toInt(),
+        card = 0xFF101722.toInt(),
+        cardAlt = 0xFF151F2E.toInt(),
+        border = 0xFF203246.toInt(),
+        primary = 0xFF36D1FF.toInt(),
+        primarySoft = 0xFF0D2838.toInt(),
+        text = 0xFFF1F7FF.toInt(),
+        subText = 0xFF8CA8C2.toInt(),
+        ok = 0xFF22E58A.toInt(),
+        okSoft = 0xFF0D2E20.toInt(),
+        warn = 0xFFFFC857.toInt(),
+        warnSoft = 0xFF35280D.toInt(),
+        danger = 0xFFFF5A6E.toInt(),
+        dangerSoft = 0xFF351218.toInt(),
+    )
+
+    lateinit var faceView: RobotFaceView
+        private set
 
     // Dynamic status / interactive widgets
+    private lateinit var scrollView: ScrollView
+    private lateinit var faceLabCard: View
+    private lateinit var eventsGridContainer: LinearLayout
+    private lateinit var btnToggleEvents: TextView
+    private val faceTileBoxes = HashMap<FaceId, LinearLayout>()
+
     private lateinit var statusPillText: TextView
     private lateinit var statusPillBg: LinearLayout
     private lateinit var statusPillIcon: ImageView
@@ -96,45 +133,14 @@ class AssistantActivity : Activity() {
     private lateinit var geminiStatusText: TextView
     private lateinit var geminiKeyInput: EditText
 
-    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt().coerceAtLeast(1)
-
-    private fun buildPalette(): Palette {
-        val night = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
-            Configuration.UI_MODE_NIGHT_YES
-        return if (night) {
-            Palette(
-                bg = 0xFF0E1413.toInt(),
-                card = 0xFF171F1E.toInt(),
-                border = 0xFF283533.toInt(),
-                primary = 0xFF4DB6AC.toInt(),
-                primarySoft = 0xFF004D45.toInt(),
-                text = 0xFFE3E9E8.toInt(),
-                subText = 0xFF9EB0AD.toInt(),
-                ok = 0xFF4ADE80.toInt(),
-                okSoft = 0xFF133622.toInt(),
-                warn = 0xFFFBBF24.toInt(),
-                warnSoft = 0xFF3A2D0B.toInt(),
-                danger = 0xFFF87171.toInt(),
-                dangerSoft = 0xFF3E1818.toInt()
-            )
-        } else {
-            Palette(
-                bg = 0xFFF2F6F5.toInt(),
-                card = 0xFFFFFFFF.toInt(),
-                border = 0xFFD9E4E1.toInt(),
-                primary = 0xFF00796B.toInt(),
-                primarySoft = 0xFFD8F3EF.toInt(),
-                text = 0xFF161D1C.toInt(),
-                subText = 0xFF566865.toInt(),
-                ok = 0xFF15803D.toInt(),
-                okSoft = 0xFFDCFCE7.toInt(),
-                warn = 0xFFB45309.toInt(),
-                warnSoft = 0xFFFEF3C7.toInt(),
-                danger = 0xFFB91C1C.toInt(),
-                dangerSoft = 0xFFFEE2E2.toInt()
-            )
+    private val hubListener: () -> Unit = {
+        if (!isFinishing && !isDestroyed) {
+            updateFaceTileHighlights()
+            if (::faceView.isInitialized) faceView.invalidate()
         }
     }
+
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt().coerceAtLeast(1)
 
     private fun roundedBg(fill: Int, radiusDp: Int, stroke: Int? = null): GradientDrawable =
         GradientDrawable().apply {
@@ -146,14 +152,13 @@ class AssistantActivity : Activity() {
 
     private fun rippleCard(view: View, fill: Int, radiusDp: Int, stroke: Int? = null) {
         val base = roundedBg(fill, radiusDp, stroke)
-        view.background = RippleDrawable(ColorStateList.valueOf(0x2200796B), base, null)
+        view.background = RippleDrawable(ColorStateList.valueOf(0x3336D1FF), base, null)
         view.isClickable = true
         view.isFocusable = true
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        pal = buildPalette()
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -161,16 +166,41 @@ class AssistantActivity : Activity() {
             setPadding(dp(16), dp(14), dp(16), dp(28))
         }
 
+        // Edge-to-edge safe inset handling
+        root.setOnApplyWindowInsetsListener { v, insets ->
+            val top = if (Build.VERSION.SDK_INT >= 30) {
+                insets.getInsets(WindowInsets.Type.systemBars()).top
+            } else {
+                @Suppress("DEPRECATION")
+                insets.systemWindowInsetTop
+            }
+            val bottom = if (Build.VERSION.SDK_INT >= 30) {
+                insets.getInsets(WindowInsets.Type.systemBars()).bottom
+            } else {
+                @Suppress("DEPRECATION")
+                insets.systemWindowInsetBottom
+            }
+            v.setPadding(dp(16), dp(14) + top, dp(16), dp(28) + bottom)
+            insets
+        }
+
         // ---- Header
         root.addView(buildHeader())
 
-        // ---- 1. Status & Service Card
+        // ---- 0. Interactive EMO Face + Voice Quick Trigger
+        root.addView(buildEmoHeroCard())
+
+        // ---- 0b. 12 Expressions & Brain Lab
+        faceLabCard = buildFaceAndBrainLabCard()
+        root.addView(faceLabCard)
+
+        // ---- 1. Voice Control & Mode Card
         root.addView(buildServiceCard())
 
         // ---- 1b. Command Guide & Tester Card
         root.addView(buildCommandGuideCard())
 
-        // ---- 2. Side-Edge Overlay & Auto Ad Skipper
+        // ---- 2. Side-Edge EMO Overlay & Auto Ad Skipper
         root.addView(buildOverlayAndAdSkipCard())
 
         // ---- 3. 5/5 Setup Checklist & SAF Folder
@@ -182,10 +212,27 @@ class AssistantActivity : Activity() {
         // ---- 5. Gemini Fallback + Gesture Test
         root.addView(buildGeminiAndTestCard())
 
-        setContentView(ScrollView(this).apply {
+        scrollView = ScrollView(this).apply {
             setBackgroundColor(pal.bg)
             addView(root)
-        })
+        }
+        setContentView(scrollView)
+
+        if (intent?.getBooleanExtra(EXTRA_SCROLL_TO_FACES, false) == true) {
+            scrollView.post {
+                scrollView.smoothScrollTo(0, faceLabCard.top)
+            }
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        EmoBrainHub.addListener(hubListener)
+    }
+
+    override fun onStop() {
+        EmoBrainHub.removeListener(hubListener)
+        super.onStop()
     }
 
     override fun onResume() {
@@ -194,7 +241,9 @@ class AssistantActivity : Activity() {
     }
 
     override fun onRequestPermissionsResult(
-        requestCode: Int, permissions: Array<out String>, grantResults: IntArray
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         refresh()
@@ -236,6 +285,7 @@ class AssistantActivity : Activity() {
             gravity = Gravity.CENTER
             minimumWidth = dp(48)
             minimumHeight = dp(48)
+            tag = "emo_control_back_btn"
             rippleCard(this, pal.card, 14, pal.border)
             contentDescription = "Back"
             setOnClickListener { finish() }
@@ -252,14 +302,14 @@ class AssistantActivity : Activity() {
                 marginEnd = dp(8)
             }
             addView(TextView(this@AssistantActivity).apply {
-                text = "BanglaKeys Assistant"
+                text = "EMO Control Center"
                 textSize = 20f
                 setTypeface(null, Typeface.BOLD)
                 setTextColor(pal.text)
             })
             addView(TextView(this@AssistantActivity).apply {
-                text = "ভয়েস কমান্ড, সাইড-এজ ওভারলে ও অ্যাড স্কিপার"
-                textSize = 12.5f
+                text = "ভয়েস কমান্ড, ১২-ফেস ব্রেন, ওভারলে ও অ্যাড স্কিপার"
+                textSize = 12f
                 setTextColor(pal.subText)
             })
         }
@@ -295,7 +345,12 @@ class AssistantActivity : Activity() {
         ).apply { bottomMargin = dp(12) }
     }
 
-    private fun addCardHeader(card: LinearLayout, icon: AssistantIcons.Kind, title: String, subtitle: String? = null) {
+    private fun addCardHeader(
+        card: LinearLayout,
+        icon: AssistantIcons.Kind,
+        title: String,
+        subtitle: String? = null,
+    ) {
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -339,13 +394,15 @@ class AssistantActivity : Activity() {
         fg: Int,
         bg: Int,
         stroke: Int? = null,
-        onClick: () -> Unit
+        testTag: String? = null,
+        onClick: () -> Unit,
     ): Triple<LinearLayout, ImageView, TextView> {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             minimumHeight = dp(48)
-            setPadding(dp(14), dp(10), dp(14), dp(10))
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            if (testTag != null) tag = testTag
             rippleCard(this, bg, 14, stroke)
             setOnClickListener { onClick() }
         }
@@ -355,7 +412,7 @@ class AssistantActivity : Activity() {
         }
         val tv = TextView(this).apply {
             text = label
-            textSize = 14f
+            textSize = 13.5f
             setTypeface(null, Typeface.BOLD)
             setTextColor(fg)
         }
@@ -364,20 +421,313 @@ class AssistantActivity : Activity() {
         return Triple(box, iv, tv)
     }
 
-    private fun buildServiceCard(): View {
+    private fun buildEmoHeroCard(): View {
         val card = makeCard()
         addCardHeader(
             card,
             AssistantIcons.Kind.BOT,
-            "Assistant কন্ট্রোল ও ভাষা",
-            "\"Hey Bot\" বা সাইড ট্যাব থেকে কমান্ড দিন"
+            "লাইভ EMO রোবট ও ব্রেন",
+            "ফেসে ট্যাপ করলে কথা বলবে · কমান্ড দিলে রিয়েল-টাইম রিঅ্যাকশন দেবে"
+        )
+
+        faceView = RobotFaceView(this).apply {
+            tag = "robot_face_view"
+            background = roundedBg(0xFF060A10.toInt(), 16, 0x4436D1FF)
+        }
+        card.addView(
+            faceView,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(250)
+            ).apply { bottomMargin = dp(12) }
+        )
+
+        val quickRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+
+        val talkBtn = buildIconButton(
+            icon = AssistantIcons.Kind.MIC,
+            label = "EMO-কে বলুন",
+            fg = 0xFF031721.toInt(),
+            bg = pal.primary,
+            testTag = "btn_emo_hero_ptt",
+        ) {
+            if (!AssistantSetup.isReady(this)) {
+                toast("আগে নিচের Accessibility ও Microphone চালু করুন")
+            } else {
+                AssistantListenerService.triggerPtt(this)
+                EmoBrainHub.onListeningStarted(isPtt = true)
+                faceView.invalidate()
+                Handler(Looper.getMainLooper()).postDelayed({ refresh() }, 350)
+            }
+        }.first
+        quickRow.addView(talkBtn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.2f).apply {
+            marginEnd = dp(6)
+        })
+
+        val resetBtn = buildIconButton(
+            icon = AssistantIcons.Kind.REFRESH,
+            label = "Memory রিসেট",
+            fg = pal.text,
+            bg = pal.cardAlt,
+            stroke = pal.border,
+            testTag = "btn_reset_memory",
+        ) {
+            EmoBrainHub.resetMemory()
+            faceView.invalidate()
+            updateFaceTileHighlights()
+            toast("EMO ব্রেন মেমোরি রিসেট হয়েছে")
+        }.first
+        quickRow.addView(resetBtn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+            marginStart = dp(6)
+        })
+
+        card.addView(quickRow)
+        return card
+    }
+
+    private fun buildFaceAndBrainLabCard(): View {
+        val card = makeCard()
+        addCardHeader(
+            card,
+            AssistantIcons.Kind.SPARKLE,
+            "১২টি EMO এক্সপ্রেশন ও ব্রেন টেস্ট",
+            "যেকোনো ফেসে ট্যাপ করে দেখুন — ভয়েস ও কিবোর্ডে এগুলোই কাজ করে"
+        )
+
+        // 4 rows x 3 columns of clickable mini EMO face tiles
+        faceTileBoxes.clear()
+        val faces = FaceId.values()
+        for (rowIdx in faces.indices step 3) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { bottomMargin = dp(8) }
+            }
+            for (colIdx in 0 until 3) {
+                val idx = rowIdx + colIdx
+                if (idx < faces.size) {
+                    val face = faces[idx]
+                    val tile = buildFaceTile(face)
+                    faceTileBoxes[face] = tile
+                    row.addView(
+                        tile,
+                        LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                            if (colIdx > 0) marginStart = dp(4)
+                            if (colIdx < 2) marginEnd = dp(4)
+                        }
+                    )
+                } else {
+                    row.addView(View(this).apply {
+                        layoutParams = LinearLayout.LayoutParams(0, 1, 1f)
+                    })
+                }
+            }
+            card.addView(row)
+        }
+        updateFaceTileHighlights()
+
+        // Expand/collapse toggle for 19 Fake Event test buttons
+        val toggleRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = dp(48)
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            rippleCard(this, pal.cardAlt, 12, pal.border)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(4) }
+        }
+        toggleRow.addView(TextView(this).apply {
+            text = "🧪 ব্রেন ইভেন্ট টেস্টার (১৯টি)"
+            textSize = 13.5f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(pal.text)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        btnToggleEvents = TextView(this).apply {
+            text = "দেখুন ▾"
+            textSize = 12f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(pal.primary)
+        }
+        toggleRow.addView(btnToggleEvents)
+        card.addView(toggleRow)
+
+        eventsGridContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(10) }
+        }
+
+        val events: List<Triple<String, String, RobotEvent>> = listOf(
+            Triple("event_tap", "👋 Tap", RobotEvent.Tap),
+            Triple("event_long_press", "🤗 Long press (আদর)", RobotEvent.LongPress),
+            Triple("event_shake", "📳 Shake (ঝাঁকি)", RobotEvent.Shake),
+            Triple("event_lift", "✋ Lift (তোলা)", RobotEvent.Lift),
+            Triple("event_face_down", "⬇️ Face down (ঘুম)", RobotEvent.FaceDown),
+            Triple("event_face_up", "⬆️ Face up (জাগা)", RobotEvent.FaceUp),
+            Triple("event_clap", "👏 Clap", RobotEvent.Clap),
+            Triple("event_loud_sound", "🔊 Loud sound", RobotEvent.LoudSound),
+            Triple("event_voice_heard", "🎙️ Voice heard", RobotEvent.VoiceHeard),
+            Triple("event_battery_low", "🔋 Battery low", RobotEvent.BatteryLow),
+            Triple("event_charging", "⚡ Charging", RobotEvent.Charging),
+            Triple("event_dark", "🌑 Dark", RobotEvent.Dark),
+            Triple("event_bright", "☀️ Bright", RobotEvent.Bright),
+            Triple("event_typing_fast", "⌨️ Typing fast", RobotEvent.TypingFast),
+            Triple("event_typing_slow", "🐢 Typing slow", RobotEvent.TypingSlow),
+            Triple("event_backspace_burst", "⌫ Backspace burst", RobotEvent.BackspaceBurst),
+            Triple("event_keyword_love", "❤️ Keyword: love", RobotEvent.KeywordLove),
+            Triple("event_keyword_anger", "😡 Keyword: anger", RobotEvent.KeywordAnger),
+            Triple("event_message_sent", "📤 Message sent", RobotEvent.MessageSent),
+        )
+
+        var evRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        events.forEachIndexed { i, (btnTag, label, event) ->
+            if (i % 2 == 0 && i != 0) {
+                eventsGridContainer.addView(evRow)
+                evRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            }
+            evRow.addView(Button(this).apply {
+                text = label
+                textSize = 11.5f
+                tag = btnTag
+                isAllCaps = false
+                setTextColor(pal.text)
+                rippleCard(this, pal.cardAlt, 10, pal.border)
+                minimumHeight = dp(48)
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    setMargins(dp(3), dp(3), dp(3), dp(3))
+                }
+                setOnClickListener {
+                    EmoBrainHub.handleEvent(event)
+                    faceView.invalidate()
+                    updateFaceTileHighlights()
+                }
+            })
+        }
+        if (events.size % 2 == 1) {
+            evRow.addView(View(this).apply { layoutParams = LinearLayout.LayoutParams(0, 1, 1f) })
+        }
+        eventsGridContainer.addView(evRow)
+        card.addView(eventsGridContainer)
+
+        toggleRow.setOnClickListener {
+            val opening = eventsGridContainer.visibility != View.VISIBLE
+            eventsGridContainer.visibility = if (opening) View.VISIBLE else View.GONE
+            btnToggleEvents.text = if (opening) "লুকান ▴" else "দেখুন ▾"
+        }
+
+        return card
+    }
+
+    private fun buildFaceTile(face: FaceId): LinearLayout {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            minimumHeight = dp(76)
+            setPadding(dp(6), dp(8), dp(6), dp(8))
+            tag = "face_tile_${face.name.lowercase()}"
+            contentDescription = "${face.name} (${face.bn})"
+            rippleCard(this, pal.cardAlt, 12, pal.border)
+            setOnClickListener {
+                EmoBrainHub.express(face, "${face.bn} (${face.name})", forceSpeech = true)
+                faceView.invalidate()
+                updateFaceTileHighlights()
+            }
+        }
+        box.addView(
+            MiniFacePreviewView(this, face).apply {
+                layoutParams = LinearLayout.LayoutParams(dp(56), dp(36)).apply {
+                    bottomMargin = dp(4)
+                }
+            }
+        )
+        box.addView(TextView(this).apply {
+            text = face.bn
+            textSize = 11.5f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(pal.text)
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+        })
+        return box
+    }
+
+    private fun updateFaceTileHighlights() {
+        val current = EmoBrainHub.brain.mood
+        for ((face, box) in faceTileBoxes) {
+            val active = face == current
+            rippleCard(
+                box,
+                if (active) pal.primarySoft else pal.cardAlt,
+                12,
+                if (active) pal.primary else pal.border,
+            )
+        }
+    }
+
+    private class MiniFacePreviewView(
+        context: Context,
+        private val face: FaceId,
+    ) : View(context) {
+        private val platePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF060A10.toInt() }
+        private val outlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = 0x5536D1FF
+            style = Paint.Style.STROKE
+            strokeWidth = (1.2f * context.resources.displayMetrics.density).coerceAtLeast(1f)
+        }
+        private val eyePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF36D1FF.toInt() }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            if (width <= 0 || height <= 0) return
+            val w = width.toFloat()
+            val h = height.toFloat()
+            FaceRenderer.draw(
+                canvas = canvas,
+                face = face,
+                cx = w / 2f,
+                cy = h / 2f,
+                plateW = w * 0.94f,
+                plateH = h * 0.92f,
+                eyeGap = w * 0.40f,
+                eyeSize = h * 0.34f,
+                blink = 0f,
+                eyePaint = eyePaint,
+                platePaint = platePaint,
+                plateOutline = outlinePaint,
+                glow = true,
+            )
+        }
+    }
+
+    private fun buildServiceCard(): View {
+        val card = makeCard()
+        addCardHeader(
+            card,
+            AssistantIcons.Kind.MIC,
+            "EMO ভয়েস কন্ট্রোল ও ভাষা",
+            "\"Hey EMO\" বা সাইড EMO ট্যাব থেকে কমান্ড দিন"
         )
 
         val svcTriple = buildIconButton(
             AssistantIcons.Kind.PLAY,
-            "Assistant চালু করুন",
-            Color.WHITE,
-            pal.primary
+            "EMO চালু করুন",
+            0xFF031721.toInt(),
+            pal.primary,
+            testTag = "btn_emo_service_toggle",
         ) {
             if (AssistantListenerService.running) {
                 AssistantListenerService.stop(this)
@@ -400,12 +750,14 @@ class AssistantActivity : Activity() {
             AssistantIcons.Kind.MIC,
             "এখনই কথা বলুন (Push-to-Talk)",
             pal.primary,
-            pal.primarySoft
+            pal.primarySoft,
+            testTag = "btn_emo_ptt",
         ) {
             if (!AssistantSetup.isReady(this)) {
                 toast("আগে Accessibility ও Microphone চালু করুন")
             } else {
                 AssistantListenerService.triggerPtt(this)
+                EmoBrainHub.onListeningStarted(isPtt = true)
                 Handler(Looper.getMainLooper()).postDelayed({ refresh() }, 350)
             }
         }
@@ -419,8 +771,9 @@ class AssistantActivity : Activity() {
             AssistantIcons.Kind.GLOBE,
             "শোনার ভাষা",
             pal.text,
-            pal.bg,
-            pal.border
+            pal.cardAlt,
+            pal.border,
+            testTag = "btn_emo_lang",
         ) {
             AssistantSetup.setBangla(this, !AssistantSetup.isBangla(this))
             AssistantListenerService.notifyConfigChanged(this)
@@ -464,7 +817,7 @@ class AssistantActivity : Activity() {
             marginEnd = dp(6)
         })
 
-        val pChip = buildIconButton(AssistantIcons.Kind.SHIELD, "Quiet PTT", pal.text, pal.bg, pal.border) {
+        val pChip = buildIconButton(AssistantIcons.Kind.SHIELD, "Quiet PTT", pal.text, pal.cardAlt, pal.border) {
             AssistantPrefs.setListeningMode(this, ListeningMode.PUSH_TO_TALK)
             AssistantListenerService.notifyConfigChanged(this)
             refresh()
@@ -477,7 +830,7 @@ class AssistantActivity : Activity() {
 
         card.addView(modeRow)
 
-        // Scroll Direction Toggle (Content Direction vs Finger Direction)
+        // Scroll Direction Toggle
         card.addView(TextView(this).apply {
             text = "Scroll Direction ('upore' / 'niche')"
             textSize = 12.5f
@@ -509,7 +862,7 @@ class AssistantActivity : Activity() {
             marginEnd = dp(6)
         })
 
-        val fingerChip = buildIconButton(AssistantIcons.Kind.SWIPE_UP, "Finger", pal.text, pal.bg, pal.border) {
+        val fingerChip = buildIconButton(AssistantIcons.Kind.SWIPE_UP, "Finger", pal.text, pal.cardAlt, pal.border) {
             AssistantPrefs.setScrollByContentDirection(this, false)
             refresh()
         }
@@ -537,14 +890,15 @@ class AssistantActivity : Activity() {
         addCardHeader(
             card,
             AssistantIcons.Kind.SPARKLE,
-            "কমান্ড গাইড ও 99% সঠিক লিস্ট",
+            "EMO কমান্ড গাইড ও 99% সঠিক লিস্ট",
             "Chrome, YouTube, Facebook, TikTok ও Call কমান্ড দেখুন এবং Try করুন"
         )
         val guideBtn = buildIconButton(
             AssistantIcons.Kind.PLAY,
             "সব কমান্ড দেখুন ও Try করুন",
-            Color.WHITE,
-            pal.primary
+            0xFF031721.toInt(),
+            pal.primary,
+            testTag = "btn_open_command_guide",
         ) {
             startActivity(Intent(this, CommandGuideActivity::class.java))
         }.first
@@ -560,14 +914,14 @@ class AssistantActivity : Activity() {
         addCardHeader(
             card,
             AssistantIcons.Kind.OVERLAY,
-            "সাইড-এজ ওভারলে ও Auto Ad Skipper",
-            "উপরের স্ক্রিন ফাঁকা রাখতে পাশে ভাসমান ট্যাব + নিরাপদ বিজ্ঞাপন স্কিপার"
+            "ভাসমান EMO ওভারলে ও Auto Ad Skipper",
+            "পাশে ভাসমান লাইভ EMO ফেস + নিরাপদ বিজ্ঞাপন স্কিপার"
         )
 
         switchOverlay = addToggleRow(
             card,
-            "ভাসমান সাইড-এজ ট্যাব দেখান",
-            "বাম বা ডান কিনারায় টেনে নেওয়া যায় (ট্যাপ করলে কমান্ড নেয়)",
+            "ভাসমান EMO সাইড ট্যাব দেখান",
+            "বাম বা ডান কিনারায় টেনে নেওয়া যায় (ট্যাপ করলে EMO শোনে)",
             AssistantPrefs.overlayHudEnabled(this)
         ) { checked ->
             AssistantPrefs.setOverlayHudEnabled(this, checked)
@@ -589,7 +943,7 @@ class AssistantActivity : Activity() {
 
         val resetBtn = buildIconButton(
             AssistantIcons.Kind.REFRESH,
-            "সাইড ট্যাবের অবস্থান রিসেট করুন",
+            "ভাসমান EMO অবস্থান রিসেট করুন",
             pal.primary,
             pal.primarySoft
         ) {
@@ -697,7 +1051,7 @@ class AssistantActivity : Activity() {
                 gravity = Gravity.CENTER_VERTICAL
                 minimumHeight = dp(48)
                 setPadding(dp(10), dp(8), dp(10), dp(8))
-                rippleCard(this, pal.bg, 12, pal.border)
+                rippleCard(this, pal.cardAlt, 12, pal.border)
                 setOnClickListener { onClick() }
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
@@ -727,7 +1081,7 @@ class AssistantActivity : Activity() {
             checkRows.add(Triple(iv, tv, badge))
         }
 
-        addChecklistItem(AssistantIcons.Kind.ACCESSIBILITY, "১. Accessibility Service", "চালু করুন") {
+        addChecklistItem(AssistantIcons.Kind.ACCESSIBILITY, "১. EMO Robot Accessibility", "চালু করুন") {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
         addChecklistItem(AssistantIcons.Kind.MIC, "২. Microphone Permission", "অনুমতি দিন") {
@@ -743,7 +1097,6 @@ class AssistantActivity : Activity() {
             startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
         }
 
-        // SAF Storage Folder picker for Pack F
         safStatusText = TextView(this).apply {
             textSize = 12f
             setTextColor(pal.subText)
@@ -761,7 +1114,7 @@ class AssistantActivity : Activity() {
             AssistantIcons.Kind.FOLDER,
             "Storage Folder বেছে নিন (ফাইল/ফোল্ডার তৈরি)",
             pal.text,
-            pal.bg,
+            pal.cardAlt,
             pal.border
         ) {
             val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
@@ -792,7 +1145,7 @@ class AssistantActivity : Activity() {
             card,
             AssistantIcons.Kind.SHIELD,
             "নিরাপত্তা ও কনফার্মেশন",
-            "ভুল কল বা মেসেজ ঠেকাতে আগে কনফার্ম চাইবে"
+            "ভুল কল বা মেসেজ ঠেকাতে আগে EMO কনফার্ম চাইবে"
         )
 
         switchConfirmCall = addToggleRow(
@@ -853,7 +1206,7 @@ class AssistantActivity : Activity() {
             card,
             AssistantIcons.Kind.SPARKLE,
             "Gemini স্মার্ট Fallback ও টেস্ট",
-            "জটিল বাংলা/Banglish কমান্ড স্থানীয় parser না বুঝলে Gemini সাহায্য করবে"
+            "জটিল বাংলা/Banglish কমান্ড স্থানীয় parser না বুঝলে EMO Gemini-র সাহায্য নেবে"
         )
 
         geminiStatusText = TextView(this).apply {
@@ -873,7 +1226,7 @@ class AssistantActivity : Activity() {
             setTextColor(pal.text)
             setHintTextColor(pal.subText)
             setPadding(dp(12), dp(10), dp(12), dp(10))
-            background = roundedBg(pal.bg, 12, pal.border)
+            background = roundedBg(pal.cardAlt, 12, pal.border)
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
@@ -888,7 +1241,7 @@ class AssistantActivity : Activity() {
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply { bottomMargin = dp(12) }
         }
-        val saveKeyBtn = buildIconButton(AssistantIcons.Kind.CHECK_CIRCLE, "Key সেভ", Color.WHITE, pal.primary) {
+        val saveKeyBtn = buildIconButton(AssistantIcons.Kind.CHECK_CIRCLE, "Key সেভ", 0xFF031721.toInt(), pal.primary) {
             val k = geminiKeyInput.text.toString().trim()
             GeminiConfig.setKey(this, k)
             refresh()
@@ -934,7 +1287,7 @@ class AssistantActivity : Activity() {
         title: String,
         subtitle: String,
         initial: Boolean,
-        onToggle: (Boolean) -> Unit
+        onToggle: (Boolean) -> Unit,
     ): Switch {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -1012,12 +1365,12 @@ class AssistantActivity : Activity() {
             rippleCard(btnService, pal.dangerSoft, 14)
             btnServiceIcon.setImageDrawable(AssistantIcons.drawable(this, AssistantIcons.Kind.STOP, pal.danger, 18))
             btnServiceText.setTextColor(pal.danger)
-            btnServiceText.text = "Assistant বন্ধ করুন"
+            btnServiceText.text = "EMO বন্ধ করুন"
         } else {
             rippleCard(btnService, pal.primary, 14)
-            btnServiceIcon.setImageDrawable(AssistantIcons.drawable(this, AssistantIcons.Kind.PLAY, Color.WHITE, 18))
-            btnServiceText.setTextColor(Color.WHITE)
-            btnServiceText.text = "Assistant চালু করুন"
+            btnServiceIcon.setImageDrawable(AssistantIcons.drawable(this, AssistantIcons.Kind.PLAY, 0xFF031721.toInt(), 18))
+            btnServiceText.setTextColor(0xFF031721.toInt())
+            btnServiceText.text = "EMO চালু করুন"
         }
 
         val isBangla = AssistantSetup.isBangla(this)
@@ -1028,10 +1381,10 @@ class AssistantActivity : Activity() {
         if (mode == ListeningMode.CONTINUOUS) {
             rippleCard(chipContinuous, pal.primarySoft, 12, pal.primary)
             chipContinuousText.setTextColor(pal.primary)
-            rippleCard(chipPtt, pal.bg, 12, pal.border)
+            rippleCard(chipPtt, pal.cardAlt, 12, pal.border)
             chipPttText.setTextColor(pal.subText)
         } else {
-            rippleCard(chipContinuous, pal.bg, 12, pal.border)
+            rippleCard(chipContinuous, pal.cardAlt, 12, pal.border)
             chipContinuousText.setTextColor(pal.subText)
             rippleCard(chipPtt, pal.primarySoft, 12, pal.primary)
             chipPttText.setTextColor(pal.primary)
@@ -1042,11 +1395,11 @@ class AssistantActivity : Activity() {
         if (byContent) {
             rippleCard(chipContentDir, pal.primarySoft, 12, pal.primary)
             chipContentDirText.setTextColor(pal.primary)
-            rippleCard(chipFingerDir, pal.bg, 12, pal.border)
+            rippleCard(chipFingerDir, pal.cardAlt, 12, pal.border)
             chipFingerDirText.setTextColor(pal.subText)
             scrollDirHintText.text = "Content মোড চালু: 'niche' বললে নিচের লেখা দেখাবে, 'upore' বললে উপরে ফিরবে। ('porer video' সবসময় পরের শর্টস চালায়)"
         } else {
-            rippleCard(chipContentDir, pal.bg, 12, pal.border)
+            rippleCard(chipContentDir, pal.cardAlt, 12, pal.border)
             chipContentDirText.setTextColor(pal.subText)
             rippleCard(chipFingerDir, pal.primarySoft, 12, pal.primary)
             chipFingerDirText.setTextColor(pal.primary)
@@ -1113,6 +1466,9 @@ class AssistantActivity : Activity() {
             GeminiConfig.KeySource.BUILD_CONFIG -> "স্ট্যাটাস: বিল্ট-ইন Secrets Key সক্রিয়"
             GeminiConfig.KeySource.NONE -> "স্ট্যাটাস: Key সেট নেই (চাইলে নিচে দিন, নইলে লোকাল কমান্ড চলবে)"
         }
+
+        updateFaceTileHighlights()
+        if (::faceView.isInitialized) faceView.invalidate()
     }
 
     private fun toast(msg: String) {

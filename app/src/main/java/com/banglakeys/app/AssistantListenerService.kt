@@ -18,6 +18,7 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.widget.Toast
+import com.banglakeys.app.robot.EmoBrainHub
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -27,9 +28,9 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
 /**
- * ২-মোড ভয়েস অ্যাসিস্ট্যান্ট Foreground Service:
- *  - CONTINUOUS: "Hey Bot ..." শুনলে জেগে ওঠে + awake window জুড়ে ধারাবাহিক কমান্ড নেয়।
- *  - PUSH_TO_TALK: মাইক চুপ থাকে; overlay side-tab বা notification বাটন চাপলে একবার শোনে।
+ * EMO রোবট ২-মোড ভয়েস সার্ভিস:
+ *  - CONTINUOUS: "Hey EMO ..." শুনলে জেগে ওঠে + awake window জুড়ে ধারাবাহিক কমান্ড নেয়।
+ *  - PUSH_TO_TALK: মাইক চুপ থাকে; EMO সাইড-এজ বাটন বা কিবোর্ড স্ট্রিপ চাপলে একবার শোনে।
  *
  * নোট: SmartCommandResolver দিয়ে N-best + Banglish fuzzy ম্যাচিং করে, প্রয়োজনে
  * GeminiCommandInterpreter fallback চালায়, এবং ঝুঁকিপূর্ণ কল/মেসেজে Confirm নেয়।
@@ -156,6 +157,7 @@ class AssistantListenerService : Service() {
     override fun onDestroy() {
         running = false
         instance = null
+        EmoBrainHub.onIdleStandby()
         handler.removeCallbacksAndMessages(null)
         activeFlowJob?.cancel()
         serviceScope.cancel()
@@ -212,6 +214,7 @@ class AssistantListenerService : Service() {
         pendingCommand = null
         pttSessionActive = true
         awakeUntil = SystemClock.elapsedRealtime() + AssistantConfig.AWAKE_WINDOW_MS
+        EmoBrainHub.onListeningStarted(isPtt = true)
         overlay.render(CommandOverlayManager.OverlayState.Listening("", null, isPtt = true))
         handler.removeCallbacks(restart)
         listenOnce()
@@ -221,6 +224,7 @@ class AssistantListenerService : Service() {
         awakeUntil = 0L
         pttSessionActive = false
         pendingCommand = null
+        EmoBrainHub.onIdleStandby()
         if (currentMode() == ListeningMode.PUSH_TO_TALK) {
             handler.removeCallbacks(restart)
             recognizer?.cancel()
@@ -318,6 +322,7 @@ class AssistantListenerService : Service() {
                     awakeUntil = maxOf(awakeUntil, now + AssistantConfig.AWAKE_WINDOW_MS)
                     val sec = if (now < awakeUntil) ((awakeUntil - now) / 1000L).toInt().coerceAtLeast(1) else null
                     val display = if (woke) rest.ifEmpty { "শুনছি…" } else text
+                    EmoBrainHub.onPartialHeard(display)
                     overlay.render(
                         CommandOverlayManager.OverlayState.Listening(
                             partialText = display,
@@ -428,9 +433,10 @@ class AssistantListenerService : Service() {
 
         if (!res.woke && !alreadyAwake) return
 
-        // শুধু "Hey Bot" বললে
+        // শুধু "Hey EMO" বললে
         if (res.woke && res.command == null && res.normalizedText.isBlank()) {
             awakeUntil = now + AssistantConfig.AWAKE_WINDOW_MS
+            EmoBrainHub.onWakeDetected()
             overlay.render(
                 CommandOverlayManager.OverlayState.Listening(
                     partialText = "বলুন…",
@@ -439,7 +445,7 @@ class AssistantListenerService : Service() {
                 )
             )
             if (!::overlay.isInitialized || !overlay.isOverlayPermittedAndEnabled()) {
-                toast("🎤 বলুন…")
+                toast("🤖 EMO শুনছে — বলুন…")
             }
             return
         }
@@ -519,12 +525,14 @@ class AssistantListenerService : Service() {
             Command.Sleep -> {
                 awakeUntil = 0L
                 pendingCommand = null
-                showFeedback(heardText, summary, "ঘুমালাম — \"Hey Bot\" বললে জাগবো", isSuccess = true, canRetry = false)
+                EmoBrainHub.onSleep()
+                showFeedback(heardText, summary, "ঘুমালাম — \"Hey EMO\" বললে জাগবো", isSuccess = true, canRetry = false)
                 return
             }
             Command.StopAssistant -> {
                 pendingCommand = null
-                toast("🤖 Assistant বন্ধ")
+                EmoBrainHub.onSleep()
+                toast("🤖 EMO বন্ধ")
                 stopSelf()
                 return
             }
@@ -539,6 +547,7 @@ class AssistantListenerService : Service() {
         if (question != null) {
             pendingCommand = cmd
             pendingSummary = summary ?: SmartCommandResolver.describe(cmd)
+            EmoBrainHub.onAwaitingConfirm()
             overlay.render(
                 CommandOverlayManager.OverlayState.AwaitingConfirm(
                     heardText = heardText.orEmpty(),
@@ -586,8 +595,9 @@ class AssistantListenerService : Service() {
                 is Command.ChromeNavigate -> "Chrome"
                 is Command.InAppSearch -> cmd.appKey ?: "Search"
                 is Command.AppAction -> cmd.appKey ?: "Action"
-                else -> "Assistant"
+                else -> "EMO"
             }
+            EmoBrainHub.onFlowRunning(label)
             overlay.render(CommandOverlayManager.OverlayState.RunningFlow(label, "শুরু হচ্ছে…"))
             activeFlowJob = serviceScope.launch {
                 try {
@@ -609,6 +619,7 @@ class AssistantListenerService : Service() {
                 val ok = !result.startsWith("⚠️") && !result.startsWith("❌") && !result.contains("পাইনি") && !result.contains("পারলাম না")
                 showFeedback(heardText, summary, result, isSuccess = ok, canRetry = !ok)
             } else {
+                EmoBrainHub.onCommandSuccess(summary)
                 renderIdleOverlay()
             }
         }
@@ -621,6 +632,11 @@ class AssistantListenerService : Service() {
         isSuccess: Boolean,
         canRetry: Boolean
     ) {
+        if (isSuccess) {
+            EmoBrainHub.onCommandSuccess(summary ?: message)
+        } else {
+            EmoBrainHub.onCommandFailure(message)
+        }
         if (::overlay.isInitialized && overlay.isOverlayPermittedAndEnabled()) {
             overlay.renderResultWithAutoReset(
                 CommandOverlayManager.OverlayState.ResultFeedback(
@@ -633,6 +649,7 @@ class AssistantListenerService : Service() {
                 resetAfterMs = 2600L,
                 nextStateSupplier = {
                     if (running && pendingCommand == null && activeFlowJob?.isActive != true) {
+                        EmoBrainHub.onIdleStandby()
                         idleOverlayState()
                     } else null
                 }
@@ -653,7 +670,7 @@ class AssistantListenerService : Service() {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= 26) {
             nm.createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, "Voice Assistant", NotificationManager.IMPORTANCE_LOW)
+                NotificationChannel(CHANNEL_ID, "EMO Robot", NotificationManager.IMPORTANCE_LOW)
             )
         }
         val stopPi = PendingIntent.getService(
@@ -673,16 +690,16 @@ class AssistantListenerService : Service() {
 
         val isPtt = currentMode() == ListeningMode.PUSH_TO_TALK
         val contentText = if (isPtt) {
-            "Quiet Push-to-Talk চালু — পাশে ট্যাপ বা 'বলুন' চাপুন"
+            "Quiet Push-to-Talk চালু — EMO ট্যাব বা 'বলুন' চাপুন"
         } else {
-            "\"Hey Bot\" বলে কমান্ড দিন"
+            "\"Hey EMO\" বলে কমান্ড দিন"
         }
 
         val b = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, CHANNEL_ID)
         else @Suppress("DEPRECATION") Notification.Builder(this)
         @Suppress("DEPRECATION")
         val n = b.setSmallIcon(android.R.drawable.ic_btn_speak_now)
-            .setContentTitle("BanglaKeys Assistant চালু")
+            .setContentTitle("EMO রোবট চালু")
             .setContentText(contentText)
             .setContentIntent(openPi)
             .addAction(android.R.drawable.ic_btn_speak_now, "বলুন", pttPi)

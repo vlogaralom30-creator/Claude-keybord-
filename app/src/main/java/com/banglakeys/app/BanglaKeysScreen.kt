@@ -1,11 +1,14 @@
 package com.banglakeys.app
 
+import android.Manifest
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.provider.Settings
 import android.view.inputmethod.InputMethodManager
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -33,8 +36,8 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.Keyboard
-import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.TouchApp
@@ -64,6 +67,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -126,6 +130,8 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
   var imeStatus by remember { mutableStateOf(checkImeStatus(context)) }
   var assistantReady by remember { mutableStateOf(AssistantSetup.isReady(context)) }
   var assistantRunning by remember { mutableStateOf(AssistantListenerService.running) }
+  var secretContactCount by remember { mutableIntStateOf(SecretConfig.getContacts(context).size) }
+  var micGranted by remember { mutableStateOf(AssistantSetup.hasMic(context)) }
 
   var haptic by remember { mutableStateOf(prefs.getBoolean("haptic", true)) }
   var sound by remember { mutableStateOf(prefs.getBoolean("sound", false)) }
@@ -136,29 +142,54 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
   var heightPct by remember { mutableIntStateOf(prefs.getInt("height", 100).coerceIn(85, 125)) }
   var themeVersion by remember { mutableIntStateOf(0) }
 
+  var showEmbeddedKeyboard by rememberSaveable { mutableStateOf(true) }
+  var committedText by rememberSaveable { mutableStateOf("") }
+  var composingRoman by rememberSaveable { mutableStateOf("") }
+  var previewBanglaMode by rememberSaveable { mutableStateOf(prefs.getBoolean("bn", true)) }
+  var previewBnLayout by rememberSaveable { mutableStateOf(prefs.getString("bn_layout", "phonetic") ?: "phonetic") }
+  var previewSymbolsMode by rememberSaveable { mutableIntStateOf(0) }
+  var previewHostMode by rememberSaveable { mutableStateOf(KeyboardHostLayout.HostMode.KEYBOARD) }
+  var suggestVersion by remember { mutableIntStateOf(0) }
+  var previewGuide by remember { mutableStateOf<Pair<Long, SetupGuidance.SetupGuide>?>(null) }
+  var guideSeq by remember { mutableLongStateOf(0L) }
+
+  fun pushPreviewGuide(guide: SetupGuidance.SetupGuide) {
+    guideSeq += 1L
+    previewGuide = guideSeq to guide
+  }
+
+  val micPermissionLauncher =
+    rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+      micGranted = granted
+      if (granted) {
+        prefs.edit().putBoolean("voice_perm_asked", false).putBoolean("voice_perm_blocked", false).apply()
+        SetupGuidance.previewVoiceGuide(context, imeStatus == ImeStatus.ACTIVE)?.let(::pushPreviewGuide)
+      } else {
+        prefs.edit().putBoolean("voice_perm_asked", true).putBoolean("voice_perm_blocked", true).apply()
+        pushPreviewGuide(SetupGuidance.voicePermissionGuide(permanentlyDenied = true))
+      }
+    }
+
   LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
     imeStatus = checkImeStatus(context)
     assistantReady = AssistantSetup.isReady(context)
     assistantRunning = AssistantListenerService.running
+    secretContactCount = SecretConfig.getContacts(context).size
+    micGranted = AssistantSetup.hasMic(context)
     fxLevel = EffectsConfig.chosenLevel(context)
     fxGuardOff = EffectsConfig.autoDisabled(context)
+    previewBanglaMode = prefs.getBoolean("bn", true)
+    previewBnLayout = prefs.getString("bn_layout", "phonetic") ?: "phonetic"
     themeVersion++
   }
 
-  var showEmbeddedKeyboard by rememberSaveable { mutableStateOf(true) }
-  var committedText by rememberSaveable { mutableStateOf("") }
-  var composingRoman by rememberSaveable { mutableStateOf("") }
-  var previewBanglaMode by rememberSaveable { mutableStateOf(true) }
-  var previewSymbolsMode by rememberSaveable { mutableIntStateOf(0) }
-  var previewHostMode by rememberSaveable { mutableStateOf(KeyboardHostLayout.HostMode.KEYBOARD) }
-  var suggestVersion by remember { mutableIntStateOf(0) }
-
   val suggestionsRepo = remember { Suggestions(context) }
+  val isPreviewAvro = previewBanglaMode && previewBnLayout != "probhat"
 
   val composingDisplay =
-    remember(composingRoman, previewBanglaMode) {
+    remember(composingRoman, previewBanglaMode, previewBnLayout) {
       if (composingRoman.isEmpty()) ""
-      else if (previewBanglaMode) Phonetic.convert(composingRoman)
+      else if (isPreviewAvro) Phonetic.convert(composingRoman)
       else composingRoman
     }
   val suggestionsList =
@@ -236,6 +267,25 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
               shape = RoundedCornerShape(14.dp),
             )
 
+            if (imeStatus != ImeStatus.ACTIVE) {
+              Surface(
+                color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.65f),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth().testTag("ime_setup_hint_banner"),
+              ) {
+                Text(
+                  text = if (imeStatus == ImeStatus.DISABLED) {
+                    "নোট: সব অ্যাপে লিখতে নিচের 'System Keyboard Setup' থেকে ১. Enable এবং ২. Select করুন।"
+                  } else {
+                    "কিবোর্ড Enable করা আছে — সব অ্যাপে চালু করতে নিচের '২. Keyboard বেছে নিন' চাপুন।"
+                  },
+                  style = MaterialTheme.typography.bodySmall,
+                  color = MaterialTheme.colorScheme.onSecondaryContainer,
+                  modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                )
+              }
+            }
+
             if (showEmbeddedKeyboard) {
               Surface(
                 shape = RoundedCornerShape(16.dp),
@@ -244,6 +294,7 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
               ) {
                 EmbeddedKeyboardPreview(
                   banglaMode = previewBanglaMode,
+                  bnLayout = previewBnLayout,
                   symbolsMode = previewSymbolsMode,
                   hostMode = previewHostMode,
                   numRow = numRow,
@@ -252,11 +303,22 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
                   themeVersion = themeVersion,
                   composingText = composingDisplay,
                   suggestionsList = suggestionsList,
+                  previewGuide = previewGuide,
+                  onDismissGuide = { previewGuide = null },
+                  onGuideAction = { action ->
+                    previewGuide = null
+                    when (action) {
+                      SetupGuidance.GuideAction.REQUEST_VOICE_PERMISSION ->
+                        micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                      else -> SetupGuidance.openAction(context, action, fromService = false)
+                    }
+                  },
+                  onShowGuide = ::pushPreviewGuide,
                   onHostModeChange = { previewHostMode = it },
                   onText = { ch ->
                     val single = ch.singleOrNull()
                     val isBnWordChar =
-                      previewBanglaMode &&
+                      isPreviewAvro &&
                         previewSymbolsMode == 0 &&
                         single != null &&
                         (single in 'a'..'z' ||
@@ -339,9 +401,41 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
                     }
                     previewHostMode = KeyboardHostLayout.HostMode.KEYBOARD
                     previewSymbolsMode = 0
-                    previewBanglaMode = !previewBanglaMode
-                    prefs.edit().putBoolean("bn", previewBanglaMode).apply()
+                    val nextMode = KeyboardLanguageMode.from(previewBanglaMode, previewBnLayout).next()
+                    previewBanglaMode = nextMode.isBangla
+                    if (nextMode.isBangla) {
+                      previewBnLayout = nextMode.prefLayoutValue()
+                      prefs.edit()
+                        .putBoolean("bn", true)
+                        .putString("bn_layout", previewBnLayout)
+                        .apply()
+                    } else {
+                      prefs.edit().putBoolean("bn", false).apply()
+                    }
                     suggestVersion++
+                    Toast.makeText(context, nextMode.toastLabel(), Toast.LENGTH_SHORT).show()
+                  },
+                  onLayoutToggle = {
+                    if (composingDisplay.isNotEmpty()) {
+                      suggestionsRepo.learn(composingRoman, composingDisplay, previewBanglaMode)
+                      committedText += composingDisplay
+                      composingRoman = ""
+                    }
+                    previewHostMode = KeyboardHostLayout.HostMode.KEYBOARD
+                    previewSymbolsMode = 0
+                    val nextMode = when (KeyboardLanguageMode.from(previewBanglaMode, previewBnLayout)) {
+                      KeyboardLanguageMode.AVRO -> KeyboardLanguageMode.BANGLA
+                      KeyboardLanguageMode.BANGLA -> KeyboardLanguageMode.AVRO
+                      KeyboardLanguageMode.ENGLISH -> KeyboardLanguageMode.AVRO
+                    }
+                    previewBanglaMode = nextMode.isBangla
+                    previewBnLayout = nextMode.prefLayoutValue()
+                    prefs.edit()
+                      .putBoolean("bn", true)
+                      .putString("bn_layout", previewBnLayout)
+                      .apply()
+                    suggestVersion++
+                    Toast.makeText(context, nextMode.toastLabel(), Toast.LENGTH_SHORT).show()
                   },
                   onSymbols = { mode ->
                     if (composingDisplay.isNotEmpty()) {
@@ -412,7 +506,9 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
                     val target =
                       if (composingDisplay.isNotEmpty()) composingDisplay
                       else committedText.trim()
-                    if (target.isNotEmpty()) {
+                    if (target.isEmpty()) {
+                      pushPreviewGuide(SetupGuidance.translateEmptyGuide())
+                    } else {
                       val (from, to) = Translator.autoDirection(target)
                       Translator.translateEx(target, from, to) { outcome ->
                         when (outcome) {
@@ -425,20 +521,29 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
                             }
                           }
                           is Translator.Outcome.Fail ->
-                            Toast.makeText(context, outcome.reason.messageBn, Toast.LENGTH_SHORT).show()
+                            pushPreviewGuide(SetupGuidance.translateFailGuide(outcome))
                         }
                       }
                     }
                   },
                   onVoice = {
-                    Toast.makeText(
-                      context,
-                      "সিস্টেম কিবোর্ড হিসেবে সক্রিয় করে যেকোনো অ্যাপে ভয়েস টাইপিং ব্যবহার করুন",
-                      Toast.LENGTH_SHORT
-                    ).show()
+                    if (!micGranted) {
+                      val blocked = prefs.getBoolean("voice_perm_blocked", false)
+                      pushPreviewGuide(SetupGuidance.voicePermissionGuide(blocked))
+                    } else {
+                      SetupGuidance.previewVoiceGuide(context, imeStatus == ImeStatus.ACTIVE)?.let(::pushPreviewGuide)
+                    }
                   },
                   onAssistant = {
-                    context.startActivity(Intent(context, AssistantActivity::class.java))
+                    val guide = SetupGuidance.assistantGuide(context)
+                    if (guide != null) {
+                      pushPreviewGuide(guide)
+                    } else {
+                      AssistantListenerService.setPaused(false)
+                      AssistantListenerService.triggerPtt(context)
+                      com.banglakeys.app.robot.EmoBrainHub.onListeningStarted(isPtt = true)
+                      Toast.makeText(context, "🤖 EMO শুনছে — বলুন", Toast.LENGTH_SHORT).show()
+                    }
                   },
                 )
               }
@@ -528,7 +633,7 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
             verticalArrangement = Arrangement.spacedBy(10.dp),
           ) {
             SectionTitle(
-              icon = Icons.Filled.RecordVoiceOver,
+              icon = Icons.Filled.SmartToy,
               title = stringResource(R.string.tools_section_title),
             )
             Text(
@@ -542,13 +647,23 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
               shape = RoundedCornerShape(14.dp),
             ) {
               Icon(
-                imageVector = Icons.Filled.RecordVoiceOver,
+                imageVector = Icons.Filled.SmartToy,
                 contentDescription = null,
                 modifier = Modifier.size(20.dp),
               )
               Spacer(modifier = Modifier.width(8.dp))
               Text(stringResource(R.string.btn_open_assistant))
             }
+            Text(
+              text = if (assistantReady) {
+                "✓ Accessibility ও Microphone চালু আছে — EMO ভয়েস ও ব্রেন প্রস্তুত"
+              } else {
+                "⚠️ EMO সেটআপ বাকি: খুলে Accessibility Service ও Microphone চালু করুন"
+              },
+              style = MaterialTheme.typography.bodySmall,
+              color = if (assistantReady) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+              modifier = Modifier.padding(horizontal = 4.dp).testTag("assistant_setup_status_hint"),
+            )
             OutlinedButton(
               onClick = { context.startActivity(Intent(context, NotepadActivity::class.java)) },
               modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize().testTag("open_notepad_button"),
@@ -575,6 +690,16 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
               Spacer(modifier = Modifier.width(8.dp))
               Text("🔐 Secret Message Settings")
             }
+            Text(
+              text = if (secretContactCount > 0) {
+                "✓ ${secretContactCount}টি Contact সেভ আছে — কিবোর্ডে 🔐 কাজ করবে"
+              } else {
+                "⚠️ কোনো Contact নেই — আগে এখানে Contact ও Passphrase তৈরি করুন, নইলে 🔐 কাজ করবে না"
+              },
+              style = MaterialTheme.typography.bodySmall,
+              color = if (secretContactCount > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+              modifier = Modifier.padding(horizontal = 4.dp).testTag("secret_setup_status_hint"),
+            )
           }
         }
 
@@ -651,17 +776,6 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
                 },
               )
             }
-            var probhat by remember { mutableStateOf(prefs.getString("bn_layout", "phonetic") == "probhat") }
-            PreferenceToggleRow(
-              title = "প্রভাত লেআউট (Ridmik-এর মতো fixed)",
-              subtitle = "Roman নয়, সরাসরি বাংলা অক্ষরের key। কিবোর্ডে 🌐 চেপে ধরলেও বদলানো যায়",
-              checked = probhat,
-              testTag = "toggle_probhat",
-              onCheckedChange = {
-                probhat = it
-                prefs.edit().putString("bn_layout", if (it) "probhat" else "phonetic").apply()
-              },
-            )
             PreferenceToggleRow(
               title = stringResource(R.string.pref_numrow_title),
               subtitle = stringResource(R.string.pref_numrow_desc),
@@ -776,6 +890,7 @@ fun BanglaKeysScreen(modifier: Modifier = Modifier) {
 @Composable
 private fun EmbeddedKeyboardPreview(
   banglaMode: Boolean,
+  bnLayout: String,
   symbolsMode: Int,
   hostMode: KeyboardHostLayout.HostMode,
   numRow: Boolean,
@@ -784,12 +899,17 @@ private fun EmbeddedKeyboardPreview(
   themeVersion: Int,
   composingText: String,
   suggestionsList: List<String>,
+  previewGuide: Pair<Long, SetupGuidance.SetupGuide>?,
+  onDismissGuide: () -> Unit,
+  onGuideAction: (SetupGuidance.GuideAction) -> Unit,
+  onShowGuide: (SetupGuidance.SetupGuide) -> Unit,
   onHostModeChange: (KeyboardHostLayout.HostMode) -> Unit,
   onText: (String) -> Unit,
   onDelete: () -> Unit,
   onSpace: () -> Unit,
   onEnter: () -> Unit,
   onSwitchLang: () -> Unit,
+  onLayoutToggle: () -> Unit,
   onSymbols: (Int) -> Unit,
   onComposingTap: () -> Unit,
   onSuggestionTap: (String) -> Unit,
@@ -803,15 +923,21 @@ private fun EmbeddedKeyboardPreview(
 ) {
   val context = LocalContext.current
   val rows =
-    remember(banglaMode, symbolsMode, numRow, bnDigitsPref) {
+    remember(banglaMode, bnLayout, symbolsMode, numRow, bnDigitsPref) {
       val bnDigits = banglaMode && bnDigitsPref
       when (symbolsMode) {
         1 -> Layouts.symbols(bnDigits, banglaMode)
         2 -> Layouts.symbols2()
-        else -> if (banglaMode) Layouts.phonetic(numRow, bnDigits) else Layouts.english(numRow)
+        else -> when {
+          banglaMode && bnLayout == "probhat" -> Layouts.probhat(bnDigits)
+          banglaMode -> Layouts.phonetic(numRow, bnDigits)
+          else -> Layouts.english(numRow)
+        }
       }
     }
-  val spaceLabel = if (banglaMode) "বাংলা" else "English"
+  val spaceLabel = remember(banglaMode, bnLayout) {
+    KeyboardLanguageMode.from(banglaMode, bnLayout).spaceLabel()
+  }
   val bannerEvent by SecretBannerStateHolder.events.collectAsState()
 
   AndroidView(
@@ -864,29 +990,63 @@ private fun EmbeddedKeyboardPreview(
             SecretBannerStateHolder.dismiss()
             context.startActivity(Intent(context, SecretComposeActivity::class.java))
           }
+          override fun onGuideActionClicked(action: SetupGuidance.GuideAction) {
+            onDismissGuide()
+            if (action == SetupGuidance.GuideAction.EXIT_SECRET_MODE) {
+              kv.setSecretMode(false)
+            } else {
+              onGuideAction(action)
+            }
+          }
           override fun onDismissed() {
             banner.tag = -1L
+            onDismissGuide()
             SecretBannerStateHolder.dismiss()
           }
         }
 
       kv.listener =
         object : KeyboardView.Listener {
-          override fun onText(text: String) = onText(text)
+          override fun onText(text: String) {
+            if (text.singleOrNull()?.isLetter() != true && composingText.isNotBlank()) {
+              kv.notifyEmoWord(composingText, false)
+            }
+            if (text.isNotBlank() && text.length > 1) {
+              kv.notifyEmoWord(text, false)
+            }
+            onText(text)
+          }
           override fun onDelete() = onDelete()
-          override fun onEnter() = onEnter()
-          override fun onSpace() = onSpace()
+          override fun onEnter() {
+            if (composingText.isNotBlank()) kv.notifyEmoWord(composingText, false)
+            kv.notifyEmoSend(false)
+            onEnter()
+          }
+          override fun onSpace() {
+            if (composingText.isNotBlank()) kv.notifyEmoWord(composingText, false)
+            onSpace()
+          }
           override fun onSpaceLongPress() {
             val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
             imm.showInputMethodPicker()
           }
           override fun onSwitchLang() = onSwitchLang()
+          override fun onLayoutToggle() = onLayoutToggle()
           override fun onSymbols(mode: Int) = onSymbols(mode)
-          override fun onComposingTap() = onComposingTap()
+          override fun onComposingTap() {
+            if (composingText.isNotBlank()) kv.notifyEmoWord(composingText, false)
+            onComposingTap()
+          }
           override fun onFeedback() {}
-          override fun onSuggestionTap(word: String) = onSuggestionTap(word)
+          override fun onSuggestionTap(word: String) {
+            kv.notifyEmoWord(word, false)
+            onSuggestionTap(word)
+          }
           override fun onSuggestionLongPress(word: String) = onSuggestionLongPress(word)
-          override fun onSnippet(text: String) = onSnippet(text)
+          override fun onSnippet(text: String) {
+            kv.notifyEmoWord(text, false)
+            onSnippet(text)
+          }
           override fun onEmojiToggle() = onEmojiToggle()
           override fun onNotepad() = onNotepad()
           override fun onTranslate() = onTranslate()
@@ -896,12 +1056,9 @@ private fun EmbeddedKeyboardPreview(
             val contacts = SecretConfig.getContacts(context)
             val next = !kv.isSecretMode()
             if (next) {
-              if (contacts.isEmpty()) {
-                Toast.makeText(
-                  context,
-                  "আগে 🔐 Secret Message screen-এ contact বানান বা বন্ধুর পাঠানো code import করুন",
-                  Toast.LENGTH_LONG
-                ).show()
+              val guide = SetupGuidance.secretGuide(context)
+              if (guide != null) {
+                onShowGuide(guide)
                 return
               }
               val active = SecretConfig.getActiveContact(context)?.takeIf { contacts.containsKey(it) }
@@ -978,7 +1135,10 @@ private fun EmbeddedKeyboardPreview(
       ev.listener =
         object : EmojiPanelView.Listener {
           override fun onBackToKeyboard() = onHostModeChange(KeyboardHostLayout.HostMode.KEYBOARD)
-          override fun onEmojiSelected(emoji: String) = onSnippet(emoji)
+          override fun onEmojiSelected(emoji: String) {
+            kv.notifyEmoWord(emoji, false)
+            onSnippet(emoji)
+          }
           override fun onBackspace() = onDelete()
         }
 
@@ -1008,7 +1168,14 @@ private fun EmbeddedKeyboardPreview(
       val nowMs = System.currentTimeMillis()
       when (val evState = bannerEvent) {
         is SecretBannerStateHolder.BannerEvent.Hidden -> {
-          if (currentRenderedId != -1L || banner.visibility != android.view.View.GONE) {
+          val g = previewGuide
+          if (g != null) {
+            val guideRenderKey = -1000L - g.first
+            if (currentRenderedId != guideRenderKey || banner.visibility != android.view.View.VISIBLE) {
+              banner.tag = guideRenderKey
+              banner.showGuide(g.second)
+            }
+          } else if (currentRenderedId != -1L || banner.visibility != android.view.View.GONE) {
             banner.tag = -1L
             banner.hide()
           }
@@ -1130,7 +1297,7 @@ private fun HeroHeaderCard(
               horizontalArrangement = Arrangement.spacedBy(5.dp),
             ) {
               Icon(
-                imageVector = Icons.Filled.RecordVoiceOver,
+                imageVector = Icons.Filled.SmartToy,
                 contentDescription = null,
                 tint = Color.White,
                 modifier = Modifier.size(14.dp),

@@ -10,7 +10,10 @@ import com.banglakeys.app.CommandParser
 import com.banglakeys.app.Dir
 import com.banglakeys.app.ScrollScale
 import com.banglakeys.app.SmartCommandResolver
+import com.banglakeys.app.robot.EmoBrainHub
+import com.banglakeys.app.robot.FaceId
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -30,6 +33,7 @@ class VoiceAssistantEnhancementsTest {
         context = ApplicationProvider.getApplicationContext()
         context.getSharedPreferences("bk", Context.MODE_PRIVATE).edit().clear().commit()
         AssistantMemory.shared.clear()
+        EmoBrainHub.resetMemory()
     }
 
     @Test
@@ -106,5 +110,46 @@ class VoiceAssistantEnhancementsTest {
         assertTrue(AssistantPrefs.scrollByContentDirection(context))
         AssistantPrefs.setScrollByContentDirection(context, false)
         assertTrue(!AssistantPrefs.scrollByContentDirection(context))
+    }
+
+    @Test
+    fun `test hey EMO wake words, stop commands, and EmoBrainHub voice transitions`() {
+        val (w1, r1) = CommandParser.splitWake("Hey EMO up")
+        assertTrue(w1)
+        assertEquals(Command.Swipe(Dir.UP), CommandParser.parse(r1))
+
+        val (w2, r2) = CommandParser.splitWake("হেই ইমো open youtube")
+        assertTrue(w2)
+        assertEquals(Command.OpenApp("youtube"), CommandParser.parse(r2))
+
+        assertEquals(Command.StopAssistant, CommandParser.parse("stop emo"))
+        assertEquals(Command.StopAssistant, CommandParser.parse("ইমো বন্ধ করো"))
+
+        EmoBrainHub.onListeningStarted(isPtt = true)
+        assertTrue(EmoBrainHub.isVoiceListening)
+        assertEquals(FaceId.CURIOUS, EmoBrainHub.brain.mood)
+
+        EmoBrainHub.onAwaitingConfirm()
+        assertEquals(FaceId.STARE, EmoBrainHub.brain.mood)
+
+        EmoBrainHub.onFlowRunning("WhatsApp")
+        assertEquals(FaceId.SQUEEZE, EmoBrainHub.brain.mood)
+
+        EmoBrainHub.onCommandSuccess("WhatsApp খোলা হয়েছে")
+        assertFalse(EmoBrainHub.isVoiceListening)
+        assertEquals(FaceId.JOY, EmoBrainHub.brain.mood)
+
+        EmoBrainHub.onCommandFailure("বোঝা যায়নি")
+        assertEquals(FaceId.MEH, EmoBrainHub.brain.mood)
+
+        EmoBrainHub.onSleep()
+        assertTrue(EmoBrainHub.brain.sleeping)
+        assertEquals(FaceId.REST, EmoBrainHub.brain.mood)
+
+        EmoBrainHub.resetMemory()
+        assertFalse(EmoBrainHub.brain.sleeping)
+        assertEquals(FaceId.NORMAL, EmoBrainHub.brain.mood)
+        assertEquals(80, EmoBrainHub.brain.needs.energy)
+        assertEquals(50, EmoBrainHub.brain.needs.bond)
     }
 }

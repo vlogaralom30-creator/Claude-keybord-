@@ -93,6 +93,7 @@ class KeyboardTheme(
 
 object Themes {
     const val AUTO_ID = "auto"
+    const val EMO_ID = "emo_robot"
     const val CUSTOM_ID = "custom_image"
 
     val lightDefault = KeyboardTheme(
@@ -121,6 +122,18 @@ object Themes {
             bg = lightDefault.bg, key = lightDefault.key, fn = lightDefault.fn,
             shadow = lightDefault.shadow, text = lightDefault.text, hint = lightDefault.hint,
             press = lightDefault.press, accent = lightDefault.accent,
+        ),
+
+        // ---------- EMO Robot (Live animated cyan EMO face behind smoked glass keys) ----------
+        KeyboardTheme(
+            id = EMO_ID, name = "EMO Robot", emoji = "🤖", style = KeyStyle.GLASS, dark = true,
+            bg = c(0xFF06080D), bgTop = c(0xFF0A0F18), bgBottom = c(0xFF04060A),
+            key = c(0x8A101824), fn = c(0xA40A1018), shadow = c(0x66000000),
+            text = c(0xFFF4FAFF), hint = c(0xFF8CCAE6), press = c(0xAA1F4B66), accent = c(0xFF36D1FF),
+            popup = c(0xFF102232), border = c(0x4836D1FF), borderDp = 0.85f, radiusDp = 10f, shadowDp = 0f,
+            onAccent = c(0xFF021622),
+            pill = c(0x8A101824), pillStroke = c(0x4836D1FF), badgeBg = c(0xAA0C2B3D),
+            badgeStroke = c(0xFF36D1FF), badgeText = c(0xFFB8F2FF), actionBg = c(0xA40A1018),
         ),
 
         // ---------- Pixel Arcade (retro gaming keyboard) ----------
@@ -325,10 +338,14 @@ object ThemeStore {
     private const val KEY_THEME = "theme"
     private const val KEY_IMG_ALPHA = "theme_img_alpha"
     private const val KEY_IMG_DIM = "theme_img_dim"
+    private const val KEY_EMO_ALPHA = "theme_emo_alpha"
     private const val CUSTOM_FILE = "kb_theme_bg.jpg"
 
     const val MIN_ALPHA = 15
     const val MAX_ALPHA = 90
+    const val MIN_EMO_ALPHA = 25
+    const val MAX_EMO_ALPHA = 85
+    const val DEFAULT_EMO_ALPHA = 54
 
     private fun prefs(ctx: Context) = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
@@ -344,6 +361,14 @@ object ThemeStore {
 
     fun setImageAlpha(ctx: Context, v: Int) {
         prefs(ctx).edit().putInt(KEY_IMG_ALPHA, v.coerceIn(MIN_ALPHA, MAX_ALPHA)).apply()
+    }
+
+    /** EMO Robot theme-এ smoked glass key-র opacity (%) */
+    fun emoKeyAlpha(ctx: Context): Int =
+        prefs(ctx).getInt(KEY_EMO_ALPHA, DEFAULT_EMO_ALPHA).coerceIn(MIN_EMO_ALPHA, MAX_EMO_ALPHA)
+
+    fun setEmoKeyAlpha(ctx: Context, v: Int) {
+        prefs(ctx).edit().putInt(KEY_EMO_ALPHA, v.coerceIn(MIN_EMO_ALPHA, MAX_EMO_ALPHA)).apply()
     }
 
     /** ছবির উপর অন্ধকার আবরণ (%) — লেখা পড়তে সুবিধা */

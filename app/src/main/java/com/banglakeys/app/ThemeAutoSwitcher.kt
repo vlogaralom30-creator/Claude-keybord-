@@ -85,7 +85,7 @@ object ThemeAutoSwitcher {
         "sunset_glass", "ocean_glass", "violet_ink", "teal_noir", "forest_night", "grass_blocks", "sticker_night",
     )
     private val NIGHT_ORDER = listOf(
-        "amoled", "neon_cyber", "mint_dark", "graphite", "teal_noir", "pixel_arcade", "forest_night", "ocean_glass",
+        Themes.EMO_ID, "amoled", "neon_cyber", "mint_dark", "graphite", "teal_noir", "pixel_arcade", "forest_night", "ocean_glass",
     )
 
     private fun prefs(ctx: Context) = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)

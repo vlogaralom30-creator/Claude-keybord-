@@ -75,7 +75,7 @@ class FlowRunner(private val ctx: Context) {
         onProgress: (String) -> Unit = {}
     ): String {
         val svc = AssistantAccessibilityService.instance
-            ?: return "⚠️ Accessibility চালু করুন (BanglaKeys Assistant অ্যাপ খুলুন)"
+            ?: return "⚠️ Accessibility চালু করুন (EMO কন্ট্রোল খুলুন)"
         val appLabel = flow?.key ?: "এই app"
         val openTimeout = maxOf(flow?.openTimeoutMs ?: 4000L, AssistantPrefs.appFlowTimeoutMs(ctx))
         val stepTimeout = maxOf(flow?.stepTimeoutMs ?: 4000L, AssistantPrefs.appFlowTimeoutMs(ctx))
@@ -143,7 +143,7 @@ class FlowRunner(private val ctx: Context) {
         onProgress: (String) -> Unit = {}
     ): String {
         val svc = AssistantAccessibilityService.instance
-            ?: return "⚠️ Accessibility চালু করুন (BanglaKeys Assistant অ্যাপ খুলুন)"
+            ?: return "⚠️ Accessibility চালু করুন (EMO কন্ট্রোল খুলুন)"
         val chromeFlow = AppFlows.find("chrome")
             ?: return "❌ Chrome flow পাওয়া যায়নি"
         val openTimeout = maxOf(chromeFlow.openTimeoutMs, AssistantPrefs.appFlowTimeoutMs(ctx))
@@ -242,7 +242,7 @@ class FlowRunner(private val ctx: Context) {
         onProgress: (String) -> Unit = {}
     ): String {
         val svc = AssistantAccessibilityService.instance
-            ?: return "⚠️ Accessibility চালু করুন (BanglaKeys Assistant অ্যাপ খুলুন)"
+            ?: return "⚠️ Accessibility চালু করুন (EMO কন্ট্রোল খুলুন)"
         val appLabel = flow?.key ?: "স্ক্রিন"
         val openTimeout = maxOf(flow?.openTimeoutMs ?: 4000L, AssistantPrefs.appFlowTimeoutMs(ctx))
         val stepTimeout = maxOf(flow?.stepTimeoutMs ?: 4000L, AssistantPrefs.appFlowTimeoutMs(ctx))
@@ -302,7 +302,7 @@ class FlowRunner(private val ctx: Context) {
         onProgress: (String) -> Unit = {}
     ): String {
         val svc = AssistantAccessibilityService.instance
-            ?: return "⚠️ Accessibility চালু করুন (BanglaKeys Assistant অ্যাপ খুলুন)"
+            ?: return "⚠️ Accessibility চালু করুন (EMO কন্ট্রোল খুলুন)"
         val appLabel = flow?.key ?: AssistantMemory.appKeyFromPackage(svc.foregroundPackage()) ?: "অ্যাপ"
         val openTimeout = maxOf(flow?.openTimeoutMs ?: 4000L, AssistantPrefs.appFlowTimeoutMs(ctx))
         val stepTimeout = maxOf(flow?.stepTimeoutMs ?: 4000L, AssistantPrefs.appFlowTimeoutMs(ctx))
@@ -368,7 +368,7 @@ class FlowRunner(private val ctx: Context) {
         onProgress: (String) -> Unit = {}
     ): String {
         val svc = AssistantAccessibilityService.instance
-            ?: return "⚠️ Accessibility চালু করুন (BanglaKeys Assistant অ্যাপ খুলুন)"
+            ?: return "⚠️ Accessibility চালু করুন (EMO কন্ট্রোল খুলুন)"
         if (isBlocked(svc)) return "🔒 এই app-এ assistant বন্ধ"
 
         val flow = appKey?.let { AppFlows.find(it) }
@@ -590,7 +590,7 @@ class FlowRunner(private val ctx: Context) {
         onProgress: (String) -> Unit = {}
     ): String {
         val svc = AssistantAccessibilityService.instance
-            ?: return "⚠️ Accessibility চালু করুন (BanglaKeys Assistant অ্যাপ খুলুন)"
+            ?: return "⚠️ Accessibility চালু করুন (EMO কন্ট্রোল খুলুন)"
         val openTimeout = maxOf(flow.openTimeoutMs, AssistantPrefs.appFlowTimeoutMs(ctx))
         val stepTimeout = maxOf(flow.stepTimeoutMs, AssistantPrefs.appFlowTimeoutMs(ctx))
 
@@ -619,7 +619,7 @@ class FlowRunner(private val ctx: Context) {
         onProgress: (String) -> Unit = {}
     ): String {
         val svc = AssistantAccessibilityService.instance
-            ?: return "⚠️ Accessibility চালু করুন (BanglaKeys Assistant অ্যাপ খুলুন)"
+            ?: return "⚠️ Accessibility চালু করুন (EMO কন্ট্রোল খুলুন)"
         val openTimeout = maxOf(flow.openTimeoutMs, AssistantPrefs.appFlowTimeoutMs(ctx))
         val stepTimeout = maxOf(flow.stepTimeoutMs, AssistantPrefs.appFlowTimeoutMs(ctx))
 

@@ -20,7 +20,7 @@ class CommandExecutor(private val appCtx: Context) {
     private val flowRunner = FlowRunner(appCtx)
     private val svc: AssistantAccessibilityService? get() = AssistantAccessibilityService.instance
 
-    private val needA11y = "⚠️ Accessibility চালু করুন (BanglaKeys Assistant অ্যাপ খুলুন)"
+    private val needA11y = "⚠️ Accessibility চালু করুন (EMO কন্ট্রোল খুলুন)"
 
     private fun withSvc(block: (AssistantAccessibilityService) -> String): String =
         svc?.let(block) ?: needA11y
@@ -385,7 +385,7 @@ class CommandExecutor(private val appCtx: Context) {
 
     private fun createFolderSaf(cmd: Command.CreateFolder): String {
         val (treeUri, rootDocUri) = rootTreeDocUri()
-            ?: return "⚠️ আগে Assistant সেটিংস থেকে Storage Folder বেছে নিন"
+            ?: return "⚠️ আগে EMO সেটিংস থেকে Storage Folder বেছে নিন"
         return try {
             var targetParent = rootDocUri
             val parentName = cmd.parentFolder?.trim()
@@ -414,7 +414,7 @@ class CommandExecutor(private val appCtx: Context) {
 
     private fun createFileSaf(cmd: Command.CreateFile): String {
         val (_, rootDocUri) = rootTreeDocUri()
-            ?: return "⚠️ আগে Assistant সেটিংস থেকে Storage Folder বেছে নিন"
+            ?: return "⚠️ আগে EMO সেটিংস থেকে Storage Folder বেছে নিন"
         val ext = cmd.ext.trim().lowercase().ifEmpty { "txt" }
         val mime = when (ext) {
             "csv" -> "text/csv"

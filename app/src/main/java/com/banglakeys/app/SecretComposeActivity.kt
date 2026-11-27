@@ -373,7 +373,7 @@ fun SecretComposeScreen(onNavigateBack: () -> Unit) {
                   SecretConfig.setAutoDetect(context, checked)
                   if (checked && !accessibilityOn) {
                     scope.launch {
-                      snackbarHostState.showSnackbar("Auto-detect-এর জন্য BanglaKeys Assistant Accessibility চালু করুন")
+                      snackbarHostState.showSnackbar("Auto-detect-এর জন্য EMO Robot Accessibility চালু করুন")
                     }
                   }
                 },
@@ -413,11 +413,20 @@ fun SecretComposeScreen(onNavigateBack: () -> Unit) {
             )
 
             if (contacts.isEmpty()) {
-              Text(
-                text = "এখনো কোনো contact সেভ করা হয়নি। নিচে নতুন contact যোগ করুন বা বন্ধুর BKEY1 code import করুন।",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-              )
+              Surface(
+                color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.7f),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth().testTag("secret_empty_contacts_guide"),
+              ) {
+                Text(
+                  text = "শুরু করার ধাপ:\n" +
+                    "১. নিচে Contact নাম ও একই Passphrase লিখে 'Add' চাপুন (অথবা বন্ধুর BKEY1 code পেস্ট করে 'Import' করুন)।\n" +
+                    "২. Contact সেভ হলেই কিবোর্ডের 🔐 বাটন কাজ করবে।",
+                  style = MaterialTheme.typography.bodySmall,
+                  color = MaterialTheme.colorScheme.onSecondaryContainer,
+                  modifier = Modifier.padding(12.dp),
+                )
+              }
             } else {
               Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 contacts.entries.forEachIndexed { index, (name, pass) ->

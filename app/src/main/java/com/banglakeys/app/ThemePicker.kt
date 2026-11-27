@@ -1,5 +1,6 @@
 package com.banglakeys.app
 
+import android.content.Intent
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -87,6 +88,7 @@ fun ThemePickerCard(refreshKey: Int = 0, onChanged: () -> Unit) {
     var hasImage by remember { mutableStateOf(ThemeStore.hasCustomImage(ctx)) }
     var keyAlpha by remember { mutableIntStateOf(ThemeStore.imageAlpha(ctx)) }
     var dim by remember { mutableIntStateOf(ThemeStore.imageDim(ctx)) }
+    var emoAlpha by remember { mutableIntStateOf(ThemeStore.emoKeyAlpha(ctx)) }
 
     var autoMode by remember { mutableStateOf(ThemeAutoSwitcher.getMode(ctx)) }
     var cadence by remember { mutableStateOf(ThemeAutoSwitcher.getCadence(ctx)) }
@@ -98,6 +100,7 @@ fun ThemePickerCard(refreshKey: Int = 0, onChanged: () -> Unit) {
     LaunchedEffect(refreshKey) {
         selected = ThemeStore.selectedId(ctx)
         hasImage = ThemeStore.hasCustomImage(ctx)
+        emoAlpha = ThemeStore.emoKeyAlpha(ctx)
         autoMode = ThemeAutoSwitcher.getMode(ctx)
         cadence = ThemeAutoSwitcher.getCadence(ctx)
         poolIds = ThemeAutoSwitcher.getPoolIds(ctx)
@@ -214,53 +217,119 @@ fun ThemePickerCard(refreshKey: Int = 0, onChanged: () -> Unit) {
             }
 
             if (selected == Themes.CUSTOM_ID && autoMode == ThemeAutoSwitcher.Mode.OFF) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilledTonalButton(
-                        onClick = { launchPhotoPicker() },
-                        modifier = Modifier.minimumInteractiveComponentSize(),
-                    ) { Text("ছবি বদলান") }
-                    OutlinedButton(
-                        onClick = {
-                            ThemeStore.clearCustomImage(ctx)
-                            hasImage = false
-                            ThemeStore.setSelectedId(ctx, Themes.AUTO_ID)
-                            selected = Themes.AUTO_ID
-                            refreshAutoStatus()
+                if (!hasImage) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.7f),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth().testTag("theme_custom_photo_guide"),
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text(
+                                text = "গ্যালারি থেকে পছন্দের ছবি বাছলে কিবোর্ড ব্যাকগ্রাউন্ড হিসেবে সেট হবে।",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                modifier = Modifier.weight(1f).padding(end = 8.dp),
+                            )
+                            FilledTonalButton(
+                                onClick = { launchPhotoPicker() },
+                                modifier = Modifier.minimumInteractiveComponentSize(),
+                            ) { Text("ছবি বাছুন") }
+                        }
+                    }
+                } else {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilledTonalButton(
+                            onClick = { launchPhotoPicker() },
+                            modifier = Modifier.minimumInteractiveComponentSize(),
+                        ) { Text("ছবি বদলান") }
+                        OutlinedButton(
+                            onClick = {
+                                ThemeStore.clearCustomImage(ctx)
+                                hasImage = false
+                                ThemeStore.setSelectedId(ctx, Themes.AUTO_ID)
+                                selected = Themes.AUTO_ID
+                                refreshAutoStatus()
+                                onChanged()
+                            },
+                            modifier = Modifier.minimumInteractiveComponentSize(),
+                        ) { Text("মুছুন") }
+                    }
+                    Text(
+                        text = "Key স্বচ্ছতা: $keyAlpha%",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    Slider(
+                        value = keyAlpha.toFloat(),
+                        onValueChange = {
+                            keyAlpha = it.roundToInt().coerceIn(ThemeStore.MIN_ALPHA, ThemeStore.MAX_ALPHA)
+                            ThemeStore.setImageAlpha(ctx, keyAlpha)
                             onChanged()
                         },
-                        modifier = Modifier.minimumInteractiveComponentSize(),
-                    ) { Text("মুছুন") }
+                        valueRange = ThemeStore.MIN_ALPHA.toFloat()..ThemeStore.MAX_ALPHA.toFloat(),
+                        modifier = Modifier.fillMaxWidth().testTag("theme_alpha_slider"),
+                    )
+                    Text(
+                        text = "ছবির উপর অন্ধকার: $dim%",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    Slider(
+                        value = dim.toFloat(),
+                        onValueChange = {
+                            dim = it.roundToInt().coerceIn(0, 70)
+                            ThemeStore.setImageDim(ctx, dim)
+                            onChanged()
+                        },
+                        valueRange = 0f..70f,
+                        modifier = Modifier.fillMaxWidth().testTag("theme_dim_slider"),
+                    )
                 }
-                Text(
-                    text = "Key স্বচ্ছতা: $keyAlpha%",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                )
-                Slider(
-                    value = keyAlpha.toFloat(),
-                    onValueChange = {
-                        keyAlpha = it.roundToInt().coerceIn(ThemeStore.MIN_ALPHA, ThemeStore.MAX_ALPHA)
-                        ThemeStore.setImageAlpha(ctx, keyAlpha)
-                        onChanged()
-                    },
-                    valueRange = ThemeStore.MIN_ALPHA.toFloat()..ThemeStore.MAX_ALPHA.toFloat(),
-                    modifier = Modifier.fillMaxWidth().testTag("theme_alpha_slider"),
-                )
-                Text(
-                    text = "ছবির উপর অন্ধকার: $dim%",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                )
-                Slider(
-                    value = dim.toFloat(),
-                    onValueChange = {
-                        dim = it.roundToInt().coerceIn(0, 70)
-                        ThemeStore.setImageDim(ctx, dim)
-                        onChanged()
-                    },
-                    valueRange = 0f..70f,
-                    modifier = Modifier.fillMaxWidth().testTag("theme_dim_slider"),
-                )
+            }
+
+            if (resolvedNow.id == Themes.EMO_ID) {
+                Surface(
+                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f),
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth().testTag("emo_theme_controls"),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            text = "🤖 EMO গ্লাস কী স্বচ্ছতা: $emoAlpha%",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium,
+                        )
+                        Slider(
+                            value = emoAlpha.toFloat(),
+                            onValueChange = {
+                                emoAlpha = it.roundToInt().coerceIn(ThemeStore.MIN_EMO_ALPHA, ThemeStore.MAX_EMO_ALPHA)
+                                ThemeStore.setEmoKeyAlpha(ctx, emoAlpha)
+                                onChanged()
+                            },
+                            valueRange = ThemeStore.MIN_EMO_ALPHA.toFloat()..ThemeStore.MAX_EMO_ALPHA.toFloat(),
+                            modifier = Modifier.fillMaxWidth().testTag("emo_alpha_slider"),
+                        )
+                        OutlinedButton(
+                            onClick = {
+                                ctx.startActivity(
+                                    Intent(ctx, AssistantActivity::class.java)
+                                        .putExtra(AssistantActivity.EXTRA_SCROLL_TO_FACES, true)
+                                )
+                            },
+                            modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize().testTag("emo_open_all_faces_button"),
+                            shape = RoundedCornerShape(12.dp),
+                        ) {
+                            Text("সব ১২টি EMO ফেস দেখুন")
+                        }
+                    }
+                }
             }
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
@@ -347,6 +416,21 @@ fun ThemePickerCard(refreshKey: Int = 0, onChanged: () -> Unit) {
                             },
                             modifier = Modifier.minimumInteractiveComponentSize().testTag("auto_mode_usage"),
                         )
+                    }
+
+                    if (poolIds.size < 2) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.75f),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth().testTag("auto_theme_pool_warning"),
+                        ) {
+                            Text(
+                                text = "অটো রোটেশন কাজ করতে নিচের 'রোটেশন পুল' থেকে কমপক্ষে ২টি থিম সিলেক্ট করুন।",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            )
+                        }
                     }
 
                     if (autoMode == ThemeAutoSwitcher.Mode.TIME_OF_DAY) {
@@ -577,6 +661,60 @@ private fun ThemePreview(t: KeyboardTheme) {
             drawRect(Brush.verticalGradient(listOf(Color(t.bgTop), Color(t.bgBottom))))
         } else {
             drawRect(Color(t.bg))
+        }
+
+        if (t.id == Themes.EMO_ID) {
+            val cyan = Color(t.accent)
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(cyan.copy(alpha = 0.36f), Color.Transparent),
+                    center = Offset(size.width / 2f, size.height / 2f),
+                    radius = size.width * 0.48f,
+                ),
+                radius = size.width * 0.48f,
+                center = Offset(size.width / 2f, size.height / 2f),
+            )
+            val ew = size.width * 0.16f
+            val eh = size.height * 0.24f
+            val cy = size.height * 0.54f
+            val lx = size.width * 0.34f - ew / 2f
+            val rx = size.width * 0.66f - ew / 2f
+            drawArc(
+                color = cyan.copy(alpha = 0.45f),
+                startAngle = 200f,
+                sweepAngle = 140f,
+                useCenter = false,
+                topLeft = Offset(lx, cy - eh / 2f),
+                size = Size(ew, eh),
+                style = Stroke(width = 6.dp.toPx()),
+            )
+            drawArc(
+                color = cyan.copy(alpha = 0.45f),
+                startAngle = 200f,
+                sweepAngle = 140f,
+                useCenter = false,
+                topLeft = Offset(rx, cy - eh / 2f),
+                size = Size(ew, eh),
+                style = Stroke(width = 6.dp.toPx()),
+            )
+            drawArc(
+                color = cyan,
+                startAngle = 200f,
+                sweepAngle = 140f,
+                useCenter = false,
+                topLeft = Offset(lx, cy - eh / 2f),
+                size = Size(ew, eh),
+                style = Stroke(width = 3.dp.toPx()),
+            )
+            drawArc(
+                color = cyan,
+                startAngle = 200f,
+                sweepAngle = 140f,
+                useCenter = false,
+                topLeft = Offset(rx, cy - eh / 2f),
+                size = Size(ew, eh),
+                style = Stroke(width = 3.dp.toPx()),
+            )
         }
 
         val rowsCount = intArrayOf(5, 5, 4)

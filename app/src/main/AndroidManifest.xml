@@ -63,8 +63,8 @@
         <activity
             android:name="com.banglakeys.app.AssistantActivity"
             android:exported="true"
-            android:label="BanglaKeys Assistant"
-            android:theme="@android:style/Theme.DeviceDefault.Light" />
+            android:label="@string/emo_control_title"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
 
         <activity
             android:name="com.banglakeys.app.CommandGuideActivity"
@@ -76,7 +76,7 @@
         <service
             android:name="com.banglakeys.app.AssistantAccessibilityService"
             android:exported="false"
-            android:label="BanglaKeys Assistant"
+            android:label="EMO Robot"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
@@ -100,6 +100,12 @@
             android:name="com.banglakeys.app.VoicePermissionActivity"
             android:exported="false"
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <activity
+            android:name="com.banglakeys.app.robot.RobotFaceDemoActivity"
+            android:exported="false"
+            android:label="@string/robot_face_demo_title"
+            android:theme="@style/Theme.MyApplication" />
 
         <activity
             android:name="com.banglakeys.app.SettingsActivity"

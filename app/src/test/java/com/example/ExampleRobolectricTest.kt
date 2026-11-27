@@ -97,9 +97,12 @@ class ExampleRobolectricTest {
 
   @Test
   fun `existing regression commands and v2 fixes parse accurately`() {
-    val (woke, rest) = CommandParser.splitWake("Hey Bot open TikTok")
+    val (woke, rest) = CommandParser.splitWake("Hey EMO open TikTok")
     assertTrue(woke)
     assertEquals(Command.OpenApp("tiktok"), CommandParser.parse(rest))
+    val (wokeBn, restBn) = CommandParser.splitWake("হেই ইমো open TikTok")
+    assertTrue(wokeBn)
+    assertEquals(Command.OpenApp("tiktok"), CommandParser.parse(restBn))
     assertEquals(Command.OpenApp("claude"), CommandParser.parse("open claude"))
     assertEquals(Command.OpenApp("chatgpt"), CommandParser.parse("open chatgpt"))
     assertEquals(Command.Swipe(Dir.UP), CommandParser.parse("up"))
@@ -295,10 +298,14 @@ class ExampleRobolectricTest {
 
   @Test
   fun `smart command resolver handles N-best, fuzzy wake, and Banglish mishearings`() {
-    // 1. Fuzzy wake word "hey board up" -> woke = true, Swipe(UP)
-    val wakeRes = SmartCommandResolver.resolve(listOf("hey board up"), alreadyAwake = false)
+    // 1. Fuzzy wake word "hey immo up" -> woke = true, Swipe(UP)
+    val wakeRes = SmartCommandResolver.resolve(listOf("hey immo up"), alreadyAwake = false)
     assertTrue(wakeRes.woke)
     assertEquals(Command.Swipe(Dir.UP), wakeRes.command)
+
+    val mergedWakeRes = SmartCommandResolver.resolve(listOf("heyemu open tiktok"), alreadyAwake = false)
+    assertTrue(mergedWakeRes.woke)
+    assertEquals(Command.OpenApp("tiktok"), mergedWakeRes.command)
 
     // 2. N-best picks accurate candidate from index 2 when index 0 is garbled
     val nBest = SmartCommandResolver.resolve(
@@ -600,6 +607,57 @@ class ExampleRobolectricTest {
     assertEquals(1, voiceTapped)
     assertEquals(1, assistantTapped)
     assertEquals(1, secretTapped)
+  }
+
+  @Test
+  fun `keyboardView renders probhat layout cleanly and globe tap switches language`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val kv = com.banglakeys.app.KeyboardView(context)
+    kv.setLayout(Layouts.probhat(bnDigits = true), "বাংলা", 1f)
+    kv.measure(
+      android.view.View.MeasureSpec.makeMeasureSpec(1080, android.view.View.MeasureSpec.EXACTLY),
+      android.view.View.MeasureSpec.makeMeasureSpec(1200, android.view.View.MeasureSpec.AT_MOST)
+    )
+    kv.layout(0, 0, kv.measuredWidth, kv.measuredHeight)
+    assertTrue(kv.measuredHeight > 0)
+
+    var switchCount = 0
+    kv.listener = object : com.banglakeys.app.KeyboardView.Listener {
+      override fun onText(text: String) {}
+      override fun onDelete() {}
+      override fun onEnter() {}
+      override fun onSpace() {}
+      override fun onSpaceLongPress() {}
+      override fun onSwitchLang() { switchCount++ }
+      override fun onSymbols(mode: Int) {}
+      override fun onComposingTap() {}
+      override fun onFeedback() {}
+      override fun onSuggestionTap(word: String) {}
+      override fun onSnippet(text: String) {}
+      override fun onNotepad() {}
+      override fun onTranslate() {}
+      override fun onVoice() {}
+      override fun onAssistant() {}
+    }
+
+    val bmp = android.graphics.Bitmap.createBitmap(
+      kv.measuredWidth,
+      kv.measuredHeight,
+      android.graphics.Bitmap.Config.ARGB_8888
+    )
+    kv.draw(android.graphics.Canvas(bmp))
+
+    // Tap Globe (KeyType.LANG) in bottom row (~16.5% x, bottom y)
+    val now = android.os.SystemClock.uptimeMillis()
+    val gx = kv.measuredWidth * 0.165f
+    val gy = kv.measuredHeight - 20f
+    val down = android.view.MotionEvent.obtain(now, now, android.view.MotionEvent.ACTION_DOWN, gx, gy, 0)
+    val up = android.view.MotionEvent.obtain(now, now + 30, android.view.MotionEvent.ACTION_UP, gx, gy, 0)
+    kv.onTouchEvent(down)
+    kv.onTouchEvent(up)
+    down.recycle()
+    up.recycle()
+    assertEquals(1, switchCount)
   }
 
   @Test

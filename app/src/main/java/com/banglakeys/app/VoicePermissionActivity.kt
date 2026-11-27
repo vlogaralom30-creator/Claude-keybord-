@@ -20,6 +20,7 @@ class VoicePermissionActivity : Activity() {
             finish()
             return
         }
+        getSharedPreferences("bk", MODE_PRIVATE).edit().putBoolean("voice_perm_asked", true).apply()
         requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQUEST_CODE)
     }
 
@@ -30,10 +31,18 @@ class VoicePermissionActivity : Activity() {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         val granted = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
+        val permanentlyDenied = !granted && !shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO)
+        getSharedPreferences("bk", MODE_PRIVATE).edit()
+            .putBoolean("voice_perm_asked", !granted)
+            .putBoolean("voice_perm_blocked", permanentlyDenied)
+            .apply()
         Toast.makeText(
             this,
-            if (granted) "Permission দেওয়া হয়েছে, এখন 🎤 বাটনে চাপুন"
-            else "Permission ছাড়া voice typing কাজ করবে না",
+            when {
+                granted -> "Permission দেওয়া হয়েছে, এখন 🎤 বাটনে চাপুন"
+                permanentlyDenied -> "ভয়েস টাইপিং চালাতে App Settings → Permissions → Microphone চালু করুন"
+                else -> "Permission ছাড়া voice typing কাজ করবে না"
+            },
             Toast.LENGTH_LONG
         ).show()
         finish()

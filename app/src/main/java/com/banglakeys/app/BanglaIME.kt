@@ -15,6 +15,7 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.LinearLayout
 import android.widget.Toast
+import com.banglakeys.app.robot.EmoBrainHub
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -153,6 +154,14 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
                 startActivity(i)
             }
 
+            override fun onGuideActionClicked(action: SetupGuidance.GuideAction) {
+                if (action == SetupGuidance.GuideAction.EXIT_SECRET_MODE) {
+                    onSecretCancel()
+                } else {
+                    SetupGuidance.openAction(this@BanglaIME, action, fromService = true)
+                }
+            }
+
             override fun onDismissed() {
                 renderedBannerEventId = -1L
                 SecretBannerStateHolder.dismiss()
@@ -240,6 +249,7 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
                     else -> {
                         commitComposing()
                         currentInputConnection?.commitText(emoji, 1)
+                        kv?.notifyEmoWord(emoji, !allowLearn)
                         refreshStrip()
                         updateAutoShift()
                     }
@@ -340,6 +350,7 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
         allowSuggest = !isPassword && !isNumericField
         allowLearn = !codeLike
         lastAllowSecretBanner = !isPassword && !isNumericField
+        kv?.setEmoPrivacyMode(isPassword)
 
         bangla = userBangla && !codeLike
         symbols = when (inputClass) {
@@ -394,14 +405,14 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
         )
         if (buf.isEmpty()) return
 
-        if (bangla) {
+        if (isAvroActive()) {
             // Bangla phonetic mode-এ Android composing span সরে গেলে composing বাদ
             if (newSelStart != candidatesEnd || newSelEnd != candidatesEnd) {
                 buf.setLength(0)
                 currentInputConnection?.finishComposingText()
                 refreshStrip()
             }
-        } else {
+        } else if (!bangla) {
             // English mode-এ user cursor অন্যত্র সরালে buffer সিঙ্ক রাখা হয়
             val before = currentInputConnection?.getTextBeforeCursor(buf.length, 0)?.toString()
             if (newSelStart != newSelEnd || (before != null && before != buf.toString())) {
@@ -430,23 +441,22 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
         emojiPanelView?.reloadTheme()
     }
 
-    private fun probhatActive() = bangla && symbols == 0 && bnLayout == "probhat"
+    private fun isAvroActive() = bangla && bnLayout != "probhat"
 
-    private fun spaceLabelFor(): String = when {
-        probhatActive() -> "◀ ${Layouts.PROBHAT_NAME} ▶"
-        bangla -> "বাংলা"
-        else -> "English"
-    }
+    private fun spaceLabelFor(): String =
+        KeyboardLanguageMode.from(bangla, bnLayout).spaceLabel()
 
-    /** 🌐 দীর্ঘ চাপ: প্রভাত ⇄ ফোনেটিক */
+    /** 🌐 দীর্ঘ চাপ: সরাসরি অভ্র ⇄ বাংলা (প্রভাত) */
     override fun onLayoutToggle() {
-        if (!bangla) return
         commitComposing()
-        bnLayout = if (bnLayout == "probhat") "phonetic" else "probhat"
-        prefs.edit().putString("bn_layout", bnLayout).apply()
-        refreshLayout()
-        refreshStrip()
-        Toast.makeText(this, if (bnLayout == "probhat") "লেআউট: ${Layouts.PROBHAT_NAME}" else "লেআউট: ফোনেটিক", Toast.LENGTH_SHORT).show()
+        commitNoteEditRoman()
+        commitSecretRoman()
+        val next = when (KeyboardLanguageMode.from(bangla, bnLayout)) {
+            KeyboardLanguageMode.AVRO -> KeyboardLanguageMode.BANGLA
+            KeyboardLanguageMode.BANGLA -> KeyboardLanguageMode.AVRO
+            KeyboardLanguageMode.ENGLISH -> KeyboardLanguageMode.AVRO
+        }
+        applyLanguageMode(next, showFeedbackToast = true)
     }
 
     private fun refreshLayout() {
@@ -498,7 +508,7 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
         val activePrefix = buf.toString()
         val composingDisplay = when {
             activePrefix.isEmpty() -> ""
-            bangla -> Phonetic.convert(activePrefix)
+            isAvroActive() -> Phonetic.convert(activePrefix)
             else -> activePrefix
         }
         kv?.setComposing(composingDisplay)
@@ -508,11 +518,11 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
     private fun updateComposing() {
         val ic = currentInputConnection ?: return
         if (buf.isEmpty()) {
-            if (bangla) ic.finishComposingText()
+            if (isAvroActive()) ic.finishComposingText()
             refreshStrip()
             return
         }
-        if (bangla) {
+        if (isAvroActive()) {
             val bn = Phonetic.convert(buf.toString())
             ic.setComposingText(bn, 1)
         }
@@ -522,11 +532,13 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
     private fun commitComposing() {
         if (buf.isEmpty()) return
         val raw = buf.toString()
-        val finalWord = if (bangla) Phonetic.convert(raw) else raw
+        val avro = isAvroActive()
+        val finalWord = if (avro) Phonetic.convert(raw) else raw
         if (allowLearn) {
-            suggestions.learn(raw, finalWord, bangla)
+            suggestions.learn(raw, finalWord, avro || bangla)
         }
-        if (bangla) {
+        kv?.notifyEmoWord(finalWord, !allowLearn)
+        if (avro) {
             currentInputConnection?.finishComposingText()
         }
         buf.setLength(0)
@@ -538,7 +550,7 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
     override fun onText(text: String) {
         if (noteEditMode) {
             val ch = text.singleOrNull()
-            val phoneticBn = bangla && symbols == 0
+            val phoneticBn = isAvroActive() && symbols == 0
             if (phoneticBn && ch != null &&
                 (ch in 'a'..'z' || ch in 'A'..'Z' || ((ch == '^' || ch == '`') && noteEditRoman.isNotEmpty()))
             ) {
@@ -553,7 +565,7 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
         val ic = currentInputConnection ?: return
         if (secretMode) {
             val ch = text.singleOrNull()
-            val phoneticBn = bangla && symbols == 0
+            val phoneticBn = isAvroActive() && symbols == 0
             if (phoneticBn && ch != null &&
                 (ch in 'a'..'z' || ch in 'A'..'Z' || ((ch == '^' || ch == '`') && secretRoman.isNotEmpty()))
             ) {
@@ -566,7 +578,7 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
             return
         }
         val ch = text.singleOrNull()
-        val phoneticBn = bangla && symbols == 0
+        val phoneticBn = isAvroActive() && symbols == 0
         val englishWord = !bangla && symbols == 0 && allowSuggest
 
         if (phoneticBn && ch != null &&
@@ -590,6 +602,9 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
 
         commitComposing()
         ic.commitText(text, 1)
+        if (text.isNotBlank()) {
+            kv?.notifyEmoWord(text, !allowLearn)
+        }
         if (text in SENTENCE_TERMINATORS) {
             suggestions.resetSentenceContext()
         }
@@ -625,10 +640,10 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
         }
         if (buf.isNotEmpty()) {
             buf.setLength(buf.length - 1)
-            if (bangla) {
+            if (isAvroActive()) {
                 updateComposing()
                 return
-            } else {
+            } else if (!bangla) {
                 sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
                 refreshStrip()
                 updateAutoShift()
@@ -692,6 +707,7 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
         commitComposing()
         suggestions.resetSentenceContext()
         refreshStrip()
+        kv?.notifyEmoSend(!allowLearn)
         if (ThemeAutoSwitcher.onKeyTyped(this)) reloadAllThemeViews()
         val ic = currentInputConnection ?: return
         val ei = currentInputEditorInfo
@@ -710,9 +726,24 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
         commitComposing()
         commitNoteEditRoman()
         commitSecretRoman()
-        userBangla = !userBangla
-        prefs.edit().putBoolean("bn", userBangla).apply()
-        bangla = userBangla
+        val next = KeyboardLanguageMode.from(bangla, bnLayout).next()
+        applyLanguageMode(next, showFeedbackToast = true)
+    }
+
+    private fun applyLanguageMode(mode: KeyboardLanguageMode, showFeedbackToast: Boolean) {
+        userBangla = mode.isBangla
+        bangla = mode.isBangla
+        if (mode.isBangla) {
+            bnLayout = mode.prefLayoutValue()
+            prefs.edit()
+                .putBoolean("bn", true)
+                .putString("bn_layout", bnLayout)
+                .apply()
+        } else {
+            prefs.edit()
+                .putBoolean("bn", false)
+                .apply()
+        }
         symbols = 0
         refreshLayout()
         when {
@@ -721,6 +752,9 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
             else -> refreshStrip()
         }
         updateAutoShift()
+        if (showFeedbackToast) {
+            Toast.makeText(this, mode.toastLabel(), Toast.LENGTH_SHORT).show()
+        }
     }
 
     override fun onSymbols(mode: Int) {
@@ -770,6 +804,7 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
         }
         buf.setLength(0)
         ic.commitText("$word ", 1)
+        kv?.notifyEmoWord(word, !allowLearn)
         refreshStrip()
         updateAutoShift()
     }
@@ -898,13 +933,13 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
     private fun commitNoteEditRoman() {
         if (noteEditRoman.isEmpty()) return
         val raw = noteEditRoman.toString()
-        noteEditBuf.append(if (bangla) Phonetic.convert(raw) else raw)
+        noteEditBuf.append(if (isAvroActive()) Phonetic.convert(raw) else raw)
         noteEditRoman.setLength(0)
     }
 
     private fun noteEditDisplayText(): String {
         val tail = if (noteEditRoman.isEmpty()) ""
-        else if (bangla) Phonetic.convert(noteEditRoman.toString()) else noteEditRoman.toString()
+        else if (isAvroActive()) Phonetic.convert(noteEditRoman.toString()) else noteEditRoman.toString()
         return noteEditBuf.toString() + tail
     }
 
@@ -916,13 +951,13 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
     private fun commitSecretRoman() {
         if (secretRoman.isEmpty()) return
         val raw = secretRoman.toString()
-        secretBuf.append(if (bangla) Phonetic.convert(raw) else raw)
+        secretBuf.append(if (isAvroActive()) Phonetic.convert(raw) else raw)
         secretRoman.setLength(0)
     }
 
     private fun secretDisplayText(): String {
         val tail = if (secretRoman.isEmpty()) ""
-        else if (bangla) Phonetic.convert(secretRoman.toString()) else secretRoman.toString()
+        else if (isAvroActive()) Phonetic.convert(secretRoman.toString()) else secretRoman.toString()
         return secretBuf.toString() + tail
     }
 
@@ -1032,20 +1067,23 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
         kv?.setComposing("")
     }
 
+    private fun showGuideBanner(guide: SetupGuidance.SetupGuide) {
+        renderedBannerEventId = -1L
+        host?.setMode(KeyboardHostLayout.HostMode.KEYBOARD)
+        secretBannerView?.showGuide(guide)
+    }
+
     override fun onSecretToggle() {
         commitComposing()
         val contacts = SecretConfig.getContacts(this)
 
         if (!secretMode) {
-            if (contacts.isEmpty()) {
+            val guide = SetupGuidance.secretGuide(this)
+            if (guide != null) {
                 secretMode = false
                 kv?.setSecretMode(false)
                 kv?.setComposing("")
-                Toast.makeText(
-                    this,
-                    "আগে 🔐 Secret Message screen-এ contact বানান বা বন্ধুর পাঠানো code import করুন",
-                    Toast.LENGTH_LONG
-                ).show()
+                showGuideBanner(guide)
                 return
             }
             val targetName = secretTarget()?.first ?: contacts.keys.first()
@@ -1125,39 +1163,36 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
     }
 
     override fun onAssistant() {
-        if (!AssistantSetup.isReady(this)) {
-            val i = Intent(this, AssistantActivity::class.java)
-            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            startActivity(i)
+        val guide = SetupGuidance.assistantGuide(this)
+        if (guide != null) {
+            showGuideBanner(guide)
             return
         }
-        val isPtt = AssistantPrefs.listeningMode(this) == ListeningMode.PUSH_TO_TALK
-        if (AssistantListenerService.running) {
-            if (isPtt) {
-                AssistantListenerService.triggerPtt(this)
-            } else {
-                AssistantListenerService.stop(this)
-                Toast.makeText(this, "Assistant বন্ধ", Toast.LENGTH_SHORT).show()
-            }
-        } else {
-            if (isPtt) {
-                AssistantListenerService.triggerPtt(this)
-            } else {
-                AssistantListenerService.start(this)
-                Toast.makeText(
-                    this, "Assistant চালু — \"Hey Bot\" বলুন", Toast.LENGTH_SHORT
-                ).show()
-            }
+        if (voice.listening) {
+            voice.stop()
         }
+        AssistantListenerService.setPaused(false)
+        AssistantListenerService.triggerPtt(this)
+        kv?.triggerEmoListeningVisual(true) ?: EmoBrainHub.onListeningStarted(isPtt = true)
+        Toast.makeText(this, "🤖 EMO শুনছে — বলুন", Toast.LENGTH_SHORT).show()
     }
 
     override fun onVoice() {
+        if (!voice.isAvailable()) {
+            showGuideBanner(SetupGuidance.voiceUnavailableGuide())
+            return
+        }
         if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) !=
             android.content.pm.PackageManager.PERMISSION_GRANTED
         ) {
-            val i = Intent(this, VoicePermissionActivity::class.java)
-            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            startActivity(i)
+            val asked = prefs.getBoolean("voice_perm_asked", false)
+            val blocked = prefs.getBoolean("voice_perm_blocked", false)
+            if (!asked && !blocked) {
+                prefs.edit().putBoolean("voice_perm_asked", true).apply()
+                SetupGuidance.openAction(this, SetupGuidance.GuideAction.REQUEST_VOICE_PERMISSION, fromService = true)
+            } else {
+                showGuideBanner(SetupGuidance.voicePermissionGuide(blocked))
+            }
             return
         }
         if (voice.listening) {
@@ -1165,7 +1200,7 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
             return
         }
         if (secretMode) {
-            Toast.makeText(this, "Secret mode-এ voice বন্ধ — আগে Secret mode বন্ধ করুন", Toast.LENGTH_SHORT).show()
+            showGuideBanner(SetupGuidance.voiceSecretConflictGuide())
             return
         }
         commitComposing()
@@ -1190,6 +1225,10 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
     }
 
     override fun onVoiceError(message: String) {
+        SetupGuidance.voiceRuntimeErrorGuide(message)?.let {
+            showGuideBanner(it)
+            return
+        }
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
 
@@ -1217,7 +1256,7 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
         var selected = false
         var line = ""
         if (fromBuf) {
-            source = if (bangla) Phonetic.convert(bufSnapshot) else bufSnapshot
+            source = if (isAvroActive()) Phonetic.convert(bufSnapshot) else bufSnapshot
         } else {
             source = ic.getSelectedText(0)?.toString()
             selected = !source.isNullOrBlank()
@@ -1227,7 +1266,7 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
             }
         }
         if (source.isNullOrBlank()) {
-            Toast.makeText(this, "অনুবাদ করতে আগে শব্দ লিখুন বা সিলেক্ট করুন", Toast.LENGTH_SHORT).show()
+            showGuideBanner(SetupGuidance.translateEmptyGuide())
             return
         }
         val (from, to) = Translator.autoDirection(source)
@@ -1241,7 +1280,7 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
             val c = currentInputConnection ?: return@translateEx
             when (outcome) {
                 is Translator.Outcome.Fail ->
-                    Toast.makeText(this, "❌ " + outcome.reason.messageBn, Toast.LENGTH_SHORT).show()
+                    showGuideBanner(SetupGuidance.translateFailGuide(outcome))
                 is Translator.Outcome.Ok -> {
                     val result = outcome.text
                     when {
