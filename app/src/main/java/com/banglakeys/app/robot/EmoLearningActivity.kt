@@ -6,7 +6,6 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -85,6 +84,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.R
@@ -147,7 +148,15 @@ class EmoLearningActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             BanglaKeysTheme(darkTheme = true, dynamicColor = false) {
-                val vm: EmoLearningViewModel = viewModel()
+                val app = this@EmoLearningActivity.application
+                val vm: EmoLearningViewModel = viewModel(
+                    factory = object : ViewModelProvider.Factory {
+                        @Suppress("UNCHECKED_CAST")
+                        override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                            return EmoLearningViewModel(app) as T
+                        }
+                    }
+                )
                 EmoLearningScreen(
                     viewModel = vm,
                     onBack = { finish() },
@@ -169,6 +178,7 @@ fun EmoLearningScreen(
     var showResetDialog by remember { mutableStateOf(false) }
     val scrollState = rememberScrollState()
 
+    Box(modifier = Modifier.fillMaxSize()) {
     Scaffold(
         containerColor = LearningPal.Bg,
         contentWindowInsets = WindowInsets.safeDrawing,
@@ -610,34 +620,74 @@ fun EmoLearningScreen(
         }
     }
 
-    AnimatedVisibility(visible = showResetDialog) {
-        AlertDialog(
-            onDismissRequest = { showResetDialog = false },
-            containerColor = LearningPal.Card,
-            titleContentColor = LearningPal.TextPrimary,
-            textContentColor = LearningPal.TextSub,
-            title = { Text("লার্নিং মেমোরি মুছবেন?") },
-            text = {
-                Text("EMO-র শেখা শব্দ, পরের শব্দের প্যাটার্ন এবং প্রিয় ইমোজির হিসাব শূন্য থেকে শুরু হবে।")
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        viewModel.resetAll()
-                        showResetDialog = false
-                        Toast.makeText(context, "EMO লার্নিং ডেটা রিসেট হয়েছে", Toast.LENGTH_SHORT).show()
-                    },
-                    modifier = Modifier.testTag("btn_confirm_reset_learning"),
+    if (showResetDialog) {
+        androidx.activity.compose.BackHandler { showResetDialog = false }
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color(0xB804080E))
+                .clickable(
+                    interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                    indication = null,
+                ) { showResetDialog = false }
+                .padding(24.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Surface(
+                color = LearningPal.Card,
+                shape = RoundedCornerShape(24.dp),
+                border = BorderStroke(1.dp, LearningPal.Border),
+                modifier = Modifier
+                    .widthIn(max = 420.dp)
+                    .fillMaxWidth()
+                    .clickable(
+                        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                        indication = null,
+                    ) {},
+            ) {
+                Column(
+                    modifier = Modifier.padding(22.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Text("মুছে ফেলুন", color = Color(0xFFFF5A6E), fontWeight = FontWeight.Bold)
+                    Text(
+                        text = "লার্নিং মেমোরি মুছবেন?",
+                        color = LearningPal.TextPrimary,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        text = "EMO-র শেখা শব্দ, পরের শব্দের প্যাটার্ন এবং প্রিয় ইমোজির হিসাব শূন্য থেকে শুরু হবে।",
+                        color = LearningPal.TextSub,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                    ) {
+                        TextButton(
+                            onClick = { showResetDialog = false },
+                            modifier = Modifier.minimumInteractiveComponentSize(),
+                        ) {
+                            Text("বাতিল", color = LearningPal.TextSub)
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        TextButton(
+                            onClick = {
+                                viewModel.resetAll()
+                                showResetDialog = false
+                                Toast.makeText(context, "EMO লার্নিং ডেটা রিসেট হয়েছে", Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .testTag("btn_confirm_reset_learning"),
+                        ) {
+                            Text("মুছে ফেলুন", color = Color(0xFFFF5A6E), fontWeight = FontWeight.Bold)
+                        }
+                    }
                 }
-            },
-            dismissButton = {
-                TextButton(onClick = { showResetDialog = false }) {
-                    Text("বাতিল", color = LearningPal.TextSub)
-                }
-            },
-        )
+            }
+        }
+    }
     }
 }
 

@@ -32,6 +32,8 @@ class Key(
     val alt: String? = null,
     /** Fixed layout (প্রভাত): Shift চাপলে এই অক্ষর বসে (null হলে label.uppercase())। */
     val shiftLabel: String? = null,
+    /** Long-press popup-এর বাড়তি অক্ষর (Ridmik-এর মতো): popup = [alt/shift অক্ষর] + extras, আঙুল সরিয়ে বাছা যায়। */
+    val extras: List<String> = emptyList(),
 )
 
 enum class KeyboardLanguageMode {
@@ -94,7 +96,8 @@ object Layouts {
         rows.add(letters("qwertyuiop", if (numberRow) null else d))
 
         // Row 2
-        rows.add(listOf(spacer(0.5f)) + letters("asdfghjkl", "@#৳_&-+()") + spacer(0.5f))
+        val homeAlts = if (bangla) "@#৳_&-+()" else "@#\$_&-+()"
+        rows.add(listOf(spacer(0.5f)) + letters("asdfghjkl", homeAlts) + spacer(0.5f))
 
         // Row 3
         rows.add(
@@ -129,8 +132,8 @@ object Layouts {
     const val PROBHAT_KEY_DOT_SHIFT = "ঁ"
     const val PROBHAT_NAME = "প্রভাত"
 
-    private fun pair(label: String, shift: String, w: Float = 1f) =
-        Key(label, weight = w, alt = shift, shiftLabel = shift)
+    private fun pair(label: String, shift: String, w: Float = 1f, extras: List<String> = emptyList()) =
+        Key(label, weight = w, alt = shift, shiftLabel = shift, extras = extras)
 
     fun probhat(bnDigits: Boolean): List<List<Key>> {
         val bn = "১২৩৪৫৬৭৮৯০"
@@ -140,8 +143,8 @@ object Layouts {
 
         val w12 = 10f / 12f
         val top = listOf(
-            pair("দ", "ধ", w12), pair("ূ", "ঊ", w12), pair("ী", "ঈ", w12), pair("র", "ড়", w12),
-            pair("ট", "ঠ", w12), pair("এ", "ঐ", w12), pair("ু", "উ", w12), pair("ি", "ই", w12),
+            pair("দ", "ধ", w12), pair("ূ", "ঊ", w12), pair("ী", "ঈ", w12), pair("র", "ড়", w12, listOf("ৃ")),
+            pair("ট", "ঠ", w12), pair("এ", "ঐ", w12, listOf("ঞ")), pair("ু", "উ", w12, listOf("ৎ")), pair("ি", "ই", w12),
             pair("ও", "ঔ", w12), pair("প", "ফ", w12), pair("ে", "ৈ", w12), pair("ো", "ৌ", w12),
         )
 
@@ -152,7 +155,7 @@ object Layouts {
 
         val w = 0.8f
         val bottom = listOf(Key("⇧", KeyType.SHIFT, 1.3f)) + listOf(
-            pair("য়", "য", w), pair("শ", "ঢ়", w), pair("চ", "ছ", w), pair("আ", "ঋ", w),
+            pair("য়", "য", w, listOf("্য")), pair("শ", "ঢ়", w), pair("চ", "ছ", w), pair("আ", "ঋ", w),
             pair("ব", "ভ", w), pair("ন", "ণ", w), pair("ম", "ঙ", w),
             Key("্", weight = w),
             pair(PROBHAT_KEY_DOT, PROBHAT_KEY_DOT_SHIFT, w),

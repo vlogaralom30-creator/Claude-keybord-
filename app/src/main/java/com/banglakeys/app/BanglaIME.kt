@@ -272,7 +272,9 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
                         }
                         val ic = currentInputConnection ?: return
                         val before = ic.getTextBeforeCursor(16, 0)?.toString().orEmpty()
-                        if (before.isNotEmpty()) {
+                        // বাংলা অক্ষরে এক চাপে এক code point (আগে কার/হসন্ত) — Ridmik/Android-এর মতো
+                        val lastIsBangla = before.lastOrNull()?.let { it in '\u0980'..'\u09FF' } == true
+                        if (before.isNotEmpty() && !lastIsBangla) {
                             val after = EmojiRepository.deleteLastGrapheme(before)
                             val dropCount = before.length - after.length
                             if (dropCount > 1) {
@@ -336,11 +338,15 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
         inputClass = type and InputType.TYPE_MASK_CLASS
         val variation = type and InputType.TYPE_MASK_VARIATION
 
-        val isPassword = inputClass == InputType.TYPE_CLASS_TEXT && (
+        // numeric PIN field (TYPE_CLASS_NUMBER + VARIATION_PASSWORD)-ও password
+        val isPassword = (inputClass == InputType.TYPE_CLASS_TEXT && (
             variation == InputType.TYPE_TEXT_VARIATION_PASSWORD ||
                 variation == InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD ||
                 variation == InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD
-            )
+            )) || (inputClass == InputType.TYPE_CLASS_NUMBER &&
+            variation == InputType.TYPE_NUMBER_VARIATION_PASSWORD)
+        // incognito / private mode: app "শেখা বন্ধ" চাইলে (IME_FLAG_NO_PERSONALIZED_LEARNING) মানি
+        val noLearning = ((info?.imeOptions ?: 0) and EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING) != 0
         val isNumericField = inputClass == InputType.TYPE_CLASS_NUMBER ||
             inputClass == InputType.TYPE_CLASS_PHONE ||
             inputClass == InputType.TYPE_CLASS_DATETIME
@@ -352,7 +358,7 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
             ))
 
         allowSuggest = !isPassword && !isNumericField
-        allowLearn = !codeLike
+        allowLearn = !codeLike && !noLearning
         lastAllowSecretBanner = !isPassword && !isNumericField
         kv?.setEmoPrivacyMode(isPassword)
 
@@ -416,7 +422,7 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
                 currentInputConnection?.finishComposingText()
                 refreshStrip()
             }
-        } else if (!bangla) {
+        } else {
             // English mode-এ user cursor অন্যত্র সরালে buffer সিঙ্ক রাখা হয়
             val before = currentInputConnection?.getTextBeforeCursor(buf.length, 0)?.toString()
             if (newSelStart != newSelEnd || (before != null && before != buf.toString())) {
@@ -446,6 +452,10 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
     }
 
     private fun isAvroActive() = bangla && bnLayout != "probhat"
+
+    /** বাংলা ব্লকের অক্ষর/কার/হসন্ত (বাংলা অঙ্ক ০-৯ বাদে) — প্রভাত-এর শব্দ buffer-এর জন্য। */
+    private fun isBnWordChar(c: Char): Boolean =
+        c in '\u0980'..'\u09FF' && c !in '\u09E6'..'\u09EF'
 
     private fun spaceLabelFor(): String =
         KeyboardLanguageMode.from(bangla, bnLayout).spaceLabel()
@@ -562,7 +572,7 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
             val ch = text.singleOrNull()
             val phoneticBn = isAvroActive() && symbols == 0
             if (phoneticBn && ch != null &&
-                (ch in 'a'..'z' || ch in 'A'..'Z' || ((ch == '^' || ch == '`') && noteEditRoman.isNotEmpty()))
+                (ch in 'a'..'z' || ch in 'A'..'Z' || ((ch == '^' || ch == '`' || ch == ':') && noteEditRoman.isNotEmpty()))
             ) {
                 noteEditRoman.append(ch)
             } else {
@@ -577,7 +587,7 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
             val ch = text.singleOrNull()
             val phoneticBn = isAvroActive() && symbols == 0
             if (phoneticBn && ch != null &&
-                (ch in 'a'..'z' || ch in 'A'..'Z' || ((ch == '^' || ch == '`') && secretRoman.isNotEmpty()))
+                (ch in 'a'..'z' || ch in 'A'..'Z' || ((ch == '^' || ch == '`' || ch == ':') && secretRoman.isNotEmpty()))
             ) {
                 secretRoman.append(ch)
             } else {
@@ -592,7 +602,7 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
         val englishWord = !bangla && symbols == 0 && allowSuggest
 
         if (phoneticBn && ch != null &&
-            (ch in 'a'..'z' || ch in 'A'..'Z' || ((ch == '^' || ch == '`') && buf.isNotEmpty()))
+            (ch in 'a'..'z' || ch in 'A'..'Z' || ((ch == '^' || ch == '`' || ch == ':') && buf.isNotEmpty()))
         ) {
             buf.append(ch)
             updateComposing()
@@ -605,6 +615,17 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
         ) {
             buf.append(ch)
             ic.commitText(ch.toString(), 1)
+            refreshStrip()
+            if (ThemeAutoSwitcher.onKeyTyped(this)) reloadAllThemeViews()
+            return
+        }
+
+        // প্রভাত (fixed Bangla): অক্ষর সরাসরি commit হয়, কিন্তু buf-এ জমিয়ে suggestion/learning চালু রাখি
+        val probhatWord = bangla && !isAvroActive() && symbols == 0 && allowSuggest &&
+            text.isNotEmpty() && text.all { isBnWordChar(it) }
+        if (probhatWord) {
+            buf.append(text)
+            ic.commitText(text, 1)
             refreshStrip()
             if (ThemeAutoSwitcher.onKeyTyped(this)) reloadAllThemeViews()
             return
@@ -659,7 +680,8 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
             if (isAvroActive()) {
                 updateComposing()
                 return
-            } else if (!bangla) {
+            } else {
+                // English ও প্রভাত: commit হওয়া লেখা থেকে এক অক্ষর মুছে buffer সিঙ্ক রাখি
                 sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
                 refreshStrip()
                 updateAutoShift()
@@ -808,7 +830,7 @@ class BanglaIME : InputMethodService(), KeyboardView.Listener, VoiceInput.Listen
             if (allowLearn) {
                 suggestions.learn(buf.toString(), word, bangla)
             }
-            if (!bangla) {
+            if (!isAvroActive()) {
                 // English-এ আগে commit হওয়া partial prefix মুছে সম্পূর্ণ শব্দ বসানো হয়
                 val before = ic.getTextBeforeCursor(typedLen, 0)?.toString()
                 if (before != null && before == buf.toString()) {

@@ -40,7 +40,7 @@ class CommandExecutor(private val appCtx: Context) {
         cmd: Command,
         onProgress: (String) -> Unit = {}
     ): String {
-        AssistantLog.d("CommandExecutor.executeAsync: $cmd")
+        AssistantLog.d("CommandExecutor.executeAsync: ${cmd::class.java.simpleName}")
         val result = when (cmd) {
             is Command.AppChat -> {
                 val flow = cmd.appName?.let { AppFlows.find(it) }
@@ -84,7 +84,7 @@ class CommandExecutor(private val appCtx: Context) {
     }
 
     fun execute(cmd: Command): String {
-        AssistantLog.d("CommandExecutor.execute: $cmd")
+        AssistantLog.d("CommandExecutor.execute: ${cmd::class.java.simpleName}")
         val result = when (cmd) {
             is Command.OpenApp -> openApp(cmd.name)
             is Command.Call -> call(cmd.target)

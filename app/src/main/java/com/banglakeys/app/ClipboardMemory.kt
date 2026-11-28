@@ -1,6 +1,7 @@
 package com.banglakeys.app
 
 import android.content.ClipData
+import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.SharedPreferences
@@ -22,11 +23,32 @@ class ClipboardMemory(private val context: Context) {
 
     init {
         load()
+        pollSystemClipboard()
     }
 
     fun reload() {
         items.clear()
         load()
+        pollSystemClipboard()
+    }
+
+    fun pollSystemClipboard() {
+        try {
+            val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
+            val clip = cm.primaryClip
+            if (clip != null && clip.itemCount > 0) {
+                val sensitive = clip.description?.extras
+                    ?.getBoolean(ClipDescription.EXTRA_IS_SENSITIVE, false) == true
+                if (!sensitive) {
+                    val text = clip.getItemAt(0).coerceToText(context)?.toString()
+                    if (!text.isNullOrBlank() && !shouldIgnore(text)) {
+                        if (!items.contains(text.trim())) {
+                            add(text)
+                        }
+                    }
+                }
+            }
+        } catch (_: Throwable) {}
     }
 
     /** IME-র onCreate() থেকে call করুন, clipboard listen শুরু করতে। */
@@ -35,6 +57,10 @@ class ClipboardMemory(private val context: Context) {
         val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
         val l = ClipboardManager.OnPrimaryClipChangedListener {
             val clip: ClipData? = cm.primaryClip
+            // password manager "sensitive" দিয়ে মার্ক করলে history-তে রাখি না (Android 13+ extra)
+            val sensitive = clip?.description?.extras
+                ?.getBoolean(ClipDescription.EXTRA_IS_SENSITIVE, false) == true
+            if (sensitive) return@OnPrimaryClipChangedListener
             val text = if (clip != null && clip.itemCount > 0) {
                 clip.getItemAt(0).coerceToText(context)?.toString()
             } else null
@@ -43,6 +69,7 @@ class ClipboardMemory(private val context: Context) {
         manager = cm
         listener = l
         cm.addPrimaryClipChangedListener(l)
+        pollSystemClipboard()
     }
 
     /** IME-র onDestroy() থেকে call করুন। */
@@ -53,7 +80,10 @@ class ClipboardMemory(private val context: Context) {
         listener = null
     }
 
-    fun clips(): List<String> = items.toList()
+    fun clips(): List<String> {
+        pollSystemClipboard()
+        return items.toList()
+    }
 
     fun add(text: String) {
         val t = text.trim()
@@ -85,23 +115,39 @@ class ClipboardMemory(private val context: Context) {
         save()
     }
 
+    /** history এখন LocalAesVault (AES-256-GCM) দিয়ে encrypt করে রাখা হয়; plaintext আর লেখা হয় না। */
     private fun save() {
         val arr = JSONArray()
         for (s in items) arr.put(s)
-        prefs.edit().putString("items", arr.toString()).apply()
+        try {
+            val enc = LocalAesVault.encrypt(context, arr.toString())
+            prefs.edit().putString(KEY_ENC, enc).remove(KEY_LEGACY).apply()
+        } catch (_: Throwable) {
+            // encrypt ব্যর্থ হলে plaintext-এ fallback নয় — শুধু এই session-এর memory-তে থাকবে
+        }
     }
 
     private fun load() {
-        val s = prefs.getString("items", null) ?: return
-        try {
-            val arr = JSONArray(s)
-            for (i in 0 until arr.length()) items.add(arr.getString(i))
-        } catch (_: Exception) {
+        val enc = prefs.getString(KEY_ENC, null)
+        val legacy = prefs.getString(KEY_LEGACY, null)
+        val json = if (enc != null) LocalAesVault.decrypt(context, enc) else legacy
+        if (json != null) {
+            try {
+                val arr = JSONArray(json)
+                val tmp = ArrayList<String>(arr.length())
+                for (i in 0 until arr.length()) tmp.add(arr.getString(i))
+                items.addAll(tmp)
+            } catch (_: Exception) {
+            }
         }
+        // পুরনো plaintext history থাকলে এখনই encrypt করে plaintext মুছে ফেলি (migration)
+        if (legacy != null) save()
     }
 
     companion object {
         private const val MAX_ITEMS = 20
+        private const val KEY_ENC = "items_enc"
+        private const val KEY_LEGACY = "items"
 
         @Volatile
         private var suppressedText: String? = null

@@ -21,7 +21,11 @@ import android.view.MotionEvent
 import android.view.View
 import com.banglakeys.app.robot.EmoBrainHub
 import com.banglakeys.app.robot.EmoFrameAnimator
+import com.banglakeys.app.robot.EmoVisualMode
 import com.banglakeys.app.robot.FaceId
+import com.banglakeys.app.robot.HdEyeStyle
+import com.banglakeys.app.robot.RobotBodyMove
+import com.banglakeys.app.robot.RobotBodySkin
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -93,6 +97,10 @@ class KeyboardView(context: Context) : View(context) {
     ) {
         var consumed = false
         var runnable: Runnable? = null
+        // long-press popup (Ridmik-এর মতো [ঐ][ঞ]) — আঙুল সরিয়ে বাছা, ছাড়লে commit
+        var options: List<String>? = null
+        var optRects: List<RectF>? = null
+        var sel = 0
     }
 
     private var rows: List<List<Key>> = emptyList()
@@ -146,6 +154,7 @@ class KeyboardView(context: Context) : View(context) {
     private var hintC = 0
     private var pressC = 0
     private var accentC = 0
+    private var borderC = 0
     private var popupC = 0
 
     // Strip pill colors
@@ -158,6 +167,9 @@ class KeyboardView(context: Context) : View(context) {
 
     // ---- theme state ----
     private var theme: KeyboardTheme = Themes.lightDefault
+    private var emoSkin: RobotBodySkin = RobotBodySkin.LAVENDER_3D
+    private var emoVisualMode: EmoVisualMode = EmoVisualMode.AUTO_UNIFIED
+    private var emoBgSkin: RobotBodySkin? = null
     private val emoAnimator = EmoFrameAnimator(brain = EmoBrainHub.brain)
     private val emoHubListener: () -> Unit = {
         if (theme.id == Themes.EMO_ID && isAttachedToWindow) {
@@ -278,17 +290,25 @@ class KeyboardView(context: Context) : View(context) {
 
     fun notifyEmoWord(word: String, isPassword: Boolean) {
         if (theme.id == Themes.EMO_ID) {
+            if (!isPassword) EmoBrainHub.clearPlayOverrides()
             emoAnimator.onWordCommitted(word, isPassword)
         }
     }
 
     fun notifyEmoSend(isPassword: Boolean) {
         if (theme.id == Themes.EMO_ID) {
+            if (!isPassword) EmoBrainHub.clearPlayOverrides()
             emoAnimator.onMessageSent(isPassword)
         }
     }
 
     fun emoCurrentMood(): FaceId = emoAnimator.brain.mood
+
+    fun emoCurrentMove(): RobotBodyMove = emoAnimator.currentMove
+
+    fun emoCurrentHdStyle(): HdEyeStyle = emoAnimator.currentHdStyle
+
+    fun emoIsUsingHdEyes(): Boolean = emoAnimator.currentUsingHdEyes
 
     fun isEmoThemeActive(): Boolean = theme.id == Themes.EMO_ID
 
@@ -322,6 +342,7 @@ class KeyboardView(context: Context) : View(context) {
         hintC = t.hint
         pressC = t.press
         accentC = t.accent
+        borderC = t.border
         popupC = t.popup
 
         pillC = t.pill
@@ -336,13 +357,32 @@ class KeyboardView(context: Context) : View(context) {
 
         bgShader = null
         bgShaderH = 0
+        emoBgSkin = null
 
         if (t.id == Themes.EMO_ID) {
+            emoSkin = AssistantPrefs.emoBodySkin(context)
+            emoVisualMode = AssistantPrefs.emoVisualMode(context)
             val a = (ThemeStore.emoKeyAlpha(context) / 100f * 255f).toInt().coerceIn(55, 225)
-            keyC = withAlpha(0x101824, a)
-            fnC = withAlpha(0x0A1018, (a + 26).coerceAtMost(240))
-            pillC = keyC
-            actionBgC = fnC
+            if (emoSkin == RobotBodySkin.LAVENDER_3D) {
+                accentC = 0xFFC4A1FF.toInt()
+                borderC = withAlpha(0xC4A1FF, 0x5A)
+                keyC = withAlpha(0x161224, (a * 0.86f).toInt().coerceIn(48, 220))
+                fnC = withAlpha(0x0E0B1A, (a + 14).coerceAtMost(232))
+                pressC = withAlpha(0xC4A1FF, 0x8A)
+                hintC = 0xFFD2C0F7.toInt()
+                popupC = 0xFF211836.toInt()
+                pillC = keyC
+                pillStrokeC = borderC
+                badgeBgC = withAlpha(0x2D1E4A, 0xB8)
+                badgeStrokeC = accentC
+                badgeTextC = 0xFFF1E8FF.toInt()
+                actionBgC = fnC
+            } else {
+                keyC = withAlpha(0x101824, a)
+                fnC = withAlpha(0x0A1018, (a + 26).coerceAtMost(240))
+                pillC = keyC
+                actionBgC = fnC
+            }
             bgBitmap = null
             bgBitmapStamp = -1L
             dimPct = 0
@@ -611,9 +651,16 @@ class KeyboardView(context: Context) : View(context) {
         }
 
         if (theme.bgTop != 0 && theme.bgBottom != 0) {
-            if (bgShader == null || bgShaderH != h) {
-                bgShader = LinearGradient(0f, 0f, 0f, h.toFloat(), theme.bgTop, theme.bgBottom, Shader.TileMode.CLAMP)
+            val topCol = if (theme.id == Themes.EMO_ID && emoSkin == RobotBodySkin.LAVENDER_3D) {
+                0xFF171029.toInt()
+            } else theme.bgTop
+            val botCol = if (theme.id == Themes.EMO_ID && emoSkin == RobotBodySkin.LAVENDER_3D) {
+                0xFF07050D.toInt()
+            } else theme.bgBottom
+            if (bgShader == null || bgShaderH != h || (theme.id == Themes.EMO_ID && emoBgSkin != emoSkin)) {
+                bgShader = LinearGradient(0f, 0f, 0f, h.toFloat(), topCol, botCol, Shader.TileMode.CLAMP)
                 bgShaderH = h
+                emoBgSkin = emoSkin
             }
             bgPaint.shader = bgShader
             c.drawRect(0f, 0f, w.toFloat(), h.toFloat(), bgPaint)
@@ -622,6 +669,7 @@ class KeyboardView(context: Context) : View(context) {
 
         if (theme.id == Themes.EMO_ID && h > stripH) {
             val padAreaH = h - stripH
+            val nowMs = System.currentTimeMillis()
             emoAnimator.drawBackdrop(
                 canvas = c,
                 cx = w / 2f,
@@ -629,6 +677,14 @@ class KeyboardView(context: Context) : View(context) {
                 areaW = w.toFloat(),
                 areaH = padAreaH,
                 accentColor = accentC,
+                skin = emoSkin,
+                visualMode = emoVisualMode,
+                bodyState = EmoBrainHub.bodyState,
+                isVoiceListening = EmoBrainHub.isVoiceListening,
+                forcedMove = EmoBrainHub.activeForcedMove(nowMs),
+                forcedHdEye = EmoBrainHub.activeForcedHdEye(nowMs),
+                externalTapHopAtMs = EmoBrainHub.lastKeyboardHopAtMs,
+                externalPetWiggleAtMs = EmoBrainHub.lastKeyboardPetAtMs,
             )
         }
     }
@@ -903,7 +959,7 @@ class KeyboardView(context: Context) : View(context) {
                 val rw = b.rect.width()
                 val label = displayLabel(k)
                 // Shift চালু থাকলে শিফট-অক্ষর নিজেই বড় করে দেখানো হয়, তাই হিন্ট লুকাই (Ridmik-এর মতো)
-                val alt = if (shift != SHIFT_OFF && k.shiftLabel != null) null else k.alt
+                val alt = if (shift != SHIFT_OFF && k.shiftLabel != null) k.extras.firstOrNull() else k.alt
                 val maxW = (rw - 5.5f * d).coerceAtLeast(8f * d)
                 if (alt != null) {
                     val maxHintW = (rw * 0.48f).coerceAtLeast(6f * d)
@@ -993,10 +1049,10 @@ class KeyboardView(context: Context) : View(context) {
                     paint.color = fill
                     c.drawRoundRect(rect, r, r, paint)
                 }
-                if (t.borderDp > 0f && t.border != 0) {
+                if (t.borderDp > 0f && borderC != 0) {
                     val half = t.borderDp * d / 2f
                     innerRect.set(rect.left + half, rect.top + half, rect.right - half, rect.bottom - half)
-                    strokePaint.color = t.border
+                    strokePaint.color = borderC
                     strokePaint.strokeWidth = t.borderDp * d
                     c.drawRoundRect(innerRect, r, r, strokePaint)
                 }
@@ -1319,6 +1375,12 @@ class KeyboardView(context: Context) : View(context) {
         for (i in 0 until ptrs.size()) {
             val p = ptrs.valueAt(i)
             val b = p.box ?: continue
+            val opts = p.options
+            val optRects = p.optRects
+            if (opts != null && optRects != null) {
+                drawOptionBar(c, p, opts, optRects)
+                continue
+            }
             if (b.key.type != KeyType.CHAR || p.consumed) continue
 
             val bw = b.rect.width() * 1.35f * sc
@@ -1343,6 +1405,48 @@ class KeyboardView(context: Context) : View(context) {
             }
             drawCentered(c, popLabel, popupRect.centerX(), popupRect.centerY(), popSize, textC)
             fx.includeDirty(popupRect.left - 2f * d, popupRect.top - 2f * d, popupRect.right + 2f * d, popupRect.bottom + 3f * d)
+        }
+    }
+
+    private fun drawOptionBar(c: Canvas, p: Ptr, opts: List<String>, rs: List<RectF>) {
+        for (i in opts.indices) {
+            val r = rs[i]
+            paint.style = Paint.Style.FILL
+            paint.color = shadowC
+            c.drawRoundRect(r.left, r.top + 2f * d, r.right, r.bottom + 2f * d, radius * 1.4f, radius * 1.4f, paint)
+            paint.color = popupC
+            c.drawRoundRect(r, radius * 1.4f, radius * 1.4f, paint)
+            if (i == p.sel) {
+                paint.color = textC
+                paint.alpha = 70
+                c.drawRoundRect(r, radius * 1.4f, radius * 1.4f, paint)
+            }
+            drawCentered(c, opts[i], r.centerX(), r.centerY(), r.height() * 0.5f, textC)
+            fx.includeDirty(r.left - 2f * d, r.top - 2f * d, r.right + 2f * d, r.bottom + 3f * d)
+        }
+    }
+
+    private fun openOptions(p: Ptr, b: Box) {
+        val k = b.key
+        val head = if (shift != SHIFT_OFF) displayLabel(k) else (k.alt ?: k.label)
+        val opts = (listOf(head) + k.extras).distinct()
+        val cw = max(b.rect.width() * 1.05f, 40f * d)
+        val total = cw * opts.size
+        val left = (b.rect.centerX() - total / 2f).coerceIn(2f * d, max(2f * d, width - total - 2f * d))
+        val bh = min(rowH() * 1.05f, 54f * d)
+        val top = max(0f, b.rect.top - 2f * d - bh)
+        p.optRects = opts.indices.map { i -> RectF(left + i * cw, top, left + (i + 1) * cw, top + bh) }
+        p.options = opts
+        p.sel = 0
+    }
+
+    private fun updateOptionSel(p: Ptr, x: Float) {
+        val rs = p.optRects ?: return
+        var idx = rs.indexOfFirst { x <= it.right }
+        if (idx < 0) idx = rs.lastIndex
+        if (idx != p.sel) {
+            p.sel = idx
+            invalidate()
         }
     }
 
@@ -1452,6 +1556,7 @@ class KeyboardView(context: Context) : View(context) {
                 else -> {}
             }
         } else if (theme.id == Themes.EMO_ID) {
+            EmoBrainHub.clearPlayOverrides()
             emoAnimator.onBlankTap()
         }
         invalidate()
@@ -1459,6 +1564,10 @@ class KeyboardView(context: Context) : View(context) {
 
     private fun onMove(id: Int, x: Float, y: Float) {
         val p = ptrs.get(id) ?: return
+        if (p.options != null) {
+            updateOptionSel(p, x)
+            return
+        }
         if (p.consumed) return
         if (p.inStrip) {
             val newHit = hitTestStrip(x, y)
@@ -1484,6 +1593,13 @@ class KeyboardView(context: Context) : View(context) {
         val p = ptrs.get(id) ?: return
         clearRunnable(p)
         ptrs.remove(id)
+        val picked = p.options
+        if (picked != null) {
+            listener?.onText(picked.getOrElse(p.sel) { picked[0] })
+            if (shift == SHIFT_ON) shift = SHIFT_OFF
+            invalidate()
+            return
+        }
         if (p.inStrip) {
             val hit = hitTestStrip(x, y)
             if (!p.consumed && hit != null && hit == p.stripHit) {
@@ -1570,7 +1686,10 @@ class KeyboardView(context: Context) : View(context) {
             if (b != null) {
                 p.consumed = true
                 when (b.key.type) {
-                    KeyType.CHAR -> b.key.alt?.let { listener?.onText(it) }
+                    KeyType.CHAR -> {
+                        if (b.key.extras.isNotEmpty()) openOptions(p, b)
+                        else b.key.alt?.let { listener?.onText(it) }
+                    }
                     KeyType.SPACE -> listener?.onSpaceLongPress()
                     KeyType.LANG -> listener?.onLayoutToggle()
                     else -> {}
@@ -1595,9 +1714,12 @@ class KeyboardView(context: Context) : View(context) {
 
     override fun onWindowVisibilityChanged(visibility: Int) {
         super.onWindowVisibilityChanged(visibility)
-        // কিবোর্ড আবার দেখালে Settings-এর নতুন effects level নেয়
+        // কিবোর্ড আবার দেখালে Settings-এর নতুন effects level ও EMO স্কিন/মোড নেয়
         if (visibility == VISIBLE) {
             fx.level = EffectsConfig.level(context)
+            if (theme.id == Themes.EMO_ID) {
+                applyTheme()
+            }
         } else {
             fx.clear()
             PerfRecorder.clearPendingDown()
@@ -1607,6 +1729,9 @@ class KeyboardView(context: Context) : View(context) {
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
         EmoBrainHub.addListener(emoHubListener)
+        if (theme.id == Themes.EMO_ID) {
+            applyTheme()
+        }
     }
 
     override fun onDetachedFromWindow() {

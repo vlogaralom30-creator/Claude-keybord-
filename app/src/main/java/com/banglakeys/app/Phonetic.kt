@@ -7,7 +7,8 @@ package com.banglakeys.app
  *  - ব্যঞ্জনের পর ব্যঞ্জন লিখলে আপনা-আপনি যুক্তাক্ষর (kt → ক্ত)
  *  - ব্যঞ্জনের পর 'o' = inherent vowel (যুক্তাক্ষর আটকায়, কিছু print হয় না)
  *  - ও-কার/ও: 'O'
- *  - ং = ng, ঙ = Ng, ঞ = NG, ঁ = ^, ৎ = t``
+ *  - ং = ng, ঙ = Ng, ঞ = NG, ঁ = ^, ৎ = t``, ঃ = :  ( :: = সাধারণ colon )
+ *  - চ = ch, ছ = chh (বা Ch)
  */
 object Phonetic {
 
@@ -16,6 +17,8 @@ object Phonetic {
         "^" to "ঁ",
         "t``" to "ৎ",
         "``" to "",
+        ":" to "ঃ",
+        "::" to ":",
     )
 
     // independent form, kar (matra) form
@@ -37,7 +40,8 @@ object Phonetic {
 
     private val consonants = hashMapOf(
         "kkh" to "ক্ষ",
-        "kh" to "খ", "gh" to "ঘ", "Ng" to "ঙ", "ch" to "ছ", "jh" to "ঝ", "NG" to "ঞ",
+        "chh" to "ছ", "ch" to "চ", "Ch" to "ছ",
+        "kh" to "খ", "gh" to "ঘ", "Ng" to "ঙ", "jh" to "ঝ", "NG" to "ঞ",
         "Th" to "ঠ", "Dh" to "ঢ", "th" to "থ", "dh" to "ধ", "ph" to "ফ", "bh" to "ভ",
         "Rh" to "ঢ়", "Sh" to "ষ", "sh" to "শ",
         "k" to "ক", "g" to "গ", "c" to "চ", "j" to "জ", "T" to "ট", "D" to "ড", "N" to "ণ",

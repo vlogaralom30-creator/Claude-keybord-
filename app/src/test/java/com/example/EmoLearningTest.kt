@@ -138,7 +138,8 @@ class EmoLearningTest {
 
         // Reset via confirmation dialog
         learningRule.onNodeWithTag("btn_reset_learning").performScrollTo().performClick()
-        learningRule.onNodeWithTag("btn_confirm_reset_learning").performClick()
+        learningRule.waitForIdle()
+        learningRule.onNodeWithTag("btn_confirm_reset_learning").assertIsDisplayed().performClick()
         learningRule.waitForIdle()
         val resetSnap = EmoLearningStore.snapshot(ctx)
         assertEquals(0, resetSnap.overallPercent)

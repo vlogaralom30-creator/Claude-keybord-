@@ -553,7 +553,7 @@ class FlowRunner(private val ctx: Context) {
         val queryName = variants.firstOrNull { it != contact && it.length >= 2 && it.any { ch -> ch in 'a'..'z' || ch in 'A'..'Z' } }
             ?: contact
         val entered = svc.enterText(searchInput, queryName)
-        AssistantLog.d("FlowRunner(${flow.key}): enterText('$queryName') -> $entered")
+        AssistantLog.d("FlowRunner(${flow.key}): enterText(<redacted>) -> $entered")
         if (!entered) {
             return "⚠️ ${flow.key}-তে নাম লেখা যায়নি"
         }

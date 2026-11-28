@@ -37,6 +37,9 @@ object AssistantPrefs {
     private const val KEY_EMO_VOICE_SFX_ENABLED = "emo_voice_sfx_enabled"
     private const val KEY_EMO_HAPTICS_ENABLED = "emo_haptics_enabled"
     private const val KEY_EMO_CAMERA_EYES_ENABLED = "emo_camera_eyes_enabled"
+    private const val KEY_EMO_HD_EYES_ENABLED = "emo_hd_eyes_enabled"
+    private const val KEY_EMO_BODY_SKIN = "emo_body_skin"
+    private const val KEY_EMO_VISUAL_MODE = "emo_visual_mode"
 
     const val MIN_FLOW_TIMEOUT_SEC = 2
     const val MAX_FLOW_TIMEOUT_SEC = 15
@@ -201,5 +204,32 @@ object AssistantPrefs {
 
     fun setEmoCameraEyesEnabled(ctx: Context, enabled: Boolean) {
         prefs(ctx).edit().putBoolean(KEY_EMO_CAMERA_EYES_ENABLED, enabled).apply()
+    }
+
+    fun emoHdEyesEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean(KEY_EMO_HD_EYES_ENABLED, true)
+
+    fun setEmoHdEyesEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean(KEY_EMO_HD_EYES_ENABLED, enabled).apply()
+    }
+
+    fun emoBodySkin(ctx: Context): com.banglakeys.app.robot.RobotBodySkin {
+        val raw = prefs(ctx).getString(KEY_EMO_BODY_SKIN, com.banglakeys.app.robot.RobotBodySkin.LAVENDER_3D.name)
+        return com.banglakeys.app.robot.RobotBodySkin.entries.firstOrNull { it.name == raw }
+            ?: com.banglakeys.app.robot.RobotBodySkin.LAVENDER_3D
+    }
+
+    fun setEmoBodySkin(ctx: Context, skin: com.banglakeys.app.robot.RobotBodySkin) {
+        prefs(ctx).edit().putString(KEY_EMO_BODY_SKIN, skin.name).apply()
+    }
+
+    fun emoVisualMode(ctx: Context): com.banglakeys.app.robot.EmoVisualMode {
+        val raw = prefs(ctx).getString(KEY_EMO_VISUAL_MODE, com.banglakeys.app.robot.EmoVisualMode.AUTO_UNIFIED.name)
+        return com.banglakeys.app.robot.EmoVisualMode.entries.firstOrNull { it.name == raw }
+            ?: com.banglakeys.app.robot.EmoVisualMode.AUTO_UNIFIED
+    }
+
+    fun setEmoVisualMode(ctx: Context, mode: com.banglakeys.app.robot.EmoVisualMode) {
+        prefs(ctx).edit().putString(KEY_EMO_VISUAL_MODE, mode.name).apply()
     }
 }

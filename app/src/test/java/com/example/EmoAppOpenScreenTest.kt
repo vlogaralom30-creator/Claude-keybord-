@@ -59,6 +59,7 @@ class EmoAppOpenScreenTest {
   @Test
   fun `mainActivity shows EMO app open screen and transitions on enter tap`() {
     composeRule.onNodeWithTag("emo_open_screen").assertIsDisplayed()
+    composeRule.onNodeWithTag("open_screen_hd_eyes").assertIsDisplayed()
     composeRule.onNodeWithTag("open_screen_enter_button").assertIsDisplayed().performClick()
     composeRule.mainClock.advanceTimeBy(400L)
     composeRule.waitForIdle()

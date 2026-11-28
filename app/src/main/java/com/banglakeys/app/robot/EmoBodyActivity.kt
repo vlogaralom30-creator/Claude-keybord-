@@ -23,6 +23,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowInsets
 import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -89,6 +90,18 @@ class EmoBodyActivity : ComponentActivity() {
     private lateinit var dockAudio: DockBtn
     private lateinit var dockHaptic: DockBtn
 
+    private var hdEyesMode: Boolean = true
+    private var selectedHdStyle: HdEyeStyle? = null
+    private var bodySkin: RobotBodySkin = RobotBodySkin.LAVENDER_3D
+    private var pinnedBodyMove: RobotBodyMove? = null
+    private lateinit var skinTogglePill: LinearLayout
+    private lateinit var skinToggleText: TextView
+    private lateinit var moveAutoChip: LinearLayout
+    private val moveChips = LinkedHashMap<RobotBodyMove, LinearLayout>()
+    private lateinit var hdAutoChip: LinearLayout
+    private lateinit var hdClassicChip: LinearLayout
+    private val hdStyleChips = LinkedHashMap<HdEyeStyle, LinearLayout>()
+
     private val mainHandler = Handler(Looper.getMainLooper())
     private var pawHoldTriggered = false
     private val pawHoldRunnable = Runnable {
@@ -113,6 +126,14 @@ class EmoBodyActivity : ComponentActivity() {
 
     private val hubListener: () -> Unit = {
         if (!isFinishing && !isDestroyed) {
+            if (EmoBrainHub.brain.isCrying || EmoBrainHub.brain.isFreeFalling) {
+                selectedHdStyle = null
+                pinnedBodyMove = null
+                if (::visorView.isInitialized) {
+                    visorView.pinnedHdStyle = null
+                    visorView.pinnedBodyMove = null
+                }
+            }
             refreshHud()
             if (::visorView.isInitialized) visorView.invalidate()
         }
@@ -147,6 +168,8 @@ class EmoBodyActivity : ComponentActivity() {
         sensorController = EmoBodySensorController(this)
         liveReactor = EmoLiveReactor(this)
         cameraEyes = EmoCameraEyes(this)
+        hdEyesMode = AssistantPrefs.emoHdEyesEnabled(this)
+        bodySkin = AssistantPrefs.emoBodySkin(this)
 
         val outer = FrameLayout(this).apply {
             setBackgroundColor(Pal.BG)
@@ -155,7 +178,7 @@ class EmoBodyActivity : ComponentActivity() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Pal.BG)
-            setPadding(dp(14), dp(10), dp(14), dp(12))
+            setPadding(dp(14), dp(8), dp(14), dp(10))
         }
 
         root.setOnApplyWindowInsetsListener { v, insets ->
@@ -166,7 +189,7 @@ class EmoBodyActivity : ComponentActivity() {
             }
             val top = sys?.top ?: @Suppress("DEPRECATION") insets.systemWindowInsetTop
             val bottom = sys?.bottom ?: @Suppress("DEPRECATION") insets.systemWindowInsetBottom
-            v.setPadding(dp(14), dp(10) + top, dp(14), dp(12) + bottom)
+            v.setPadding(dp(14), dp(8) + top, dp(14), dp(10) + bottom)
             insets
         }
 
@@ -176,9 +199,13 @@ class EmoBodyActivity : ComponentActivity() {
         // 2. Telemetry Organ HUD Strip
         root.addView(buildTelemetryHud())
 
-        // 3. Giant Central Physical Visor
+        // 3. Giant Central Full-Body Interactive Stage
         visorView = EmoBodyVisorView(this).apply {
             tag = "emo_body_visor"
+            hdEyesEnabled = hdEyesMode
+            pinnedHdStyle = selectedHdStyle
+            bodySkin = this@EmoBodyActivity.bodySkin
+            pinnedBodyMove = this@EmoBodyActivity.pinnedBodyMove
         }
         root.addView(
             visorView,
@@ -187,10 +214,16 @@ class EmoBodyActivity : ComponentActivity() {
                 0,
                 1f
             ).apply {
-                topMargin = dp(8)
-                bottomMargin = dp(8)
+                topMargin = dp(4)
+                bottomMargin = dp(4)
             }
         )
+
+        // 3a. Cute Full-Body Moves Strip (Auto + Idle, Jump, Tilt, Sleepy, Walk, Dizzy)
+        root.addView(buildBodyMoveSelectorStrip())
+
+        // 3b. HD Cyan-Glow Eye Animations Strip (Auto + 8 HD Styles + Classic toggle)
+        root.addView(buildHdEyeSelectorStrip())
 
         // 4. Crying Recovery Banner (Hidden unless isCrying)
         sootheBanner = buildSootheBanner()
@@ -305,6 +338,37 @@ class EmoBodyActivity : ComponentActivity() {
         }
         row.addView(titleCol)
 
+        skinTogglePill = LinearLayout(this).apply {
+            gravity = Gravity.CENTER
+            minimumWidth = dp(48)
+            minimumHeight = dp(48)
+            setPadding(dp(11), dp(6), dp(11), dp(6))
+            tag = "btn_body_skin_toggle"
+            contentDescription = "রোবট বডি স্কিন পরিবর্তন করুন"
+            ripple(this, Pal.SURFACE_ALT, 99, Pal.BORDER)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { marginEnd = dp(6) }
+            setOnClickListener {
+                bodySkin = bodySkin.toggled()
+                AssistantPrefs.setEmoBodySkin(this@EmoBodyActivity, bodySkin)
+                visorView.bodySkin = bodySkin
+                visorView.triggerBounce()
+                EmoHaptics.tapPulse(this@EmoBodyActivity)
+                refreshHud()
+                visorView.invalidate()
+            }
+        }
+        skinToggleText = TextView(this).apply {
+            text = "${bodySkin.badge} ${bodySkin.titleEn}"
+            textSize = 11.5f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Pal.TEXT)
+        }
+        skinTogglePill.addView(skinToggleText)
+        row.addView(skinTogglePill)
+
         statusPillBg = LinearLayout(this).apply {
             gravity = Gravity.CENTER
             setPadding(dp(11), dp(6), dp(11), dp(6))
@@ -365,6 +429,220 @@ class EmoBodyActivity : ComponentActivity() {
         wrap.addView(r1)
         wrap.addView(r2)
         return wrap
+    }
+
+    private fun buildBodyMoveSelectorStrip(): View {
+        val scroller = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(5) }
+        }
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
+        fun makeMoveChip(tagStr: String, emoji: String, label: String, onClick: () -> Unit): LinearLayout {
+            return LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER
+                minimumWidth = dp(56)
+                minimumHeight = dp(48)
+                setPadding(dp(11), dp(6), dp(11), dp(6))
+                tag = tagStr
+                contentDescription = "Body Move: $label"
+                ripple(this, Pal.SURFACE_ALT, 12, Pal.BORDER)
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { marginEnd = dp(6) }
+                setOnClickListener { onClick() }
+                addView(TextView(this@EmoBodyActivity).apply {
+                    text = "$emoji $label"
+                    textSize = 11.5f
+                    setTypeface(null, Typeface.BOLD)
+                    setTextColor(Pal.TEXT)
+                    maxLines = 1
+                    gravity = Gravity.CENTER
+                })
+            }
+        }
+
+        moveAutoChip = makeMoveChip("btn_move_auto", "✨", "Auto Move") {
+            pinnedBodyMove = null
+            visorView.pinnedBodyMove = null
+            visorView.triggerBounce()
+            EmoHaptics.tapPulse(this)
+            refreshHud()
+            visorView.invalidate()
+        }
+        row.addView(moveAutoChip)
+
+        val manualMoves = listOf(
+            RobotBodyMove.IDLE,
+            RobotBodyMove.JUMP_WAVE,
+            RobotBodyMove.HEAD_TILT,
+            RobotBodyMove.BELLY_FLOP,
+            RobotBodyMove.WALK_SHUFFLE,
+            RobotBodyMove.DIZZY_WOBBLE,
+        )
+        for (move in manualMoves) {
+            val chip = makeMoveChip(
+                tagStr = "btn_move_${move.name.lowercase()}",
+                emoji = move.badge,
+                label = move.titleEn,
+            ) {
+                pinnedBodyMove = move
+                visorView.pinnedBodyMove = move
+                visorView.triggerBounce()
+                EmoHaptics.tapPulse(this)
+                EmoBrainHub.express(
+                    face = move.previewFace,
+                    speech = "${move.badge} ${move.titleBn}!",
+                    forceSpeech = true,
+                )
+                refreshHud()
+                visorView.invalidate()
+            }
+            moveChips[move] = chip
+            row.addView(chip)
+        }
+
+        scroller.addView(row)
+        return scroller
+    }
+
+    private fun buildHdEyeSelectorStrip(): View {
+        val scroller = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(6) }
+        }
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
+        fun makeModeChip(tagStr: String, emoji: String, label: String, onClick: () -> Unit): LinearLayout {
+            return LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                minimumWidth = dp(56)
+                minimumHeight = dp(52)
+                setPadding(dp(10), dp(5), dp(10), dp(5))
+                tag = tagStr
+                contentDescription = label
+                ripple(this, Pal.SURFACE_ALT, 12, Pal.BORDER)
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { marginEnd = dp(6) }
+                setOnClickListener { onClick() }
+                addView(TextView(this@EmoBodyActivity).apply {
+                    text = emoji
+                    textSize = 15f
+                    gravity = Gravity.CENTER
+                })
+                addView(TextView(this@EmoBodyActivity).apply {
+                    text = label
+                    textSize = 10f
+                    setTypeface(null, Typeface.BOLD)
+                    setTextColor(Pal.TEXT)
+                    gravity = Gravity.CENTER
+                })
+            }
+        }
+
+        hdAutoChip = makeModeChip("btn_hd_eyes_auto", "✨", "HD Auto") {
+            hdEyesMode = true
+            selectedHdStyle = null
+            AssistantPrefs.setEmoHdEyesEnabled(this, true)
+            visorView.hdEyesEnabled = true
+            visorView.pinnedHdStyle = null
+            visorView.triggerBounce()
+            EmoHaptics.tapPulse(this)
+            refreshHud()
+            visorView.invalidate()
+        }
+        row.addView(hdAutoChip)
+
+        for (style in HdEyeStyle.entries) {
+            val chip = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                minimumWidth = dp(62)
+                minimumHeight = dp(52)
+                setPadding(dp(7), dp(5), dp(7), dp(5))
+                tag = "btn_hd_eye_${style.name.lowercase()}"
+                contentDescription = "HD Eye: ${style.titleBn} (${style.titleEn})"
+                ripple(this, Pal.SURFACE_ALT, 12, Pal.BORDER)
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { marginEnd = dp(6) }
+                setOnClickListener {
+                    hdEyesMode = true
+                    selectedHdStyle = style
+                    AssistantPrefs.setEmoHdEyesEnabled(this@EmoBodyActivity, true)
+                    visorView.hdEyesEnabled = true
+                    visorView.pinnedHdStyle = style
+                    visorView.triggerBounce()
+                    EmoHaptics.tapPulse(this@EmoBodyActivity)
+                    val targetFace = when (style) {
+                        HdEyeStyle.GLANCE -> FaceId.CURIOUS
+                        HdEyeStyle.CHILL -> FaceId.CALM
+                        HdEyeStyle.SPARKLE -> FaceId.JOY
+                        HdEyeStyle.GOOGLY -> FaceId.SWIRL
+                        HdEyeStyle.PINPOINT -> FaceId.SHOCKED
+                        HdEyeStyle.FOCUSED -> FaceId.HYPED
+                        HdEyeStyle.PEEK -> FaceId.SMILE
+                        HdEyeStyle.FIERCE -> FaceId.ANGRY
+                    }
+                    EmoBrainHub.express(targetFace, "${style.badge} ${style.titleBn} চোখ!", forceSpeech = true)
+                    refreshHud()
+                    visorView.invalidate()
+                }
+            }
+            chip.addView(
+                MiniHdEyePreviewView(this@EmoBodyActivity, style).apply {
+                    layoutParams = LinearLayout.LayoutParams(dp(44), dp(24)).apply {
+                        bottomMargin = dp(3)
+                    }
+                }
+            )
+            chip.addView(TextView(this@EmoBodyActivity).apply {
+                text = style.titleEn
+                textSize = 10f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(Pal.TEXT)
+                maxLines = 1
+                gravity = Gravity.CENTER
+            })
+            hdStyleChips[style] = chip
+            row.addView(chip)
+        }
+
+        hdClassicChip = makeModeChip("btn_hd_eyes_classic", "🤖", "Classic") {
+            hdEyesMode = false
+            selectedHdStyle = null
+            AssistantPrefs.setEmoHdEyesEnabled(this, false)
+            visorView.hdEyesEnabled = false
+            visorView.pinnedHdStyle = null
+            visorView.triggerBounce()
+            EmoHaptics.tapPulse(this)
+            refreshHud()
+            visorView.invalidate()
+        }
+        row.addView(hdClassicChip)
+
+        scroller.addView(row)
+        return scroller
     }
 
     private fun buildSootheBanner(): LinearLayout {
@@ -719,6 +997,76 @@ class EmoBodyActivity : ComponentActivity() {
             14,
             if (hapticOn) Pal.CYAN else Pal.BORDER
         )
+
+        // Skin toggle pill highlight
+        if (::skinTogglePill.isInitialized) {
+            val isLav = bodySkin == RobotBodySkin.LAVENDER_3D
+            val pillFill = if (isLav) 0xFF261B3E.toInt() else Pal.CYAN_SOFT
+            val pillStroke = if (isLav) 0xFFC4A1FF.toInt() else Pal.CYAN
+            ripple(skinTogglePill, pillFill, 99, pillStroke)
+            skinToggleText.text = "${bodySkin.badge} ${bodySkin.titleEn}"
+            skinToggleText.setTextColor(pillStroke)
+        }
+
+        // Body Move selector strip highlights
+        if (::moveAutoChip.isInitialized) {
+            val isMoveAuto = pinnedBodyMove == null
+            val activeAccent = if (bodySkin == RobotBodySkin.LAVENDER_3D) 0xFFC4A1FF.toInt() else Pal.CYAN
+            val activeSoft = if (bodySkin == RobotBodySkin.LAVENDER_3D) 0xFF241A3B.toInt() else Pal.CYAN_SOFT
+            ripple(
+                moveAutoChip,
+                if (isMoveAuto) activeSoft else Pal.SURFACE_ALT,
+                12,
+                if (isMoveAuto) activeAccent else Pal.BORDER
+            )
+            val resolvedMove = pinnedBodyMove ?: RobotBodyMotionEngine.resolveAutoMove(b, s)
+            for ((move, chip) in moveChips) {
+                val isSelected = pinnedBodyMove == move
+                val isCurrentAuto = pinnedBodyMove == null && resolvedMove == move
+                ripple(
+                    chip,
+                    if (isSelected || isCurrentAuto) activeSoft else Pal.SURFACE_ALT,
+                    12,
+                    when {
+                        isSelected -> activeAccent
+                        isCurrentAuto -> (activeAccent and 0x00FFFFFF) or (0x88 shl 24)
+                        else -> Pal.BORDER
+                    }
+                )
+            }
+        }
+
+        // HD Eye selector strip highlights
+        if (::hdAutoChip.isInitialized) {
+            val isAuto = hdEyesMode && selectedHdStyle == null
+            ripple(
+                hdAutoChip,
+                if (isAuto) Pal.CYAN_SOFT else Pal.SURFACE_ALT,
+                12,
+                if (isAuto) Pal.CYAN else Pal.BORDER
+            )
+            ripple(
+                hdClassicChip,
+                if (!hdEyesMode) Pal.CYAN_SOFT else Pal.SURFACE_ALT,
+                12,
+                if (!hdEyesMode) Pal.CYAN else Pal.BORDER
+            )
+            val activeHd = if (hdEyesMode) (selectedHdStyle ?: HdEyeStyle.fromFace(b.mood)) else null
+            for ((style, chip) in hdStyleChips) {
+                val isSelected = selectedHdStyle == style
+                val isCurrentAuto = hdEyesMode && selectedHdStyle == null && activeHd == style
+                ripple(
+                    chip,
+                    if (isSelected || isCurrentAuto) Pal.CYAN_SOFT else Pal.SURFACE_ALT,
+                    12,
+                    when {
+                        isSelected -> Pal.CYAN
+                        isCurrentAuto -> 0x9936D1FF.toInt()
+                        else -> Pal.BORDER
+                    }
+                )
+            }
+        }
     }
 
     private fun toast(msg: String) {
@@ -727,9 +1075,53 @@ class EmoBodyActivity : ComponentActivity() {
 
     // --------------------------------------------------------- Physical Interactive Visor View
 
+    private class MiniHdEyePreviewView(
+        context: Context,
+        private val style: HdEyeStyle,
+    ) : View(context) {
+        private val platePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF060A10.toInt() }
+        private val outlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = 0x4436D1FF
+            style = Paint.Style.STROKE
+            strokeWidth = (1f * context.resources.displayMetrics.density).coerceAtLeast(1f)
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            if (width <= 0 || height <= 0) return
+            val w = width.toFloat()
+            val h = height.toFloat()
+            HdEyeRenderer.draw(
+                canvas = canvas,
+                style = style,
+                cx = w / 2f,
+                cy = h / 2f,
+                plateW = w * 0.94f,
+                plateH = h * 0.92f,
+                eyeGap = w * 0.44f,
+                eyeRadius = min(h * 0.34f, w * 0.19f),
+                blink = 0f,
+                platePaint = platePaint,
+                plateOutline = outlinePaint,
+                nowMs = 1_200L,
+                glow = false,
+            )
+        }
+    }
+
     private class EmoBodyVisorView(context: Context) : View(context) {
         private val density = resources.displayMetrics.density
         private val blink = BlinkAnimator()
+        var hdEyesEnabled: Boolean = true
+        var pinnedHdStyle: HdEyeStyle? = null
+        var bodySkin: RobotBodySkin = RobotBodySkin.LAVENDER_3D
+        var pinnedBodyMove: RobotBodyMove? = null
+        private var lastDrawnKey: String = ""
+        private var bounceStartMs: Long = 0L
+        private var tapHopAtMs: Long = -10_000L
+        private var petWiggleAtMs: Long = -10_000L
+        private var blendedPose: RobotBodyPose? = null
+        private var lastPoseFrameMs: Long = 0L
         private var touchGazeX = 0f
         private var touchGazeY = 0f
         private var touching = false
@@ -738,34 +1130,36 @@ class EmoBodyActivity : ComponentActivity() {
         private var lastTouchY = 0f
         private var petTriggered = false
 
-        private val bgCardPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = 0xFF0A0F18.toInt()
+        fun triggerBounce() {
+            bounceStartMs = System.currentTimeMillis()
+            invalidate()
         }
-        private val bgOutlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+
+        private val stageBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = 0xFF0B101A.toInt()
+        }
+        private val stageOutlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = 0x4D36D1FF
             style = Paint.Style.STROKE
-            strokeWidth = 2.2f * density
-        }
-        private val eyePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = 0xFF36D1FF.toInt()
+            strokeWidth = 1.6f * density
         }
         private val bubblePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = 0xFF102738.toInt()
+            color = 0xFF151D2E.toInt()
         }
         private val bubbleStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = 0x8036D1FF.toInt()
+            color = 0x80C4A1FF.toInt()
             style = Paint.Style.STROKE
             strokeWidth = 1.4f * density
         }
         private val bubbleText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = 0xFFEAF8FF.toInt()
+            color = 0xFFF4F1FF.toInt()
             textAlign = Paint.Align.CENTER
-            textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 14.5f, resources.displayMetrics)
+            textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 14f, resources.displayMetrics)
         }
         private val hintPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = 0xFF8AA8C4.toInt()
             textAlign = Paint.Align.CENTER
-            textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 12.5f, resources.displayMetrics)
+            textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 12f, resources.displayMetrics)
         }
 
         init {
@@ -773,15 +1167,19 @@ class EmoBodyActivity : ComponentActivity() {
             isFocusable = true
             isLongClickable = true
             cameraDistance = 14000f * density
-            contentDescription = "EMO রোবটের জীবন্ত মুখ — ট্যাপ বা আঙুল বুলিয়ে আদর করুন"
+            contentDescription = "EMO ফুল-বডি রোবট — ট্যাপ করলে লাফ দেবে, আঙুল বোলালে আদর নেবে"
             setOnClickListener {
                 if (!petTriggered) {
+                    tapHopAtMs = System.currentTimeMillis()
                     EmoBrainHub.handleEvent(RobotEvent.Tap)
+                    invalidate()
                 }
             }
             setOnLongClickListener {
                 petTriggered = true
+                petWiggleAtMs = System.currentTimeMillis()
                 EmoBrainHub.handleEvent(RobotEvent.LongPress)
+                invalidate()
                 true
             }
         }
@@ -806,6 +1204,7 @@ class EmoBodyActivity : ComponentActivity() {
                     lastTouchY = event.y
                     if (!petTriggered && petDist > 95f * density) {
                         petTriggered = true
+                        petWiggleAtMs = System.currentTimeMillis()
                         EmoBrainHub.handleEvent(RobotEvent.LongPress)
                     }
                 }
@@ -837,63 +1236,103 @@ class EmoBodyActivity : ComponentActivity() {
             val tremble = if (brain.isCrying) {
                 sin((nowMs % 320L) / 320f * 2f * Math.PI).toFloat() * 1.6f
             } else 0f
-            rotationX = (-body.pitchDeg * 0.65f).coerceIn(-16f, 16f)
-            rotationY = (body.rollDeg * 0.65f + tremble).coerceIn(-16f, 16f)
+            rotationX = (-body.pitchDeg * 0.45f).coerceIn(-12f, 12f)
+            rotationY = (body.rollDeg * 0.45f + tremble).coerceIn(-12f, 12f)
 
             val cx = width / 2f
-            val bubbleBand = 52f * density
-            val bottomHintBand = 30f * density
-            val availH = (height - bubbleBand - bottomHintBand).coerceAtLeast(100f * density)
-            val plateW = min(width * 0.90f, availH * 1.55f)
-            val plateH = min(availH * 0.86f, plateW * 0.62f)
-            val cy = bubbleBand + availH / 2f
-            val eyeSize = plateH * 0.25f
-            val eyeGap = plateW * 0.39f
+            val stageRect = RectF(2f * density, 2f * density, width - 2f * density, height - 2f * density)
+            val stageRadius = 24f * density
+            stageBgPaint.color = if (bodySkin == RobotBodySkin.LAVENDER_3D) 0xFF130F21.toInt() else 0xFF0A1019.toInt()
+            stageOutlinePaint.color = when {
+                brain.isCrying -> 0x88FF5A76.toInt()
+                bodySkin == RobotBodySkin.LAVENDER_3D -> 0x55C4A1FF
+                else -> 0x5536D1FF
+            }
+            canvas.drawRoundRect(stageRect, stageRadius, stageRadius, stageBgPaint)
+            canvas.drawRoundRect(stageRect, stageRadius, stageRadius, stageOutlinePaint)
+
+            val bubbleBand = 44f * density
+            val bottomHintBand = 26f * density
+            val availH = (height - bubbleBand - bottomHintBand).coerceAtLeast(120f * density)
+            val stageCy = bubbleBand + availH * 0.52f
 
             val gx = if (touching) touchGazeX else body.combinedGazeX()
             val gy = if (touching) touchGazeY else body.combinedGazeY()
 
-            eyePaint.color = if (brain.isCrying) 0xFF5CE1FF.toInt() else 0xFF36D1FF.toInt()
-            bgOutlinePaint.color = if (brain.isCrying) 0x88FF5A76.toInt() else 0x5536D1FF
+            val activeMove = when {
+                brain.isCrying -> RobotBodyMove.CRY_SIT
+                brain.isFreeFalling -> RobotBodyMove.JUMP_WAVE
+                brain.sleeping && pinnedBodyMove == null -> RobotBodyMove.BELLY_FLOP
+                else -> pinnedBodyMove ?: RobotBodyMotionEngine.resolveAutoMove(brain, body)
+            }
 
-            FaceRenderer.draw(
-                canvas = canvas,
-                face = brain.mood,
-                cx = cx,
-                cy = cy,
-                plateW = plateW,
-                plateH = plateH,
-                eyeGap = eyeGap,
-                eyeSize = eyeSize,
-                blink = if (brain.sleeping) 0.82f else blink.tick(),
-                eyePaint = eyePaint,
-                platePaint = bgCardPaint,
-                plateOutline = bgOutlinePaint,
-                gazeX = gx * (plateW * 0.095f),
-                gazeY = gy * (plateH * 0.095f),
-                glow = true,
+            val activeHdStyle = pinnedHdStyle ?: when (activeMove) {
+                RobotBodyMove.BELLY_FLOP -> HdEyeStyle.CHILL
+                RobotBodyMove.JUMP_WAVE -> if (pinnedBodyMove == RobotBodyMove.JUMP_WAVE) HdEyeStyle.PEEK else HdEyeStyle.fromFace(brain.mood)
+                RobotBodyMove.HEAD_TILT -> if (pinnedBodyMove == RobotBodyMove.HEAD_TILT) HdEyeStyle.GLANCE else HdEyeStyle.fromFace(brain.mood)
+                RobotBodyMove.DIZZY_WOBBLE -> HdEyeStyle.GOOGLY
+                else -> HdEyeStyle.fromFace(brain.mood)
+            }
+
+            val drawnKey = "${activeMove.name}:${if (hdEyesEnabled) activeHdStyle.name else brain.mood.name}:${bodySkin.name}"
+            if (drawnKey != lastDrawnKey) {
+                lastDrawnKey = drawnKey
+                bounceStartMs = nowMs
+            }
+
+            val elapsedBounce = (nowMs - bounceStartMs).coerceAtLeast(0L)
+            val (bScaleX, bScaleY) = if (elapsedBounce in 1L..260L) {
+                val t = elapsedBounce / 260f
+                val wave = sin(t * Math.PI.toFloat())
+                (1f - 0.06f * wave) to (1f + 0.08f * wave)
+            } else {
+                1f to 1f
+            }
+
+            val targetPose = RobotBodyMotionEngine.samplePose(
+                move = activeMove,
+                nowMs = nowMs,
+                tiltRollDeg = body.rollDeg,
+                tiltPitchDeg = body.pitchDeg,
+                tapHopElapsedMs = nowMs - tapHopAtMs,
+                petWiggleElapsedMs = nowMs - petWiggleAtMs,
             )
+            val dtMs = if (lastPoseFrameMs == 0L) 16L else (nowMs - lastPoseFrameMs).coerceIn(4L, 64L)
+            lastPoseFrameMs = nowMs
+            val blendAlpha = (dtMs / 110f).coerceIn(0.12f, 0.45f)
+            val pose = blendedPose?.let { RobotBodyMotionEngine.lerpPose(it, targetPose, blendAlpha) } ?: targetPose
+            blendedPose = pose
 
-            EmoParticles.draw(
+            val robotBounds = RobotBodyRenderer.draw(
                 canvas = canvas,
                 cx = cx,
-                cy = cy,
-                plateW = plateW,
-                plateH = plateH,
-                eyeGap = eyeGap,
+                cy = stageCy,
+                maxW = width - 20f * density,
+                maxH = availH,
+                skin = bodySkin,
+                pose = pose,
+                hdEyesEnabled = hdEyesEnabled,
+                hdStyle = activeHdStyle,
+                face = brain.mood,
+                blink = if (brain.sleeping || activeMove == RobotBodyMove.BELLY_FLOP) 0.85f else blink.tick(),
+                gazeNormX = gx,
+                gazeNormY = gy,
                 isCrying = brain.isCrying,
-                mood = brain.mood,
                 effect = body.lastEffect,
                 effectAgeMs = nowMs - body.lastEffectAtMs,
                 nowMs = nowMs,
+                visorBounceX = bScaleX,
+                visorBounceY = bScaleY,
             )
 
             brain.speechText?.let { speech ->
-                val maxW = (width - 24f * density).coerceAtLeast(100f)
+                bubbleStroke.color = if (bodySkin == RobotBodySkin.LAVENDER_3D) 0x99C4A1FF.toInt() else 0x8036D1FF.toInt()
+                bubblePaint.color = if (bodySkin == RobotBodySkin.LAVENDER_3D) 0xFF211738.toInt() else 0xFF102738.toInt()
+                val maxW = (width - 28f * density).coerceAtLeast(100f)
                 val tw = bubbleText.measureText(speech)
-                val bw = (tw + 30f * density).coerceAtMost(maxW)
-                val bh = 36f * density
-                val top = (cy - plateH / 2f - bh - 10f * density).coerceAtLeast(4f * density)
+                val bw = (tw + 28f * density).coerceAtMost(maxW)
+                val bh = 34f * density
+                val top = (robotBounds.top - bh - 6f * density).coerceIn(8f * density, bubbleBand)
                 val rect = RectF(cx - bw / 2f, top, cx + bw / 2f, top + bh)
                 canvas.drawRoundRect(rect, 16f * density, 16f * density, bubblePaint)
                 canvas.drawRoundRect(rect, 16f * density, 16f * density, bubbleStroke)
@@ -902,11 +1341,11 @@ class EmoBodyActivity : ComponentActivity() {
             }
 
             val hint = when {
-                brain.isCrying -> "😢 কপালে হাত বুলিয়ে বা নিচে আদর করো"
-                brain.sleeping -> "💤 ফোনে মৃদু টোকা দিলে বা সোজা করলে জাগবে"
-                else -> "${brain.mood.name} (${brain.mood.bn}) · কপালে হাত বুলিয়ে আদর করুন"
+                brain.isCrying -> "😢 পড়ে ব্যথা পেয়েছে — ট্যাপ বা আদর করো"
+                brain.sleeping || activeMove == RobotBodyMove.BELLY_FLOP -> "😴 ঘুমন্ত ভঙ্গি — ট্যাপ করলে লাফ দিয়ে জাগবে"
+                else -> "${activeMove.badge} ${activeMove.titleBn} · ট্যাপ করলে লাফ দেবে, বোলালে আদর নেবে"
             }
-            canvas.drawText(hint, cx, height - 10f * density, hintPaint)
+            canvas.drawText(hint, cx, height - 9f * density, hintPaint)
 
             if (isAttachedToWindow) {
                 postInvalidateOnAnimation()

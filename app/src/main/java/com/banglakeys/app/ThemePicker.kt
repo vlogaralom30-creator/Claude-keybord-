@@ -72,6 +72,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import com.banglakeys.app.robot.EmoBrainHub
+import com.banglakeys.app.robot.EmoVisualMode
+import com.banglakeys.app.robot.HdEyeStyle
+import com.banglakeys.app.robot.RobotBodyMove
+import com.banglakeys.app.robot.RobotBodySkin
 import java.util.Calendar
 import kotlin.math.roundToInt
 
@@ -89,6 +94,8 @@ fun ThemePickerCard(refreshKey: Int = 0, onChanged: () -> Unit) {
     var keyAlpha by remember { mutableIntStateOf(ThemeStore.imageAlpha(ctx)) }
     var dim by remember { mutableIntStateOf(ThemeStore.imageDim(ctx)) }
     var emoAlpha by remember { mutableIntStateOf(ThemeStore.emoKeyAlpha(ctx)) }
+    var emoSkin by remember { mutableStateOf(AssistantPrefs.emoBodySkin(ctx)) }
+    var emoVisualMode by remember { mutableStateOf(AssistantPrefs.emoVisualMode(ctx)) }
 
     var autoMode by remember { mutableStateOf(ThemeAutoSwitcher.getMode(ctx)) }
     var cadence by remember { mutableStateOf(ThemeAutoSwitcher.getCadence(ctx)) }
@@ -101,6 +108,8 @@ fun ThemePickerCard(refreshKey: Int = 0, onChanged: () -> Unit) {
         selected = ThemeStore.selectedId(ctx)
         hasImage = ThemeStore.hasCustomImage(ctx)
         emoAlpha = ThemeStore.emoKeyAlpha(ctx)
+        emoSkin = AssistantPrefs.emoBodySkin(ctx)
+        emoVisualMode = AssistantPrefs.emoVisualMode(ctx)
         autoMode = ThemeAutoSwitcher.getMode(ctx)
         cadence = ThemeAutoSwitcher.getCadence(ctx)
         poolIds = ThemeAutoSwitcher.getPoolIds(ctx)
@@ -299,8 +308,122 @@ fun ThemePickerCard(refreshKey: Int = 0, onChanged: () -> Unit) {
                 ) {
                     Column(
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
+                        Text(
+                            text = "🤖 EMO ফুল-বডি ও গ্লাস কী কন্ট্রোল (লাইভ কিবোর্ড সিঙ্ক)",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            RobotBodySkin.entries.forEach { skin ->
+                                val tag = if (skin == RobotBodySkin.LAVENDER_3D) {
+                                    "emo_theme_skin_lavender"
+                                } else {
+                                    "emo_theme_skin_cyan"
+                                }
+                                FilterChip(
+                                    selected = emoSkin == skin,
+                                    onClick = {
+                                        emoSkin = skin
+                                        AssistantPrefs.setEmoBodySkin(ctx, skin)
+                                        EmoBrainHub.triggerTapHop()
+                                        onChanged()
+                                    },
+                                    label = { Text("${skin.badge} ${skin.titleEn}") },
+                                    modifier = Modifier.weight(1f).minimumInteractiveComponentSize().testTag(tag),
+                                )
+                            }
+                        }
+
+                        Text(
+                            text = "🎭 পরিস্থিতি অনুযায়ী অভিনয় ও চোখ:",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            EmoVisualMode.entries.forEach { mode ->
+                                FilterChip(
+                                    selected = emoVisualMode == mode,
+                                    onClick = {
+                                        emoVisualMode = mode
+                                        AssistantPrefs.setEmoVisualMode(ctx, mode)
+                                        EmoBrainHub.clearPlayOverrides()
+                                        EmoBrainHub.triggerTapHop()
+                                        onChanged()
+                                    },
+                                    label = { Text("${mode.badge} ${mode.titleBn}") },
+                                    modifier = Modifier
+                                        .minimumInteractiveComponentSize()
+                                        .testTag("emo_visual_mode_${mode.name.lowercase()}"),
+                                )
+                            }
+                        }
+
+                        Text(
+                            text = "🕺 কিবোর্ডে বডি মুভ ট্রাই করুন:",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Row(
+                            modifier = Modifier.horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            FilledTonalButton(
+                                onClick = {
+                                    EmoBrainHub.clearPlayOverrides()
+                                    EmoBrainHub.triggerTapHop()
+                                },
+                                modifier = Modifier.minimumInteractiveComponentSize().testTag("emo_theme_move_auto"),
+                            ) { Text("🤖 Auto") }
+                            listOf(
+                                RobotBodyMove.JUMP_WAVE,
+                                RobotBodyMove.HEAD_TILT,
+                                RobotBodyMove.BELLY_FLOP,
+                                RobotBodyMove.WALK_SHUFFLE,
+                                RobotBodyMove.DIZZY_WOBBLE,
+                            ).forEach { move ->
+                                OutlinedButton(
+                                    onClick = { EmoBrainHub.playBodyMove(move) },
+                                    modifier = Modifier
+                                        .minimumInteractiveComponentSize()
+                                        .testTag("emo_theme_move_${move.name.lowercase()}"),
+                                ) {
+                                    Text("${move.badge} ${move.titleEn}")
+                                }
+                            }
+                        }
+
+                        Text(
+                            text = "👀 ৮টি HD চোখ কিবোর্ডে দেখুন:",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Row(
+                            modifier = Modifier.horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            HdEyeStyle.entries.forEach { style ->
+                                OutlinedButton(
+                                    onClick = { EmoBrainHub.playHdEye(style) },
+                                    modifier = Modifier
+                                        .minimumInteractiveComponentSize()
+                                        .testTag("emo_theme_eye_${style.name.lowercase()}"),
+                                ) {
+                                    Text("${style.badge} ${style.titleEn}")
+                                }
+                            }
+                        }
+
                         Text(
                             text = "🤖 EMO গ্লাস কী স্বচ্ছতা: $emoAlpha%",
                             style = MaterialTheme.typography.bodyMedium,
@@ -326,7 +449,7 @@ fun ThemePickerCard(refreshKey: Int = 0, onChanged: () -> Unit) {
                             modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize().testTag("emo_open_all_faces_button"),
                             shape = RoundedCornerShape(12.dp),
                         ) {
-                            Text("সব ১২টি EMO ফেস দেখুন")
+                            Text("সব ৩২টি EMO ফেস দেখুন")
                         }
                     }
                 }
@@ -644,8 +767,10 @@ private fun ThemeChip(theme: KeyboardTheme, selected: Boolean, onClick: () -> Un
 /** Theme-এর ছোট mini keyboard — ৩ সারি key, শেষ key-টা accent */
 @Composable
 private fun ThemePreview(t: KeyboardTheme) {
+    val ctx = LocalContext.current
     val bgImg = remember(t.id) { t.bgAsset?.let { ThemeStore.assetBitmap(it)?.asImageBitmap() } }
     val tileImgs = remember(t.id) { t.keyTiles.mapNotNull { ThemeStore.assetBitmap(it)?.asImageBitmap() } }
+    val emoSkin = if (t.id == Themes.EMO_ID) AssistantPrefs.emoBodySkin(ctx) else RobotBodySkin.CLASSIC_CYAN
     Canvas(
         modifier = Modifier
             .fillMaxWidth()
@@ -657,6 +782,8 @@ private fun ThemePreview(t: KeyboardTheme) {
             drawImage(bgImg, dstSize = IntSize(size.width.toInt(), size.height.toInt()))
         } else if (t.usesImage) {
             drawRect(Brush.linearGradient(listOf(Color(0xFF5B86E5), Color(0xFF36D1DC), Color(0xFFF7797D))))
+        } else if (t.id == Themes.EMO_ID && emoSkin == RobotBodySkin.LAVENDER_3D) {
+            drawRect(Brush.verticalGradient(listOf(Color(0xFF171029), Color(0xFF07050D))))
         } else if (t.bgTop != 0 && t.bgBottom != 0) {
             drawRect(Brush.verticalGradient(listOf(Color(t.bgTop), Color(t.bgBottom))))
         } else {
@@ -664,57 +791,46 @@ private fun ThemePreview(t: KeyboardTheme) {
         }
 
         if (t.id == Themes.EMO_ID) {
-            val cyan = Color(t.accent)
+            val isLavender = emoSkin == RobotBodySkin.LAVENDER_3D
+            val glow = if (isLavender) Color(0xFFC4A1FF) else Color(t.accent)
             drawCircle(
                 brush = Brush.radialGradient(
-                    colors = listOf(cyan.copy(alpha = 0.36f), Color.Transparent),
+                    colors = listOf(glow.copy(alpha = 0.36f), Color.Transparent),
                     center = Offset(size.width / 2f, size.height / 2f),
                     radius = size.width * 0.48f,
                 ),
                 radius = size.width * 0.48f,
                 center = Offset(size.width / 2f, size.height / 2f),
             )
-            val ew = size.width * 0.16f
-            val eh = size.height * 0.24f
-            val cy = size.height * 0.54f
-            val lx = size.width * 0.34f - ew / 2f
-            val rx = size.width * 0.66f - ew / 2f
-            drawArc(
-                color = cyan.copy(alpha = 0.45f),
-                startAngle = 200f,
-                sweepAngle = 140f,
-                useCenter = false,
-                topLeft = Offset(lx, cy - eh / 2f),
-                size = Size(ew, eh),
-                style = Stroke(width = 6.dp.toPx()),
+            // Mini chubby full-body silhouette behind mini keys
+            val bw = size.width * 0.44f
+            val bh = size.height * 0.64f
+            val bx = (size.width - bw) / 2f
+            val by = size.height * 0.24f
+            drawCircle(
+                color = Color(emoSkin.bodyCore),
+                radius = 4.dp.toPx(),
+                center = Offset(bx + bw * 0.28f, by - 4.dp.toPx()),
             )
-            drawArc(
-                color = cyan.copy(alpha = 0.45f),
-                startAngle = 200f,
-                sweepAngle = 140f,
-                useCenter = false,
-                topLeft = Offset(rx, cy - eh / 2f),
-                size = Size(ew, eh),
-                style = Stroke(width = 6.dp.toPx()),
+            drawRoundRect(
+                color = Color(emoSkin.bodyCore),
+                topLeft = Offset(bx, by),
+                size = Size(bw, bh),
+                cornerRadius = CornerRadius(14.dp.toPx(), 14.dp.toPx()),
             )
-            drawArc(
-                color = cyan,
-                startAngle = 200f,
-                sweepAngle = 140f,
-                useCenter = false,
-                topLeft = Offset(lx, cy - eh / 2f),
-                size = Size(ew, eh),
-                style = Stroke(width = 3.dp.toPx()),
+            val vw = bw * 0.72f
+            val vh = bh * 0.50f
+            val vx = (size.width - vw) / 2f
+            val vy = by + bh * 0.22f
+            drawRoundRect(
+                color = Color(emoSkin.visorTop),
+                topLeft = Offset(vx, vy),
+                size = Size(vw, vh),
+                cornerRadius = CornerRadius(8.dp.toPx(), 8.dp.toPx()),
             )
-            drawArc(
-                color = cyan,
-                startAngle = 200f,
-                sweepAngle = 140f,
-                useCenter = false,
-                topLeft = Offset(rx, cy - eh / 2f),
-                size = Size(ew, eh),
-                style = Stroke(width = 3.dp.toPx()),
-            )
+            val eyeColor = Color(emoSkin.eyeAccent)
+            drawCircle(eyeColor, radius = 2.6.dp.toPx(), center = Offset(vx + vw * 0.32f, vy + vh * 0.50f))
+            drawCircle(eyeColor, radius = 2.6.dp.toPx(), center = Offset(vx + vw * 0.68f, vy + vh * 0.50f))
         }
 
         val rowsCount = intArrayOf(5, 5, 4)

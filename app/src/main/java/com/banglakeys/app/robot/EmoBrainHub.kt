@@ -24,6 +24,26 @@ object EmoBrainHub {
     var bodyState: EmoBodyState = EmoBodyState()
         private set
 
+    @Volatile
+    private var forcedMove: RobotBodyMove? = null
+
+    @Volatile
+    private var forcedMoveExpiresAtMs: Long = 0L
+
+    @Volatile
+    private var forcedHdEye: HdEyeStyle? = null
+
+    @Volatile
+    private var forcedHdEyeExpiresAtMs: Long = 0L
+
+    @Volatile
+    var lastKeyboardHopAtMs: Long = -10_000L
+        private set
+
+    @Volatile
+    var lastKeyboardPetAtMs: Long = -10_000L
+        private set
+
     fun addListener(listener: () -> Unit) {
         listeners.add(listener)
     }
@@ -110,10 +130,111 @@ object EmoBrainHub {
     fun resetMemory() {
         synchronized(lock) {
             isVoiceListening = false
+            forcedMove = null
+            forcedMoveExpiresAtMs = 0L
+            forcedHdEye = null
+            forcedHdEyeExpiresAtMs = 0L
+            lastKeyboardHopAtMs = -10_000L
+            lastKeyboardPetAtMs = -10_000L
             brain.resetMemory()
             bodyState = EmoBodyState()
         }
         notifyListeners()
+    }
+
+    fun playBodyMove(move: RobotBodyMove, durationMs: Long = 5_000L) {
+        val now = System.currentTimeMillis()
+        synchronized(lock) {
+            forcedMove = move
+            forcedMoveExpiresAtMs = now + durationMs
+            forcedHdEye = null
+            forcedHdEyeExpiresAtMs = 0L
+            lastKeyboardHopAtMs = now
+            when (move) {
+                RobotBodyMove.CRY_SIT -> brain.handle(RobotEvent.Dropped)
+                RobotBodyMove.BELLY_FLOP -> brain.handle(RobotEvent.FaceDown)
+                else -> brain.express(
+                    face = move.previewFace,
+                    text = "${move.badge} ${move.titleBn}",
+                    bondDelta = 1,
+                    funDelta = 2,
+                    wakeUp = true,
+                    forceSpeech = true,
+                )
+            }
+            if (move == RobotBodyMove.DIZZY_WOBBLE) {
+                bodyState = bodyState.copy(lastEffect = BodyEffect.STARS, lastEffectAtMs = now)
+            } else if (move == RobotBodyMove.JUMP_WAVE) {
+                bodyState = bodyState.copy(lastEffect = BodyEffect.HEARTS, lastEffectAtMs = now)
+            }
+        }
+        notifyListeners()
+    }
+
+    fun playHdEye(style: HdEyeStyle, durationMs: Long = 5_500L) {
+        val now = System.currentTimeMillis()
+        val mappedFace = when (style) {
+            HdEyeStyle.GLANCE -> FaceId.CURIOUS
+            HdEyeStyle.CHILL -> FaceId.CALM
+            HdEyeStyle.SPARKLE -> FaceId.JOY
+            HdEyeStyle.GOOGLY -> FaceId.SWIRL
+            HdEyeStyle.PINPOINT -> FaceId.SHOCKED
+            HdEyeStyle.FOCUSED -> FaceId.HYPED
+            HdEyeStyle.PEEK -> FaceId.SMILE
+            HdEyeStyle.FIERCE -> FaceId.ANGRY
+        }
+        synchronized(lock) {
+            forcedHdEye = style
+            forcedHdEyeExpiresAtMs = now + durationMs
+            forcedMove = null
+            forcedMoveExpiresAtMs = 0L
+            lastKeyboardHopAtMs = now
+            brain.express(
+                face = mappedFace,
+                text = "${style.badge} ${style.titleBn}",
+                funDelta = 1,
+                wakeUp = true,
+                forceSpeech = true,
+            )
+        }
+        notifyListeners()
+    }
+
+    fun clearPlayOverrides() {
+        val hadOverride = forcedMove != null || forcedHdEye != null
+        forcedMove = null
+        forcedMoveExpiresAtMs = 0L
+        forcedHdEye = null
+        forcedHdEyeExpiresAtMs = 0L
+        if (hadOverride) notifyListeners()
+    }
+
+    fun triggerTapHop() {
+        lastKeyboardHopAtMs = System.currentTimeMillis()
+        notifyListeners()
+    }
+
+    fun triggerPetWiggle() {
+        lastKeyboardPetAtMs = System.currentTimeMillis()
+        notifyListeners()
+    }
+
+    fun activeForcedMove(nowMs: Long = System.currentTimeMillis()): RobotBodyMove? {
+        val m = forcedMove ?: return null
+        if (nowMs > forcedMoveExpiresAtMs) {
+            forcedMove = null
+            return null
+        }
+        return m
+    }
+
+    fun activeForcedHdEye(nowMs: Long = System.currentTimeMillis()): HdEyeStyle? {
+        val s = forcedHdEye ?: return null
+        if (nowMs > forcedHdEyeExpiresAtMs) {
+            forcedHdEye = null
+            return null
+        }
+        return s
     }
 
     // ---- ভয়েস ও কমান্ড লাইফসাইকেল ইভেন্ট ----

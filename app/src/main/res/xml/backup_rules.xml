@@ -2,6 +2,7 @@
 <!-- Secret passphrase, Gemini key ও assistant সেটিং কখনো cloud backup/device-transfer-এ যাবে না। -->
 <full-backup-content>
     <exclude domain="sharedpref" path="secret_prefs.xml" />
+    <exclude domain="sharedpref" path="bk_clipboard.xml" />
     <exclude domain="sharedpref" path="secret_vault_kp.xml" />
     <exclude domain="sharedpref" path="gemini_prefs.xml" />
     <exclude domain="sharedpref" path="assistant_prefs.xml" />

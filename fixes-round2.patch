@@ -1,0 +1,344 @@
+diff -ru app_round1/src/main/java/com/banglakeys/app/BanglaIME.kt kb/app/src/main/java/com/banglakeys/app/BanglaIME.kt
+--- app_round1/src/main/java/com/banglakeys/app/BanglaIME.kt	2026-11-27 12:58:35.311780376 +0000
++++ kb/app/src/main/java/com/banglakeys/app/BanglaIME.kt	2026-11-27 12:59:06.706572226 +0000
+@@ -272,7 +272,9 @@
+                         }
+                         val ic = currentInputConnection ?: return
+                         val before = ic.getTextBeforeCursor(16, 0)?.toString().orEmpty()
+-                        if (before.isNotEmpty()) {
++                        // বাংলা অক্ষরে এক চাপে এক code point (আগে কার/হসন্ত) — Ridmik/Android-এর মতো
++                        val lastIsBangla = before.lastOrNull()?.let { it in '\u0980'..'\u09FF' } == true
++                        if (before.isNotEmpty() && !lastIsBangla) {
+                             val after = EmojiRepository.deleteLastGrapheme(before)
+                             val dropCount = before.length - after.length
+                             if (dropCount > 1) {
+@@ -420,7 +422,7 @@
+                 currentInputConnection?.finishComposingText()
+                 refreshStrip()
+             }
+-        } else if (!bangla) {
++        } else {
+             // English mode-এ user cursor অন্যত্র সরালে buffer সিঙ্ক রাখা হয়
+             val before = currentInputConnection?.getTextBeforeCursor(buf.length, 0)?.toString()
+             if (newSelStart != newSelEnd || (before != null && before != buf.toString())) {
+@@ -451,6 +453,10 @@
+ 
+     private fun isAvroActive() = bangla && bnLayout != "probhat"
+ 
++    /** বাংলা ব্লকের অক্ষর/কার/হসন্ত (বাংলা অঙ্ক ০-৯ বাদে) — প্রভাত-এর শব্দ buffer-এর জন্য। */
++    private fun isBnWordChar(c: Char): Boolean =
++        c in '\u0980'..'\u09FF' && c !in '\u09E6'..'\u09EF'
++
+     private fun spaceLabelFor(): String =
+         KeyboardLanguageMode.from(bangla, bnLayout).spaceLabel()
+ 
+@@ -566,7 +572,7 @@
+             val ch = text.singleOrNull()
+             val phoneticBn = isAvroActive() && symbols == 0
+             if (phoneticBn && ch != null &&
+-                (ch in 'a'..'z' || ch in 'A'..'Z' || ((ch == '^' || ch == '`') && noteEditRoman.isNotEmpty()))
++                (ch in 'a'..'z' || ch in 'A'..'Z' || ((ch == '^' || ch == '`' || ch == ':') && noteEditRoman.isNotEmpty()))
+             ) {
+                 noteEditRoman.append(ch)
+             } else {
+@@ -581,7 +587,7 @@
+             val ch = text.singleOrNull()
+             val phoneticBn = isAvroActive() && symbols == 0
+             if (phoneticBn && ch != null &&
+-                (ch in 'a'..'z' || ch in 'A'..'Z' || ((ch == '^' || ch == '`') && secretRoman.isNotEmpty()))
++                (ch in 'a'..'z' || ch in 'A'..'Z' || ((ch == '^' || ch == '`' || ch == ':') && secretRoman.isNotEmpty()))
+             ) {
+                 secretRoman.append(ch)
+             } else {
+@@ -596,7 +602,7 @@
+         val englishWord = !bangla && symbols == 0 && allowSuggest
+ 
+         if (phoneticBn && ch != null &&
+-            (ch in 'a'..'z' || ch in 'A'..'Z' || ((ch == '^' || ch == '`') && buf.isNotEmpty()))
++            (ch in 'a'..'z' || ch in 'A'..'Z' || ((ch == '^' || ch == '`' || ch == ':') && buf.isNotEmpty()))
+         ) {
+             buf.append(ch)
+             updateComposing()
+@@ -614,6 +620,17 @@
+             return
+         }
+ 
++        // প্রভাত (fixed Bangla): অক্ষর সরাসরি commit হয়, কিন্তু buf-এ জমিয়ে suggestion/learning চালু রাখি
++        val probhatWord = bangla && !isAvroActive() && symbols == 0 && allowSuggest &&
++            text.isNotEmpty() && text.all { isBnWordChar(it) }
++        if (probhatWord) {
++            buf.append(text)
++            ic.commitText(text, 1)
++            refreshStrip()
++            if (ThemeAutoSwitcher.onKeyTyped(this)) reloadAllThemeViews()
++            return
++        }
++
+         commitComposing()
+         ic.commitText(text, 1)
+         if (text.isNotBlank()) {
+@@ -663,7 +680,8 @@
+             if (isAvroActive()) {
+                 updateComposing()
+                 return
+-            } else if (!bangla) {
++            } else {
++                // English ও প্রভাত: commit হওয়া লেখা থেকে এক অক্ষর মুছে buffer সিঙ্ক রাখি
+                 sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
+                 refreshStrip()
+                 updateAutoShift()
+@@ -812,7 +830,7 @@
+             if (allowLearn) {
+                 suggestions.learn(buf.toString(), word, bangla)
+             }
+-            if (!bangla) {
++            if (!isAvroActive()) {
+                 // English-এ আগে commit হওয়া partial prefix মুছে সম্পূর্ণ শব্দ বসানো হয়
+                 val before = ic.getTextBeforeCursor(typedLen, 0)?.toString()
+                 if (before != null && before == buf.toString()) {
+diff -ru app_round1/src/main/java/com/banglakeys/app/KeyboardView.kt kb/app/src/main/java/com/banglakeys/app/KeyboardView.kt
+--- app_round1/src/main/java/com/banglakeys/app/KeyboardView.kt	2026-11-27 12:58:35.315445677 +0000
++++ kb/app/src/main/java/com/banglakeys/app/KeyboardView.kt	2026-11-27 12:59:23.605222506 +0000
+@@ -93,6 +93,10 @@
+     ) {
+         var consumed = false
+         var runnable: Runnable? = null
++        // long-press popup (Ridmik-এর মতো [ঐ][ঞ]) — আঙুল সরিয়ে বাছা, ছাড়লে commit
++        var options: List<String>? = null
++        var optRects: List<RectF>? = null
++        var sel = 0
+     }
+ 
+     private var rows: List<List<Key>> = emptyList()
+@@ -903,7 +907,7 @@
+                 val rw = b.rect.width()
+                 val label = displayLabel(k)
+                 // Shift চালু থাকলে শিফট-অক্ষর নিজেই বড় করে দেখানো হয়, তাই হিন্ট লুকাই (Ridmik-এর মতো)
+-                val alt = if (shift != SHIFT_OFF && k.shiftLabel != null) null else k.alt
++                val alt = if (shift != SHIFT_OFF && k.shiftLabel != null) k.extras.firstOrNull() else k.alt
+                 val maxW = (rw - 5.5f * d).coerceAtLeast(8f * d)
+                 if (alt != null) {
+                     val maxHintW = (rw * 0.48f).coerceAtLeast(6f * d)
+@@ -1319,6 +1323,12 @@
+         for (i in 0 until ptrs.size()) {
+             val p = ptrs.valueAt(i)
+             val b = p.box ?: continue
++            val opts = p.options
++            val optRects = p.optRects
++            if (opts != null && optRects != null) {
++                drawOptionBar(c, p, opts, optRects)
++                continue
++            }
+             if (b.key.type != KeyType.CHAR || p.consumed) continue
+ 
+             val bw = b.rect.width() * 1.35f * sc
+@@ -1346,6 +1356,48 @@
+         }
+     }
+ 
++    private fun drawOptionBar(c: Canvas, p: Ptr, opts: List<String>, rs: List<RectF>) {
++        for (i in opts.indices) {
++            val r = rs[i]
++            paint.style = Paint.Style.FILL
++            paint.color = shadowC
++            c.drawRoundRect(r.left, r.top + 2f * d, r.right, r.bottom + 2f * d, radius * 1.4f, radius * 1.4f, paint)
++            paint.color = popupC
++            c.drawRoundRect(r, radius * 1.4f, radius * 1.4f, paint)
++            if (i == p.sel) {
++                paint.color = textC
++                paint.alpha = 70
++                c.drawRoundRect(r, radius * 1.4f, radius * 1.4f, paint)
++            }
++            drawCentered(c, opts[i], r.centerX(), r.centerY(), r.height() * 0.5f, textC)
++            fx.includeDirty(r.left - 2f * d, r.top - 2f * d, r.right + 2f * d, r.bottom + 3f * d)
++        }
++    }
++
++    private fun openOptions(p: Ptr, b: Box) {
++        val k = b.key
++        val head = if (shift != SHIFT_OFF) displayLabel(k) else (k.alt ?: k.label)
++        val opts = (listOf(head) + k.extras).distinct()
++        val cw = max(b.rect.width() * 1.05f, 40f * d)
++        val total = cw * opts.size
++        val left = (b.rect.centerX() - total / 2f).coerceIn(2f * d, max(2f * d, width - total - 2f * d))
++        val bh = min(rowH() * 1.05f, 54f * d)
++        val top = max(0f, b.rect.top - 2f * d - bh)
++        p.optRects = opts.indices.map { i -> RectF(left + i * cw, top, left + (i + 1) * cw, top + bh) }
++        p.options = opts
++        p.sel = 0
++    }
++
++    private fun updateOptionSel(p: Ptr, x: Float) {
++        val rs = p.optRects ?: return
++        var idx = rs.indexOfFirst { x <= it.right }
++        if (idx < 0) idx = rs.lastIndex
++        if (idx != p.sel) {
++            p.sel = idx
++            invalidate()
++        }
++    }
++
+     // ---------------- touch ----------------
+ 
+     override fun onTouchEvent(e: MotionEvent): Boolean {
+@@ -1459,6 +1511,10 @@
+ 
+     private fun onMove(id: Int, x: Float, y: Float) {
+         val p = ptrs.get(id) ?: return
++        if (p.options != null) {
++            updateOptionSel(p, x)
++            return
++        }
+         if (p.consumed) return
+         if (p.inStrip) {
+             val newHit = hitTestStrip(x, y)
+@@ -1484,6 +1540,13 @@
+         val p = ptrs.get(id) ?: return
+         clearRunnable(p)
+         ptrs.remove(id)
++        val picked = p.options
++        if (picked != null) {
++            listener?.onText(picked.getOrElse(p.sel) { picked[0] })
++            if (shift == SHIFT_ON) shift = SHIFT_OFF
++            invalidate()
++            return
++        }
+         if (p.inStrip) {
+             val hit = hitTestStrip(x, y)
+             if (!p.consumed && hit != null && hit == p.stripHit) {
+@@ -1570,7 +1633,10 @@
+             if (b != null) {
+                 p.consumed = true
+                 when (b.key.type) {
+-                    KeyType.CHAR -> b.key.alt?.let { listener?.onText(it) }
++                    KeyType.CHAR -> {
++                        if (b.key.extras.isNotEmpty()) openOptions(p, b)
++                        else b.key.alt?.let { listener?.onText(it) }
++                    }
+                     KeyType.SPACE -> listener?.onSpaceLongPress()
+                     KeyType.LANG -> listener?.onLayoutToggle()
+                     else -> {}
+diff -ru app_round1/src/main/java/com/banglakeys/app/Layouts.kt kb/app/src/main/java/com/banglakeys/app/Layouts.kt
+--- app_round1/src/main/java/com/banglakeys/app/Layouts.kt	2026-11-27 12:58:35.315903438 +0000
++++ kb/app/src/main/java/com/banglakeys/app/Layouts.kt	2026-11-27 12:58:35.347532194 +0000
+@@ -32,6 +32,8 @@
+     val alt: String? = null,
+     /** Fixed layout (প্রভাত): Shift চাপলে এই অক্ষর বসে (null হলে label.uppercase())। */
+     val shiftLabel: String? = null,
++    /** Long-press popup-এর বাড়তি অক্ষর (Ridmik-এর মতো): popup = [alt/shift অক্ষর] + extras, আঙুল সরিয়ে বাছা যায়। */
++    val extras: List<String> = emptyList(),
+ )
+ 
+ enum class KeyboardLanguageMode {
+@@ -94,7 +96,8 @@
+         rows.add(letters("qwertyuiop", if (numberRow) null else d))
+ 
+         // Row 2
+-        rows.add(listOf(spacer(0.5f)) + letters("asdfghjkl", "@#৳_&-+()") + spacer(0.5f))
++        val homeAlts = if (bangla) "@#৳_&-+()" else "@#\$_&-+()"
++        rows.add(listOf(spacer(0.5f)) + letters("asdfghjkl", homeAlts) + spacer(0.5f))
+ 
+         // Row 3
+         rows.add(
+@@ -129,8 +132,8 @@
+     const val PROBHAT_KEY_DOT_SHIFT = "ঁ"
+     const val PROBHAT_NAME = "প্রভাত"
+ 
+-    private fun pair(label: String, shift: String, w: Float = 1f) =
+-        Key(label, weight = w, alt = shift, shiftLabel = shift)
++    private fun pair(label: String, shift: String, w: Float = 1f, extras: List<String> = emptyList()) =
++        Key(label, weight = w, alt = shift, shiftLabel = shift, extras = extras)
+ 
+     fun probhat(bnDigits: Boolean): List<List<Key>> {
+         val bn = "১২৩৪৫৬৭৮৯০"
+@@ -140,8 +143,8 @@
+ 
+         val w12 = 10f / 12f
+         val top = listOf(
+-            pair("দ", "ধ", w12), pair("ূ", "ঊ", w12), pair("ী", "ঈ", w12), pair("র", "ড়", w12),
+-            pair("ট", "ঠ", w12), pair("এ", "ঐ", w12), pair("ু", "উ", w12), pair("ি", "ই", w12),
++            pair("দ", "ধ", w12), pair("ূ", "ঊ", w12), pair("ী", "ঈ", w12), pair("র", "ড়", w12, listOf("ৃ")),
++            pair("ট", "ঠ", w12), pair("এ", "ঐ", w12, listOf("ঞ")), pair("ু", "উ", w12, listOf("ৎ")), pair("ি", "ই", w12),
+             pair("ও", "ঔ", w12), pair("প", "ফ", w12), pair("ে", "ৈ", w12), pair("ো", "ৌ", w12),
+         )
+ 
+@@ -152,7 +155,7 @@
+ 
+         val w = 0.8f
+         val bottom = listOf(Key("⇧", KeyType.SHIFT, 1.3f)) + listOf(
+-            pair("য়", "য", w), pair("শ", "ঢ়", w), pair("চ", "ছ", w), pair("আ", "ঋ", w),
++            pair("য়", "য", w, listOf("্য")), pair("শ", "ঢ়", w), pair("চ", "ছ", w), pair("আ", "ঋ", w),
+             pair("ব", "ভ", w), pair("ন", "ণ", w), pair("ম", "ঙ", w),
+             Key("্", weight = w),
+             pair(PROBHAT_KEY_DOT, PROBHAT_KEY_DOT_SHIFT, w),
+diff -ru app_round1/src/main/java/com/banglakeys/app/Phonetic.kt kb/app/src/main/java/com/banglakeys/app/Phonetic.kt
+--- app_round1/src/main/java/com/banglakeys/app/Phonetic.kt	2026-11-27 12:58:35.316483481 +0000
++++ kb/app/src/main/java/com/banglakeys/app/Phonetic.kt	2026-11-27 12:58:35.348222326 +0000
+@@ -7,7 +7,8 @@
+  *  - ব্যঞ্জনের পর ব্যঞ্জন লিখলে আপনা-আপনি যুক্তাক্ষর (kt → ক্ত)
+  *  - ব্যঞ্জনের পর 'o' = inherent vowel (যুক্তাক্ষর আটকায়, কিছু print হয় না)
+  *  - ও-কার/ও: 'O'
+- *  - ং = ng, ঙ = Ng, ঞ = NG, ঁ = ^, ৎ = t``
++ *  - ং = ng, ঙ = Ng, ঞ = NG, ঁ = ^, ৎ = t``, ঃ = :  ( :: = সাধারণ colon )
++ *  - চ = ch, ছ = chh (বা Ch)
+  */
+ object Phonetic {
+ 
+@@ -16,6 +17,8 @@
+         "^" to "ঁ",
+         "t``" to "ৎ",
+         "``" to "",
++        ":" to "ঃ",
++        "::" to ":",
+     )
+ 
+     // independent form, kar (matra) form
+@@ -37,7 +40,8 @@
+ 
+     private val consonants = hashMapOf(
+         "kkh" to "ক্ষ",
+-        "kh" to "খ", "gh" to "ঘ", "Ng" to "ঙ", "ch" to "ছ", "jh" to "ঝ", "NG" to "ঞ",
++        "chh" to "ছ", "ch" to "চ", "Ch" to "ছ",
++        "kh" to "খ", "gh" to "ঘ", "Ng" to "ঙ", "jh" to "ঝ", "NG" to "ঞ",
+         "Th" to "ঠ", "Dh" to "ঢ", "th" to "থ", "dh" to "ধ", "ph" to "ফ", "bh" to "ভ",
+         "Rh" to "ঢ়", "Sh" to "ষ", "sh" to "শ",
+         "k" to "ক", "g" to "গ", "c" to "চ", "j" to "জ", "T" to "ট", "D" to "ড", "N" to "ণ",
+diff -ru app_round1/src/main/java/com/banglakeys/app/Suggestions.kt kb/app/src/main/java/com/banglakeys/app/Suggestions.kt
+--- app_round1/src/main/java/com/banglakeys/app/Suggestions.kt	2026-11-27 12:58:35.318668774 +0000
++++ kb/app/src/main/java/com/banglakeys/app/Suggestions.kt	2026-11-27 12:58:52.303674465 +0000
+@@ -55,7 +55,25 @@
+         }
+ 
+         // ২) বিল্ট-ইন অভিধান ও ফনেটিক ম্যাচিং
+-        if (bangla) {
++        if (bangla && isBanglaWord(prefix)) {
++            // প্রভাত (fixed Bangla) layout: prefix নিজেই বাংলা অক্ষর — roman নয়
++            for ((_, words) in learnedMap) {
++                for ((w, freq) in words) {
++                    if (w.length > prefix.length && w.startsWith(prefix)) {
++                        val score = freq * 25 + 30 - (w.length - prefix.length).coerceAtMost(20)
++                        scores[w] = maxOf(scores[w] ?: 0, score)
++                    }
++                }
++            }
++            for (i in SEED_ROMAN_BN.indices) {
++                val bn = SEED_ROMAN_BN[i].second
++                if (bn.length > prefix.length && bn.startsWith(prefix)) {
++                    val baseRank = (SEED_ROMAN_BN.size - i).coerceAtLeast(1)
++                    val matchScore = 28 + baseRank - (bn.length - prefix.length).coerceAtMost(18)
++                    scores[bn] = maxOf(scores[bn] ?: 0, matchScore)
++                }
++            }
++        } else if (bangla) {
+             val liveBn = Phonetic.convert(prefix)
+             if (liveBn.isNotBlank() && isBanglaWord(liveBn)) {
+                 scores[liveBn] = maxOf(scores[liveBn] ?: 0, 42)
+@@ -428,6 +446,8 @@
+             "doya" to "দয়া", "khoma" to "ক্ষমা", "maaf" to "মাফ", "shukriya" to "শুকরিয়া",
+             "assalamu" to "আসসালামু", "alaikum" to "আলাইকুম", "walaikum" to "ওয়ালাইকুম", "salam" to "সালাম",
+             "inshallah" to "ইনশাআল্লাহ", "alhamdulillah" to "আলহামদুলিল্লাহ", "mashallah" to "মাশাআল্লাহ",
++            "achhe" to "আছে", "achhi" to "আছি", "achhen" to "আছেন", "chhilo" to "ছিল", "chhoto" to "ছোট",
++            "chhobi" to "ছবি", "chhele" to "ছেলে", "chhelera" to "ছেলেরা", "chhutir" to "ছুটির", "chhuti" to "ছুটি",
+             "biday" to "বিদায়", "dekha" to "দেখা", "abar" to "আবার", "nischoy" to "নিশ্চয়", "oboshsho" to "অবশ্য",
+         )
+ 

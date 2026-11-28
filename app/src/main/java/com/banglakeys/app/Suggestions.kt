@@ -55,7 +55,25 @@ class Suggestions(context: Context) {
         }
 
         // ২) বিল্ট-ইন অভিধান ও ফনেটিক ম্যাচিং
-        if (bangla) {
+        if (bangla && isBanglaWord(prefix)) {
+            // প্রভাত (fixed Bangla) layout: prefix নিজেই বাংলা অক্ষর — roman নয়
+            for ((_, words) in learnedMap) {
+                for ((w, freq) in words) {
+                    if (w.length > prefix.length && w.startsWith(prefix)) {
+                        val score = freq * 25 + 30 - (w.length - prefix.length).coerceAtMost(20)
+                        scores[w] = maxOf(scores[w] ?: 0, score)
+                    }
+                }
+            }
+            for (i in SEED_ROMAN_BN.indices) {
+                val bn = SEED_ROMAN_BN[i].second
+                if (bn.length > prefix.length && bn.startsWith(prefix)) {
+                    val baseRank = (SEED_ROMAN_BN.size - i).coerceAtLeast(1)
+                    val matchScore = 28 + baseRank - (bn.length - prefix.length).coerceAtMost(18)
+                    scores[bn] = maxOf(scores[bn] ?: 0, matchScore)
+                }
+            }
+        } else if (bangla) {
             val liveBn = Phonetic.convert(prefix)
             if (liveBn.isNotBlank() && isBanglaWord(liveBn)) {
                 scores[liveBn] = maxOf(scores[liveBn] ?: 0, 42)
@@ -428,6 +446,8 @@ class Suggestions(context: Context) {
             "doya" to "দয়া", "khoma" to "ক্ষমা", "maaf" to "মাফ", "shukriya" to "শুকরিয়া",
             "assalamu" to "আসসালামু", "alaikum" to "আলাইকুম", "walaikum" to "ওয়ালাইকুম", "salam" to "সালাম",
             "inshallah" to "ইনশাআল্লাহ", "alhamdulillah" to "আলহামদুলিল্লাহ", "mashallah" to "মাশাআল্লাহ",
+            "achhe" to "আছে", "achhi" to "আছি", "achhen" to "আছেন", "chhilo" to "ছিল", "chhoto" to "ছোট",
+            "chhobi" to "ছবি", "chhele" to "ছেলে", "chhelera" to "ছেলেরা", "chhutir" to "ছুটির", "chhuti" to "ছুটি",
             "biday" to "বিদায়", "dekha" to "দেখা", "abar" to "আবার", "nischoy" to "নিশ্চয়", "oboshsho" to "অবশ্য",
         )
 

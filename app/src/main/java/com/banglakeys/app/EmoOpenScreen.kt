@@ -1,6 +1,5 @@
 package com.banglakeys.app
 
-import android.graphics.Paint
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -8,6 +7,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -36,6 +37,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -46,7 +48,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -55,60 +57,95 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.banglakeys.app.robot.FaceId
-import com.banglakeys.app.robot.FaceRenderer
+import com.banglakeys.app.robot.HdEyeStyle
+import com.banglakeys.app.robot.RobotBodyMotionEngine
+import com.banglakeys.app.robot.RobotBodyMove
+import com.banglakeys.app.robot.RobotBodyRenderer
+import com.banglakeys.app.robot.RobotBodySkin
 import com.example.R
 import kotlinx.coroutines.delay
+import kotlin.math.PI
 import kotlin.math.sin
 
 /**
- * অ্যাপ চালুর সময় EMO রোবট ওয়েলকাম/বুট স্ক্রিন।
- * ১.৪৫ সেকেন্ডের মধ্যে মসৃণভাবে হোম স্ক্রিনে নিয়ে যায়, অথবা ইউজার চাইলে
- * সাথে সাথে "শুরু করুন" বাটনে ট্যাপ করে ঢুকতে পারেন।
+ * অ্যাপ চালুর সময় ফুল-বডি কিউট EMO রোবট ওয়েলকাম/বুট স্ক্রিন।
+ * ঘুমন্ত বেলি-ফ্লপ থেকে জেগে উঠে -> মাথা কাত করে তাকিয়ে -> খুশিতে লাফ দিয়ে হাত নেড়ে হাই বলে
+ * হোম স্ক্রিনে নিয়ে যায়; ইউজার চাইলে Lavender 3D ও Classic Cyan স্কিন সুইচ বা "শুরু করুন" করতে পারেন।
  */
 @Composable
 fun EmoAppOpenScreen(
     onFinished: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
+    var skin by remember { mutableStateOf(AssistantPrefs.emoBodySkin(context)) }
     var progress by remember { mutableFloatStateOf(0f) }
-    var currentFace by remember { mutableStateOf(FaceId.REST) }
-    var blink by remember { mutableFloatStateOf(0f) }
-    var gazeX by remember { mutableFloatStateOf(0f) }
-    var statusCaption by remember { mutableStateOf("EMO জেগে উঠছে…") }
+    var eyeStyle by remember { mutableStateOf(HdEyeStyle.CHILL) }
+    var activeMove by remember { mutableStateOf(RobotBodyMove.BELLY_FLOP) }
+    var blink by remember { mutableFloatStateOf(0.75f) }
+    var gazeNormX by remember { mutableFloatStateOf(0f) }
+    var gazeNormY by remember { mutableFloatStateOf(0f) }
+    var animNowMs by remember { mutableLongStateOf(0L) }
+    var tapHopAtMs by remember { mutableLongStateOf(-10_000L) }
+    var statusCaption by remember { mutableStateOf("EMO ঘুম ভেঙে উঠছে…") }
 
-    val visorAlpha by animateFloatAsState(
+    var blendedPose by remember { mutableStateOf(RobotBodyMotionEngine.samplePose(RobotBodyMove.BELLY_FLOP, 0L)) }
+
+    val stageAlpha by animateFloatAsState(
         targetValue = 1f,
         animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
-        label = "open_visor_alpha",
+        label = "open_robot_alpha",
     )
 
     LaunchedEffect(Unit) {
-        val totalMs = 1450L
-        val stepMs = 32L
+        val totalMs = 2050L
+        val stepMs = 16L
         var elapsed = 0L
         while (elapsed < totalMs) {
+            animNowMs = elapsed
             progress = (elapsed.toFloat() / totalMs).coerceIn(0f, 1f)
             when {
-                elapsed < 350L -> {
-                    currentFace = FaceId.REST
-                    blink = 0f
-                    gazeX = 0f
-                    statusCaption = "EMO জেগে উঠছে…"
+                elapsed < 460L -> {
+                    activeMove = RobotBodyMove.BELLY_FLOP
+                    eyeStyle = HdEyeStyle.CHILL
+                    val wakeT = (elapsed / 460f).coerceIn(0f, 1f)
+                    blink = (1f - wakeT) * 0.8f
+                    gazeNormX = 0f
+                    gazeNormY = 0.08f * (1f - wakeT)
+                    statusCaption = "EMO ঘুম ভেঙে উঠছে…"
                 }
-                elapsed < 860L -> {
-                    currentFace = FaceId.CURIOUS
-                    val phase = (elapsed - 350L) / 510f
-                    gazeX = sin(phase * Math.PI * 2f).toFloat() * 6f
-                    blink = if (elapsed in 620L..700L) 0.85f else 0f
+                elapsed < 1160L -> {
+                    activeMove = RobotBodyMove.HEAD_TILT
+                    eyeStyle = HdEyeStyle.GLANCE
+                    val phase = (elapsed - 460L) / 700f
+                    gazeNormX = sin(phase * PI.toFloat() * 2f) * 0.7f
+                    gazeNormY = sin(phase * PI.toFloat()) * -0.15f
+                    blink = if (elapsed in 790L..870L) 0.85f else 0f
                     statusCaption = "ভয়েস ও কিবোর্ড প্রস্তুত হচ্ছে…"
                 }
-                else -> {
-                    currentFace = FaceId.JOY
-                    gazeX = 0f
+                elapsed < 1520L -> {
+                    activeMove = RobotBodyMove.IDLE
+                    eyeStyle = HdEyeStyle.SPARKLE
+                    gazeNormX = 0f
+                    gazeNormY = -0.06f
                     blink = 0f
-                    statusCaption = "স্বাগতম! EMO প্রস্তুত"
+                    statusCaption = "সেন্সর ও ব্রেইন যুক্ত হচ্ছে…"
+                }
+                else -> {
+                    activeMove = RobotBodyMove.JUMP_WAVE
+                    eyeStyle = HdEyeStyle.PEEK
+                    gazeNormX = 0f
+                    gazeNormY = 0f
+                    blink = 0f
+                    statusCaption = "হাই! EMO প্রস্তুত 🙌"
                 }
             }
+            val targetPose = RobotBodyMotionEngine.samplePose(
+                move = activeMove,
+                nowMs = elapsed + 1_200L,
+                tapHopElapsedMs = if (tapHopAtMs > 0L) (elapsed - tapHopAtMs) else -1L,
+            )
+            blendedPose = RobotBodyMotionEngine.lerpPose(blendedPose, targetPose, 0.24f)
             delay(stepMs)
             elapsed += stepMs
         }
@@ -116,105 +153,140 @@ fun EmoAppOpenScreen(
         onFinished()
     }
 
-    val cyan = Color(0xFF36D1FF)
+    val isLavender = skin == RobotBodySkin.LAVENDER_3D
+    val accentColor = if (isLavender) Color(0xFFC4A1FF) else Color(0xFF36D1FF)
+    val bgTop = if (isLavender) Color(0xFF1F1633) else Color(0xFF0E2538)
     val bgDeep = Color(0xFF080C12)
-    val plateColor = Color(0xFF0D141F)
-    val eyePaint = remember { Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF36D1FF.toInt() } }
-    val platePaint = remember { Paint(Paint.ANTI_ALIAS_FLAG).apply { color = plateColor.toArgb() } }
-    val outlinePaint = remember {
-        Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = 0xFF1F384D.toInt()
-            style = Paint.Style.STROKE
-            strokeWidth = 3.5f
-        }
-    }
 
-    Box(
+    Column(
         modifier = modifier
             .fillMaxSize()
-            .background(
-                Brush.radialGradient(
-                    colors = listOf(Color(0xFF0E2538), bgDeep),
-                )
-            )
+            .background(Brush.radialGradient(colors = listOf(bgTop, bgDeep)))
             .windowInsetsPadding(WindowInsets.safeDrawing)
-            .padding(horizontal = 24.dp, vertical = 20.dp)
+            .padding(horizontal = 16.dp, vertical = 14.dp)
             .testTag("emo_open_screen"),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.SpaceBetween,
     ) {
-        Column(
+        // 1. Top Brand Pill + Quick Skin Switcher (always clear of hero)
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .widthIn(max = 520.dp)
-                .align(Alignment.Center),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(18.dp),
+                .widthIn(max = 520.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             Surface(
-                color = Color(0xFF0E1A28),
+                color = Color(0xFF121826),
                 shape = CircleShape,
-                border = BorderStroke(1.dp, cyan.copy(alpha = 0.35f)),
+                border = BorderStroke(1.dp, accentColor.copy(alpha = 0.35f)),
+                modifier = Modifier
+                    .weight(1f, fill = false)
+                    .padding(end = 8.dp),
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Image(
                         painter = painterResource(id = R.drawable.emo_keys_icon),
                         contentDescription = stringResource(R.string.cd_app_icon),
-                        modifier = Modifier.size(22.dp).clip(RoundedCornerShape(6.dp)),
+                        modifier = Modifier.size(20.dp).clip(RoundedCornerShape(6.dp)),
                     )
                     Text(
-                        text = "EMO ROBOT SYSTEM",
-                        color = cyan,
+                        text = "EMO BUDDY",
+                        color = accentColor,
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.SemiBold,
-                        letterSpacing = 1.2.sp,
+                        maxLines = 1,
                     )
                 }
             }
 
-            // Live HD EMO Visor Animation
+            Surface(
+                onClick = {
+                    val next = skin.toggled()
+                    skin = next
+                    AssistantPrefs.setEmoBodySkin(context, next)
+                    tapHopAtMs = animNowMs
+                },
+                color = Color(0xFF141B2B),
+                shape = CircleShape,
+                border = BorderStroke(1.dp, accentColor.copy(alpha = 0.45f)),
+                modifier = Modifier
+                    .minimumInteractiveComponentSize()
+                    .testTag("open_screen_skin_toggle"),
+            ) {
+                Text(
+                    text = "${skin.badge} ${skin.titleEn}",
+                    color = accentColor,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                )
+            }
+        }
+
+        // 2. Center Adaptive Hero Stage
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .widthIn(max = 520.dp)
+                .padding(vertical = 8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(210.dp),
+                    .weight(1f, fill = false)
+                    .heightIn(min = 140.dp, max = 260.dp)
+                    .testTag("open_screen_hd_eyes"),
                 contentAlignment = Alignment.Center,
             ) {
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    val pw = (size.width * 0.82f).coerceAtMost(620f)
-                    val ph = (size.height * 0.82f).coerceAtMost(360f)
-                    val cx = size.width / 2f
-                    val cy = size.height / 2f
-                    val pulse = 1f + sin(progress * Math.PI * 3f).toFloat() * 0.02f
-                    eyePaint.alpha = (visorAlpha * 255).toInt().coerceIn(0, 255)
+                Canvas(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clickable { tapHopAtMs = animNowMs }
+                        .testTag("open_screen_full_body_robot"),
+                ) {
+                    val face = when (activeMove) {
+                        RobotBodyMove.BELLY_FLOP -> FaceId.REST
+                        RobotBodyMove.HEAD_TILT -> FaceId.CURIOUS
+                        RobotBodyMove.JUMP_WAVE -> FaceId.BEAMING
+                        else -> FaceId.NORMAL
+                    }
                     drawIntoCanvas { canvas ->
-                        FaceRenderer.draw(
+                        RobotBodyRenderer.draw(
                             canvas = canvas.nativeCanvas,
-                            face = currentFace,
-                            cx = cx,
-                            cy = cy,
-                            plateW = pw,
-                            plateH = ph,
-                            eyeGap = pw * 0.38f,
-                            eyeSize = ph * 0.24f,
+                            cx = size.width / 2f,
+                            cy = size.height / 2f,
+                            maxW = size.width * 0.92f,
+                            maxH = size.height * 0.94f,
+                            skin = skin,
+                            pose = blendedPose,
+                            hdEyesEnabled = true,
+                            hdStyle = eyeStyle,
+                            face = face,
                             blink = blink,
-                            eyePaint = eyePaint,
-                            platePaint = platePaint,
-                            plateOutline = outlinePaint,
-                            gazeX = gazeX,
-                            gazeY = 0f,
-                            scaleX = pulse,
-                            scaleY = pulse,
-                            glow = true,
+                            gazeNormX = gazeNormX,
+                            gazeNormY = gazeNormY,
+                            nowMs = animNowMs + 1_200L,
+                            visorBounceX = stageAlpha.coerceAtLeast(0.8f),
+                            visorBounceY = stageAlpha.coerceAtLeast(0.8f),
                         )
                     }
                 }
             }
 
+            Spacer(modifier = Modifier.height(10.dp))
+
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 Text(
                     text = stringResource(R.string.app_name),
@@ -225,17 +297,17 @@ fun EmoAppOpenScreen(
                 Text(
                     text = stringResource(R.string.open_screen_subtitle),
                     style = MaterialTheme.typography.bodyMedium,
-                    color = Color(0xFFB0CAE0),
+                    color = Color(0xFFB7C6E0),
                     textAlign = TextAlign.Center,
                 )
             }
 
-            Spacer(modifier = Modifier.height(4.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             Column(
                 modifier = Modifier.fillMaxWidth(0.75f),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 LinearProgressIndicator(
                     progress = { progress },
@@ -243,29 +315,29 @@ fun EmoAppOpenScreen(
                         .fillMaxWidth()
                         .height(6.dp)
                         .clip(CircleShape),
-                    color = cyan,
-                    trackColor = Color(0xFF152536),
+                    color = accentColor,
+                    trackColor = Color(0xFF1A2334),
                 )
                 Text(
                     text = statusCaption,
                     style = MaterialTheme.typography.labelMedium,
-                    color = cyan.copy(alpha = 0.88f),
+                    color = accentColor.copy(alpha = 0.92f),
                     modifier = Modifier.testTag("open_screen_status_text"),
                 )
             }
         }
 
+        // 3. Bottom Enter Button
         OutlinedButton(
             onClick = onFinished,
             shape = RoundedCornerShape(24.dp),
-            border = BorderStroke(1.dp, cyan.copy(alpha = 0.55f)),
+            border = BorderStroke(1.dp, accentColor.copy(alpha = 0.6f)),
             colors = ButtonDefaults.outlinedButtonColors(
-                containerColor = Color(0xFF0E1D2B),
-                contentColor = cyan,
+                containerColor = Color(0xFF131B2A),
+                contentColor = accentColor,
             ),
             modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 12.dp)
+                .padding(bottom = 8.dp)
                 .width(190.dp)
                 .minimumInteractiveComponentSize()
                 .testTag("open_screen_enter_button"),
